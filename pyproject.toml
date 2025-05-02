@@ -33,6 +33,8 @@ dependencies = [
     "qiskit<2.0.0",
     "qualang-tools>=0.16.0",
     "quam >=0.4.0",
+    "sympy>=1.14.0",
+#    "quam-builder>=0.4.0",
 #    "qm-qua >=1.2.2"
 ]
 
