@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qiskit-qm-provider"
+version = "0.1.0"
+description = "Provider for running Qiskit circuits and pulses on Quantum Machines' Quantum Orchestration Platform"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    { name = "Arthur Strauss", email = "arthur.strauss@quantum-machines.co" }
+]
+license = { text = "Apache License 2.0" }
+classifiers=[
+    "Environment :: Console",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+dependencies = [
+    "qiskit<2.0.0",
+    "qualang-tools>=0.16.0",
+    "quam >=0.4.0",
+#    "qm-qua >=1.2.2"
+]
+
+[tool.setuptools]
+packages = ["qiskit_qm_provider"]
