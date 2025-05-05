@@ -195,9 +195,7 @@ class Parameter:
         Returns:
             str: String representation of the parameter.
         """
-        return (
-            f"Parameter({self.name}{self.units}[{self.type.__name__}])"
-        )
+        return f"Parameter({self.name}{self.units}[{self.type.__name__}])"
 
     def get_index(self, param_table: ParameterTable) -> int:
         """

@@ -113,7 +113,7 @@ class QuAMQiskitPulse(QuAMPulse):
             return return_samples_output(pulse)
 
         try:
-            return_samples_output(self.pulse)
+            return return_samples_output(self.pulse)
         except (AttributeError, PulseError) as e:
             raise PulseError("Pulse waveform could not be retrieved from the given pulse") from e
 

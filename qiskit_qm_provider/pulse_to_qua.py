@@ -32,7 +32,7 @@ __all__ = [
     "qiskit_to_qua_instructions",
 ]
 
-_ref_amp = 0.1  # Reference amplitude for the QUA compiler
+_ref_amp = 0.25001  # Reference amplitude for the QUA compiler
 _ref_phase = 0.0  # Reference phase for the QUA compiler
 
 real_time_parameters_dict = {"amp": _ref_amp, "angle": _ref_phase}
@@ -105,7 +105,7 @@ class QuaPlayMacro(QuaPulseMacro):
             amp: Optional[ScalarInt | ScalarFloat] = None,
             angle: Optional[ScalarFloat] = None,
             duration: Optional[ScalarInt] = None,
-            **kwargs
+            **kwargs,
         ):
             self.channel.play(
                 self.pulse.name,

@@ -535,6 +535,11 @@ class ParameterTable:
         return {parameter_name: parameter.var for parameter_name, parameter in self.table.items()}
 
     @property
+    def parameters_dict(self) -> Dict[str, Parameter]:
+        """Dictionary of the parameters in the parameter table."""
+        return self.table
+
+    @property
     def parameters(self) -> List[Parameter]:
         """
         List of the parameter values objects in the parameter table.
@@ -776,7 +781,7 @@ class ParameterTable:
                         )
                     )
 
-        return cls(param_list, name)
+        return cls(param_list, name if name is not None else qc.name)
 
     def reset(self):
         """

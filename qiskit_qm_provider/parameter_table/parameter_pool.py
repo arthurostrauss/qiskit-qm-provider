@@ -35,7 +35,7 @@ class ParameterPool:
                 if hasattr(param, "parameters"):
                     names.extend([p.name for p in param.parameters])
             if obj.name in names:
-                raise ValueError(f"Parameter with name {obj.name} already exists.")
+                raise ValueError(f"{type(obj).__name__} with name {obj.name} already exists.")
             if hasattr(obj, "parameters"):
                 for obj_param in obj.parameters:
                     if obj_param.name in names:

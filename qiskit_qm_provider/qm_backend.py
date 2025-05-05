@@ -63,7 +63,7 @@ __all__ = [
     "QMInstructionProperties",
     "validate_machine",
     "look_for_standard_op",
-    "FluxTunableTransmonBackend"
+    "FluxTunableTransmonBackend",
 ]
 RunInput = Union[QuantumCircuit, Schedule, ScheduleBlock]
 
@@ -73,6 +73,7 @@ control_flow_name_mapping = {
     "for_loop": ForLoopOp,
     "switch_case": SwitchCaseOp,
 }
+oq3_keyword_instructions = ("measure", "reset", "delay", "nop")
 
 
 class QMInstructionProperties(InstructionProperties):
@@ -671,11 +672,13 @@ class QMBackend(Backend):
         #     raise ValueError(
         #         "QuantumCircuit contains parameters but no parameter table provided"
         #     )
-        basis_gates = [gate for gate in self._oq3_custom_gates if gate not in ["measure", "reset"]]
+        basis_gates = [
+            gate for gate in self._oq3_custom_gates if gate not in oq3_keyword_instructions
+        ]
         basis_gates += [
             gate
             for gate in self.target.operation_names
-            if gate not in basis_gates and gate not in ["measure", "reset"]
+            if gate not in basis_gates and gate not in oq3_keyword_instructions
         ]
         # Check if all custom calibrations are in the oq3 basis gates
         for gate_name in qc.calibrations.keys():
