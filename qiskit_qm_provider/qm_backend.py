@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from typing import Iterable, List, Dict, Optional, Callable, Union, Tuple, Any
 
-import numpy as np
-from quam.components import Channel as QuAMChannel, Qubit, QubitPair
+from .backend_utils import (
+    validate_machine,
+    look_for_standard_op,
+    get_extended_gate_name_mapping,
+)
+from .qm_instruction_properties import QMInstructionProperties
+from quam.components import Channel as QuAMChannel, QubitPair
 from quam.components import BasicQuam as QuAM
 
 from qiskit.circuit import (
@@ -12,10 +17,6 @@ from qiskit.circuit import (
     ForLoopOp,
     IfElseOp,
     WhileLoopOp,
-    Gate,
-)
-from qiskit.circuit.library.standard_gates import (
-    get_standard_gate_name_mapping,
 )
 from qiskit.circuit.controlflow import CONTROL_FLOW_OP_NAMES
 from qiskit.providers import BackendV2 as Backend, QubitProperties, Options
@@ -34,7 +35,7 @@ from qiskit.qasm3 import Exporter
 from qiskit.pulse.channels import Channel as QiskitChannel, ControlChannel
 from qiskit.pulse.library import SymbolicPulse
 from qiskit.pulse.library.waveform import Waveform
-from qm.qua import switch_, case_, program
+from qm.qua import switch_, case_, program, for_, assign, Cast, save, stream_processing
 from qm.qua import declare, fixed, declare_stream
 from qm import QuantumMachinesManager, Program, DictQuaConfig
 from qualang_tools.addons.variables import assign_variables_to_element
@@ -59,10 +60,6 @@ from oqc import (
 
 __all__ = [
     "QMBackend",
-    "QMProvider",
-    "QMInstructionProperties",
-    "validate_machine",
-    "look_for_standard_op",
     "FluxTunableTransmonBackend",
 ]
 RunInput = Union[QuantumCircuit, Schedule, ScheduleBlock]
@@ -74,97 +71,7 @@ control_flow_name_mapping = {
     "switch_case": SwitchCaseOp,
 }
 oq3_keyword_instructions = ("measure", "reset", "delay", "nop")
-
-
-class QMInstructionProperties(InstructionProperties):
-    def __init__(
-        self,
-        duration: float | None = None,
-        error: float | None = None,
-        qua_pulse_macro: Callable | None = None,
-    ):
-        super().__init__(duration=duration, error=error)
-        self._qua_pulse_macro = qua_pulse_macro
-
-    @property
-    def qua_pulse_macro(self) -> Callable | None:
-        return self._qua_pulse_macro
-
-    @qua_pulse_macro.setter
-    def qua_pulse_macro(self, value: Callable | None):
-        self._qua_pulse_macro = value
-
-    def __repr__(self):
-        return (
-            f"QMInstructionProperties(duration={self.duration}, "
-            f"error={self.error}, "
-            f"qua_pulse_macro={self.qua_pulse_macro})"
-        )
-
-    def __getstate__(self):
-        return (super().__getstate__(), self.qua_pulse_macro)
-
-    def __setstate__(self, state: tuple):
-        super().__setstate__(state[0])
-        self.qua_pulse_macro = state[1]
-
-
-class QMProvider:
-    def __init__(self, qmm: QuantumMachinesManager):
-        """
-        Qiskit Provider for the Quantum Orchestration Platform (QOP)
-        Args:
-            host: The host of the QOP
-            port: The port of the QOP
-            cluster_name: The name of the cluster
-            octave_config: The octave configuration
-        """
-        super().__init__(self)
-        self.qmm = qmm
-
-    def get_backend(
-        self, machine: QuAM, channel_mapping: Optional[Dict[QiskitChannel, QuAMChannel]]
-    ):
-        return QMBackend(machine, channel_mapping)
-
-    def backends(self, name=None, filters=None, **kwargs):
-        raise NotImplementedError("Not implemented yet")
-
-    def __str__(self):
-        return f"QMProvider({self.qmm})"
-
-    def __repr__(self):
-        return f"QMProvider({self.qmm})"
-
-
-def validate_machine(machine) -> QuAM:
-    if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
-        raise ValueError(
-            "Invalid QuAM instance provided, should have qubits and qubit_pairs attributes"
-        )
-    if not all(isinstance(qubit, Qubit) for qubit in machine.qubits.values()):
-        raise ValueError("All qubits should be of type Qubit")
-    if not all(isinstance(qubit_pair, QubitPair) for qubit_pair in machine.qubit_pairs.values()):
-        raise ValueError("All qubit pairs should be of type QubitPair")
-
-    return machine
-
-
-def look_for_standard_op(op: str):
-    op = op.lower()
-    if op == "cphase":
-        return "cz"
-    elif op == "cnot":
-        return "cx"
-    elif op == "x/2" or op == "x90":
-        return "sx"
-    elif op == "x180":
-        return "x"
-    elif op == "y180":
-        return "y"
-    elif op == "y90":
-        return "sy"
-    return op
+_QASM3_DUMP_LOOSE_BIT_PREFIX = "_bit"
 
 
 class QMBackend(Backend):
@@ -240,18 +147,7 @@ class QMBackend(Backend):
         """
         Populate the target instructions with the QOP configuration
         """
-        gate_map = get_standard_gate_name_mapping()
-
-        class SYGate(Gate):
-            def __init__(self, label=None):
-                super().__init__("sy", 1, [], label=label)
-
-            def _define(self):
-                qc = QuantumCircuit(1)
-                qc.ry(np.pi / 2, 0)
-                self.definition = qc
-
-        gate_map["sy"] = SYGate()
+        gate_map = get_extended_gate_name_mapping()
         target = Target(
             "Transmon based QuAM",
             dt=1e-9,
@@ -391,7 +287,60 @@ class QMBackend(Backend):
             options: The options for the run
         """
         num_shots = options.get("shots", self.options.shots)
-        raise NotImplementedError("Running on the QOP backend is not supported yet")
+        if not isinstance(run_input, list):
+            run_input = [run_input]
+
+        if not all(isinstance(qc, (QuantumCircuit, ScheduleBlock, Schedule)) for qc in run_input):
+            raise ValueError("Input should be a QuantumCircuit or a Qiskit Pulse Schedule")
+        if not all(len(qc.parameters) == 0 for qc in run_input):
+            raise ValueError("Input should not contain parameters")
+
+        with program() as prog:
+            if self._init_macro is not None:
+                self._init_macro()
+            all_measurements = declare_stream()
+            shot = declare(int)
+            state_int = declare(int, value=0)
+            state_stream = declare_stream()
+
+            if len(run_input) == 1:
+                qc = run_input[0]
+                with for_(shot, 0, shot < num_shots, shot + 1):
+                    result = self.qiskit_to_qua_macro(qc)
+                    for c, clbit in enumerate(qc.clbits):
+                        bit = qc.find_bit(clbit)
+                        if len(bit.registers) == 0:
+                            bit_output = result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{c}"]
+                        else:
+                            creg, creg_index = bit.registers[0]
+                            bit_output = result.result_program[creg.name][creg_index]
+
+                        assign(state_int, state_int + 2**c * Cast.to_int(bit_output))
+
+                        save(state_int, state_stream)
+
+            else:
+                qc_var = declare(int)
+                with for_(qc_var, 0, qc_var < len(run_input), qc_var + 1):
+                    with switch_(qc_var):
+                        for i, qc in enumerate(run_input):
+                            with case_(i):
+                                result = self.qiskit_to_qua_macro(qc)
+                                for c, clbit in enumerate(qc.clbits):
+                                    bit = qc.find_bit(clbit)
+                                    if len(bit.registers) == 0:
+                                        bit_output = result.result_program[
+                                            f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{c}"
+                                        ]
+                                    else:
+                                        creg, creg_index = bit.registers[0]
+                                        bit_output = result.result_program[creg.name][creg_index]
+
+                                    assign(state_int, state_int + 2**c * Cast.to_int(bit_output))
+
+                                    save(state_int, state_stream)
+            with stream_processing():
+                state_stream.save_all("all_measurements")
 
     def schedule_to_qua_macro(
         self,
