@@ -8,6 +8,7 @@ Created: 25/11/2024
 
 from __future__ import annotations
 
+import copy
 import warnings
 import sys
 from itertools import chain
@@ -78,7 +79,7 @@ class ParameterTable:
             where qua_type is the type of the QUA variable to be declared (int, fixed, bool)
              and the last (optional) field indicates if the variable should be declared as an input_stream instead
              of a standard QUA variable.
-            Can also be a list of pre-declared Parameter objects.
+            There can also be a list of pre-declared Parameter objects.
             name: Optional name for the parameter table
 
 
@@ -366,6 +367,24 @@ class ParameterTable:
                     return param
 
             raise IndexError(f"No parameter with index {parameter} in the parameter table.")
+        else:
+            raise ValueError("Invalid parameter name. Please use a string or an int.")
+
+    def has_parameter(self, parameter: Union[str, int, Parameter]) -> bool:
+        """
+        Check if a parameter is in the parameter table.
+        Args: parameter: Name, index or instance of the parameter to be checked.
+        Returns: True if the parameter is in the table, False otherwise.
+        """
+        if isinstance(parameter, str):
+            return parameter in self.table.keys()
+        elif isinstance(parameter, int):
+            for param in self.parameters:
+                if param.get_index(self) == parameter:
+                    return True
+            return False
+        elif isinstance(parameter, Parameter):
+            return parameter in self.parameters
         else:
             raise ValueError("Invalid parameter name. Please use a string or an int.")
 
@@ -780,8 +799,13 @@ class ParameterTable:
                             direction=Direction.OUTGOING,
                         )
                     )
+        new_table = cls(param_list, name if name is not None else qc.name)
+        if "qua" in qc.metadata:
+            qc.metadata["qua"][new_table.name] = new_table
+        else:
+            qc.metadata["qua"] = {new_table.name: new_table}
 
-        return cls(param_list, name if name is not None else qc.name)
+        return new_table
 
     def reset(self):
         """
@@ -792,3 +816,43 @@ class ParameterTable:
 
         for parameter in self.parameters:
             parameter.reset()
+
+    def __deepcopy__(self, memo=None):
+
+        if memo is None:
+            memo = {}
+        # Prevent infinite recursion
+        if id(self) in memo:
+            return memo[id(self)]
+
+        # 1. Create deep copies of all Parameter objects
+        copied_parameters_list = []
+        for original_param in self.table.values():  # self.table.values() gives Parameter instances
+            copied_param = copy.deepcopy(original_param, memo)
+            copied_parameters_list.append(copied_param)
+
+        # 2. Create a new ParameterTable instance using its __init__ method.
+        #    This leverages the existing initialization logic.
+        cls = self.__class__
+
+        # Create the new instance object first
+        new_table = cls.__new__(cls)
+        # Add to memo *before* calling __init__ to handle potential recursion during __init__
+        memo[id(self)] = new_table
+
+        # Prepare arguments for __init__
+        new_table_name = self.name + "_copy"  # Or a more sophisticated naming scheme
+
+        # Call __init__ on the newly created instance.
+        # Your __init__ already handles List[Parameter] input.
+        new_table.__init__(parameters_dict=copied_parameters_list, name=new_table_name)
+
+        # The __init__ method should have handled:
+        # - Assigning a new self._id from ParameterPool.
+        # - Populating self.table with copied_parameters_list.
+        # - Calling param.set_index(new_table, ...) for each copied_param.
+        # - Setting self._input_type and self._direction.
+        # - Rebuilding self._packet_type if DGX, and updating dgx_struct/stream_id on copied_params.
+        # - Initializing self._qua_external_stream and self._packet to None.
+
+        return new_table

@@ -1,23 +1,10 @@
 from __future__ import annotations
 
 from typing import Iterable, List, Dict, Optional, Callable, Union, Tuple, Any
-
-from .backend_utils import (
-    validate_machine,
-    look_for_standard_op,
-    get_extended_gate_name_mapping,
-)
-from .qm_instruction_properties import QMInstructionProperties
-from quam.components import Channel as QuAMChannel, QubitPair
-from quam.components import BasicQuam as QuAM
+from inspect import Signature, Parameter as sigParam
 
 from qiskit.circuit import (
     QuantumCircuit,
-    SwitchCaseOp,
-    ForLoopOp,
-    IfElseOp,
-    WhileLoopOp,
-    Gate,
     Parameter as QiskitParameter,
     Instruction,
 )
@@ -31,28 +18,19 @@ from qiskit.pulse import (
     AcquireChannel,
     Play,
 )
-from qiskit.pulse.library.pulse import Pulse as QiskitPulse
+from qiskit.pulse.channels import Channel as QiskitChannel, ControlChannel
+from qiskit.pulse.library import SymbolicPulse, Waveform, Pulse as QiskitPulse
 
 from qiskit.transpiler import Target, InstructionProperties
 from qiskit.qasm3 import Exporter
-from qiskit.pulse.channels import Channel as QiskitChannel, ControlChannel
-from qiskit.pulse.library import SymbolicPulse
-from qiskit.pulse.library.waveform import Waveform
-from qm.qua import switch_, case_, program, for_, assign, Cast, save, stream_processing
-from qm.qua import declare, fixed, declare_stream
+
+# QUA and Quam imports
+from qm.qua import *
 from qm import QuantumMachinesManager, Program, DictQuaConfig
 from qualang_tools.addons.variables import assign_variables_to_element
+from quam.components import Channel as QuAMChannel, QubitPair,  BasicQuam as QuAM
 
-from .parameter_table import ParameterTable, InputType, Parameter
-
-from .pulse_support_utils import (
-    _instruction_to_qua,
-    validate_parameters,
-    validate_schedule,
-    handle_parameterized_channel,
-)
-from .quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
-from inspect import Signature, Parameter as sigParam
+# OpenQASM3 to QUA compiler
 from oqc import (
     Compiler,
     HardwareConfig,
@@ -61,20 +39,31 @@ from oqc import (
     CompilationResult,
 )
 
+# Helper modules
+from .parameter_table import ParameterTable, InputType, Parameter
+from .pulse_support_utils import (
+    _instruction_to_qua,
+    validate_parameters,
+    validate_schedule,
+    handle_parameterized_channel,
+)
+from .quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
+from .backend_utils import (
+    validate_machine,
+    look_for_standard_op,
+    get_extended_gate_name_mapping,
+    has_reset_at_boundary,
+    control_flow_name_mapping,
+    _QASM3_DUMP_LOOSE_BIT_PREFIX,
+    oq3_keyword_instructions
+)
+from .qm_instruction_properties import QMInstructionProperties
+
 __all__ = [
     "QMBackend",
     "FluxTunableTransmonBackend",
 ]
 RunInput = Union[QuantumCircuit, Schedule, ScheduleBlock]
-
-control_flow_name_mapping = {
-    "if_else": IfElseOp,
-    "while_loop": WhileLoopOp,
-    "for_loop": ForLoopOp,
-    "switch_case": SwitchCaseOp,
-}
-oq3_keyword_instructions = ("measure", "reset", "delay", "nop")
-_QASM3_DUMP_LOOSE_BIT_PREFIX = "_bit"
 
 
 class QMBackend(Backend):
@@ -355,6 +344,14 @@ class QMBackend(Backend):
         if not all(len(qc.parameters) == 0 for qc in run_input):
             raise ValueError("Input should not contain parameters")
 
+        # TODO: Add support for schedules executions (need to add support for Acquire)
+        if any(isinstance(qc, (ScheduleBlock, Schedule)) for qc in run_input):
+            raise NotImplementedError("Schedule execution not supported yet")
+        self.update_calibrations()
+        run_program = self.get_run_program(num_shots, run_input)
+        qmm = self.machine.connect()
+
+    def get_run_program(self, num_shots, run_input):
         with program() as prog:
             if self._init_macro is not None:
                 self._init_macro()
@@ -365,6 +362,8 @@ class QMBackend(Backend):
 
             if len(run_input) == 1:
                 qc = run_input[0]
+                if not has_reset_at_boundary(qc):
+                    qc.reset(qc.qubits)
                 with for_(shot, 0, shot < num_shots, shot + 1):
                     result = self.qiskit_to_qua_macro(qc)
                     for c, clbit in enumerate(qc.clbits):
@@ -385,22 +384,31 @@ class QMBackend(Backend):
                     with switch_(qc_var):
                         for i, qc in enumerate(run_input):
                             with case_(i):
-                                result = self.qiskit_to_qua_macro(qc)
-                                for c, clbit in enumerate(qc.clbits):
-                                    bit = qc.find_bit(clbit)
-                                    if len(bit.registers) == 0:
-                                        bit_output = result.result_program[
-                                            f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{c}"
-                                        ]
-                                    else:
-                                        creg, creg_index = bit.registers[0]
-                                        bit_output = result.result_program[creg.name][creg_index]
+                                if not has_reset_at_boundary(qc):
+                                    qc.reset(qc.qubits)
+                                with for_(shot, 0, shot < num_shots, shot + 1):
+                                    result = self.qiskit_to_qua_macro(qc)
+                                    for c, clbit in enumerate(qc.clbits):
+                                        bit = qc.find_bit(clbit)
+                                        if len(bit.registers) == 0:
+                                            bit_output = result.result_program[
+                                                f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{c}"
+                                            ]
+                                        else:
+                                            creg, creg_index = bit.registers[0]
+                                            bit_output = result.result_program[creg.name][
+                                                creg_index
+                                            ]
 
-                                    assign(state_int, state_int + 2**c * Cast.to_int(bit_output))
+                                        assign(
+                                            state_int, state_int + 2**c * Cast.to_int(bit_output)
+                                        )
 
-                                    save(state_int, state_stream)
+                                        save(state_int, state_stream)
             with stream_processing():
                 state_stream.save_all("all_measurements")
+
+        return prog
 
     def schedule_to_qua_macro(
         self,
@@ -554,7 +562,7 @@ class QMBackend(Backend):
 
     def update_calibrations(
         self,
-        qc: Optional[QuantumCircuit] = None,
+        qc: Optional[QuantumCircuit | List[QuantumCircuit]] = None,
         input_type: Optional[InputType] = None,
     ):
         """
@@ -564,6 +572,11 @@ class QMBackend(Backend):
         configuration through QuAM) as it modifies the QuAM configuration.
         It also looks at the Target object and checks if new operations are added to the target. If
         so, it adds them to the QUA operations mapping for the OQC compiler.
+
+        Args:
+            qc: The QuantumCircuit to update the calibrations from. If None, only the target is checked
+            input_type: The input type for the parameter table (if any). Relevant only if the parameter table is
+            not already defined and present in qc metadata
         """
         # Check the target object for new operations
         for op_name, op_properties in self.target.items():
@@ -584,14 +597,24 @@ class QMBackend(Backend):
                                 f"hence cannot be added to the QUA operations mapping"
                             )
                         sched = properties.qua_pulse_macro
-                        num_params = len(sched.__signature__.parameters)
-                        self._operation_mapping_QUA[
-                            OperationIdentifier(
-                                op_name,
-                                num_params,
-                                qubits,
+                        sig = Signature.from_callable(sched)
+                        positional_params = [
+                            param
+                            for param in sig.parameters.values()
+                            if param.kind
+                            in (
+                                sigParam.POSITIONAL_OR_KEYWORD,
+                                sigParam.POSITIONAL_ONLY,
                             )
-                        ] = sched
+                        ]
+                        num_params = len(positional_params)
+                        op_id = OperationIdentifier(
+                            op_name,
+                            num_params,
+                            qubits,
+                        )
+                        self._operation_mapping_QUA[op_id] = sched
+
                     elif isinstance(properties, InstructionProperties):
                         if properties.calibration is None:
                             raise ValueError(
@@ -601,12 +624,15 @@ class QMBackend(Backend):
                         sched = validate_schedule(properties.calibration)
                         num_params = len(sched.parameters)
                         if num_params > 0:
-                            param_table = ParameterTable.from_qiskit(
-                                sched,
-                                input_type=input_type,
-                                name=sched.name + "_param_table",
+                            param_table = sched.metadata.get(
+                                "qua",
+                                ParameterTable.from_qiskit(
+                                    sched,
+                                    input_type=input_type,
+                                    name=sched.name + "_param_table",
+                                ),
                             )
-                            sched.metadata["parameter_table"] = param_table
+
                         else:
                             param_table = None
                         self._operation_mapping_QUA[
@@ -622,7 +648,7 @@ class QMBackend(Backend):
                 raise ValueError("qc should be a QuantumCircuit")
             if not hasattr(qc, "calibrations"):
                 raise ValueError("qc should have calibrations")
-            if qc.parameters or qc.iter_input_vars():
+            if qc.parameters or qc.iter_vars():
                 param_table = qc.metadata.get(
                     "parameter_table",
                     ParameterTable.from_qiskit(

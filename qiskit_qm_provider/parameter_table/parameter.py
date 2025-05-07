@@ -7,6 +7,7 @@ Created: 25/11/2024
 
 from __future__ import annotations
 
+import copy
 import time
 import warnings
 from itertools import chain
@@ -109,7 +110,7 @@ class Parameter:
     adjusted can be declared explicitly or either be automatically inferred from the type of provided initial value.
     """
 
-    def __new__(cls, name, value=None, qua_type=None, input_type=None, direction=None, units=""):
+    def __new__(cls, name, *args, **kwargs):
         """
         Create a new instance of the Parameter class.
         """
@@ -465,7 +466,13 @@ class Parameter:
         Returns:
             List of ParameterTable objects associated with the parameter.
         """
-        return list(self._table_indices.keys())
+        from .parameter_table import ParameterTable
+
+        tables = []
+        for table in ParameterPool.get_all_objs():
+            if isinstance(table, ParameterTable) and table.has_parameter(self):
+                tables.append(table)
+        return tables
 
     @property
     def type(self):
@@ -816,3 +823,41 @@ class Parameter:
         self._external_stream_incoming = None
         self._external_stream_outgoing = None
         self._index = -1
+
+    def __deepcopy__(self, memodict=None):
+        if memodict is None:
+            memodict = {}
+        if id(self) in memodict:
+            return memodict[id(self)]
+        cls = self.__class__
+        new_param = object.__new__(cls)
+        memodict[id(self)] = new_param
+
+        # Now, manually populate new_param with copied attributes:
+        new_param._name = self._name
+        new_param.units = self.units
+        new_param._type = self._type
+        new_param._input_type = self._input_type
+        new_param._direction = self._direction
+        new_param._value = copy.deepcopy(self.value, memodict)  # Deepcopy mutable values
+        new_param._length = self._length
+
+        # Reset QUA-specific and context-dependent state
+        new_param._var = None
+        new_param._is_declared = False
+        new_param._stream = None
+        new_param._counter_var = None
+        new_param._external_stream_incoming = None
+        new_param._external_stream_outgoing = None
+
+        # Reset table/DGX specific attributes that will be set by the new table or properties
+        new_param._index = -1  # Default for a parameter not (yet) in a table
+        new_param._table_indices = {}  # New dictionary for table associations
+        new_param._dgx_struct = None
+        new_param._stream_id = None  # Will be re-evaluated by property or new table
+
+        # If your __init__ sets an _initialized flag, set it here too
+        if hasattr(self, "_initialized"):
+            new_param._initialized = True
+
+        return new_param

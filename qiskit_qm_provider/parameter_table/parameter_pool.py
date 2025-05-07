@@ -30,16 +30,6 @@ class ParameterPool:
         """
         next_id = next(cls._counter)
         if obj is not None:
-            names = [param.name for param in cls._parameters_dict.values()]
-            for param in cls._parameters_dict.values():
-                if hasattr(param, "parameters"):
-                    names.extend([p.name for p in param.parameters])
-            if obj.name in names:
-                raise ValueError(f"{type(obj).__name__} with name {obj.name} already exists.")
-            if hasattr(obj, "parameters"):
-                for obj_param in obj.parameters:
-                    if obj_param.name in names:
-                        raise ValueError(f"Parameter with name {obj_param.name} already exists.")
             cls._parameters_dict[next_id] = obj
         return next_id
 
