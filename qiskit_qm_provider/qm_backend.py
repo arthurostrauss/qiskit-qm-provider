@@ -17,6 +17,9 @@ from qiskit.circuit import (
     ForLoopOp,
     IfElseOp,
     WhileLoopOp,
+    Gate,
+    Parameter as QiskitParameter,
+    Instruction,
 )
 from qiskit.circuit.controlflow import CONTROL_FLOW_OP_NAMES
 from qiskit.providers import BackendV2 as Backend, QubitProperties, Options
@@ -93,6 +96,7 @@ class QMBackend(Backend):
 
         Backend.__init__(self, name="QM backend")
 
+        self._custom_instructions = {}
         self.machine = validate_machine(machine)
         self.channel_mapping: Dict[QiskitChannel, QuAMChannel] = channel_mapping
         self.reverse_channel_mapping: Dict[QuAMChannel, QiskitChannel] = (
@@ -106,6 +110,14 @@ class QMBackend(Backend):
     @property
     def target(self):
         return self._target
+
+    @property
+    def custom_instructions(self):
+        """
+        Get the custom instructions for the backend (those that are part of the target but not in the
+        standard Qiskit gate set, inferred from the available macros)
+        """
+        return self._custom_instructions
 
     @property
     def qubit_dict(self):
@@ -162,6 +174,7 @@ class QMBackend(Backend):
 
         operations_dict = {}
         operations_qua_dict = {}
+        name_to_op_dict = {}
 
         # Add single qubit instructions
         for q, qubit in enumerate(machine.active_qubits):
@@ -174,6 +187,29 @@ class QMBackend(Backend):
 
                     operations_dict.setdefault(op_, {})[(q,)] = None
                     operations_qua_dict[OperationIdentifier(op_, num_params, (q,))] = func.apply
+                    name_to_op_dict[op_] = gate_op
+                else:
+                    # Create custom gate
+                    signature = Signature.from_callable(func.apply)
+                    params = signature.parameters.values()
+                    positional_params = [
+                        param
+                        for param in params
+                        if param.kind in (sigParam.POSITIONAL_OR_KEYWORD, sigParam.POSITIONAL_ONLY)
+                    ]
+
+                    params = [QiskitParameter(param.name) for param in positional_params]
+                    return_type = signature.return_annotation
+                    if return_type is not None and return_type is not Signature.empty:
+                        raise ValueError(
+                            f"Return type {return_type} not yet supported for custom gate {op_}"
+                        )
+                    gate_op = Instruction(op_, 1, 0, params)
+                    operations_dict.setdefault(op_, {})[(q,)] = None
+                    operations_qua_dict[OperationIdentifier(op_, len(params), (q,))] = func.apply
+                    name_to_op_dict[op_] = gate_op
+                    self._custom_instructions[op_] = gate_op
+
         for qubit_pair in machine.active_qubit_pairs:
             q_ctrl = self.qubit_dict[qubit_pair.qubit_control.name]
             q_tgt = self.qubit_dict[qubit_pair.qubit_target.name]
@@ -186,9 +222,33 @@ class QMBackend(Backend):
                     operations_qua_dict[OperationIdentifier(op_, num_params, (q_ctrl, q_tgt))] = (
                         func.apply
                     )
+                    name_to_op_dict[op_] = gate_op
+                else:
+                    # Create custom gate
+                    signature = Signature.from_callable(func.apply)
+                    params = signature.parameters.values()
+                    positional_params = [
+                        param
+                        for param in params
+                        if param.kind in (sigParam.POSITIONAL_OR_KEYWORD, sigParam.POSITIONAL_ONLY)
+                    ]
+
+                    params = [QiskitParameter(param.name) for param in positional_params]
+                    return_type = signature.return_annotation
+                    if return_type is not None and return_type is not Signature.empty:
+                        raise ValueError(
+                            f"Return type {return_type} not yet supported for custom gate {op_}"
+                        )
+                    gate_op = Instruction(op_, 2, 0, params)
+                    operations_dict.setdefault(op_, {})[(q_ctrl, q_tgt)] = None
+                    operations_qua_dict[OperationIdentifier(op_, len(params), (q_ctrl, q_tgt))] = (
+                        func.apply
+                    )
+                    name_to_op_dict[op_] = gate_op
+                    self._custom_instructions[op_] = gate_op
 
         for op, properties in operations_dict.items():
-            target.add_instruction(gate_map[op], properties=properties)
+            target.add_instruction(name_to_op_dict[op], properties=properties)
 
         for flow_op_name, control_flow_op in control_flow_name_mapping.items():
             target.add_instruction(control_flow_op, name=flow_op_name)
