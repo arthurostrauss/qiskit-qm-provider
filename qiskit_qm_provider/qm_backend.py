@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, List, Dict, Optional, Callable, Union, Tuple, Any
+from typing import Iterable, List, Dict, Optional, Callable, Union, Tuple, Any, TYPE_CHECKING
 from inspect import Signature, Parameter as sigParam
 
 from qiskit.circuit import (
@@ -26,9 +26,10 @@ from qiskit.qasm3 import Exporter
 
 # QUA and Quam imports
 from qm.qua import *
-from qm import QuantumMachinesManager, Program, DictQuaConfig
+from qm import QuantumMachinesManager, Program, DictQuaConfig, QuantumMachine
 from qualang_tools.addons.variables import assign_variables_to_element
-from quam.components import Channel as QuAMChannel, QubitPair,  BasicQuam as QuAM
+from quam.components import Channel as QuAMChannel, QubitPair
+from quam_builder.architecture.superconducting.qpu.base_quam import BaseQuam as Quam
 
 # OpenQASM3 to QUA compiler
 from oqc import (
@@ -58,7 +59,8 @@ from .backend_utils import (
     oq3_keyword_instructions
 )
 from .qm_instruction_properties import QMInstructionProperties
-
+if TYPE_CHECKING:
+    from .qm_job import QMJob
 __all__ = [
     "QMBackend",
     "FluxTunableTransmonBackend",
@@ -66,17 +68,18 @@ __all__ = [
 RunInput = Union[QuantumCircuit, Schedule, ScheduleBlock]
 
 
+
 class QMBackend(Backend):
     def __init__(
         self,
-        machine: QuAM,
+        machine: Quam,
         channel_mapping: Optional[Dict[QiskitChannel, QuAMChannel]] = None,
         init_macro: Optional[Callable] = None,
     ):
         """
         Initialize the QM backend
         Args:
-            machine: The QuAM instance
+            machine: The Quam instance
             channel_mapping: Optional mapping of Qiskit Pulse Channels to QuAM Channels.
                              This mapping enables the conversion of Qiskit schedules into parametric QUA macros.
             init_macro: Optional macro to be called at the beginning of the QUA program
@@ -87,12 +90,14 @@ class QMBackend(Backend):
 
         self._custom_instructions = {}
         self.machine = validate_machine(machine)
+        self._qmm: Optional[QuantumMachinesManager] = None
         self.channel_mapping: Dict[QiskitChannel, QuAMChannel] = channel_mapping
         self.reverse_channel_mapping: Dict[QuAMChannel, QiskitChannel] = (
             {v: k for k, v in channel_mapping.items()} if channel_mapping is not None else {}
         )
         self._qubit_dict = {qubit.name: i for i, qubit in enumerate(machine.active_qubits)}
-        self._target, self._operation_mapping_QUA = self._populate_target(machine)
+        self._target, self._ref_operation_mapping_QUA = self._populate_target(machine)
+        self._operation_mapping_QUA = self._ref_operation_mapping_QUA.copy()
         self._oq3_custom_gates = []
         self._init_macro = init_macro
 
@@ -122,7 +127,7 @@ class QMBackend(Backend):
         Should be of the form {qubit_index: (quantum_element1, quantum_element2, ...)}
         """
         return {
-            i: tuple(channel.name for channel in qubit.channels)
+            i: tuple(channel for channel in qubit.channels)
             for i, qubit in enumerate(self.machine.active_qubits)
         }
 
@@ -130,9 +135,34 @@ class QMBackend(Backend):
     def qubit_index_dict(self):
         """
         Returns a dictionary mapping qubit indices (Qiskit numbering) to corresponding Qubit objects (based on
-        active_qubits attribute of QuAM instance)
+         the active_qubits attribute of QuAM instance)
         """
         return {i: qubit for i, qubit in enumerate(self.machine.active_qubits)}
+    
+    @property
+    def qmm(self):
+        """
+        Returns the QuantumMachinesManager instance. This is a property that reopens a QuantumMachinesManager each time 
+        it is called for the underlying configuration might have changed between two calls 
+        """
+        if self._qmm is None:
+            self._qmm = self.machine.connect()
+        return self._qmm
+        
+    @property
+    def qm(self) -> QuantumMachine:
+        """
+        Returns the QuantumMachine instance. This is a property that reopens a QuantumMachine each time 
+        it is called for the underlying configuration might have changed between two calls 
+        """
+        return self.qmm.open_qm(self.qm_config)
+
+    @property
+    def qm_config(self)-> DictQuaConfig:
+        """
+        Returns the QUA configuration for the backend
+        """
+        return self.machine.generate_config()
 
     @property
     def max_circuits(self):
@@ -140,11 +170,22 @@ class QMBackend(Backend):
 
     @classmethod
     def _default_options(cls) -> Options:
+        """
+        Returns the default options for the backend. The options are:
+        - shots: The number of shots to run the circuit for (default is 1024)
+        - compiler_options: The options for the QOP compiler (if any)
+        - simulate: The simulation configuration to use (if any) on the QOP
+        - memory: Whether to save each shot in memory (default is False)
+        :return: 
+        """
         return Options(
             shots=1024,
+            compiler_options=None,
+            simulate=None,
+            memory=False
         )
-
-    def _populate_target(self, machine: QuAM) -> Tuple[Target, Dict[OperationIdentifier, Callable]]:
+    
+    def _populate_target(self, machine: Quam) -> Tuple[Target, Dict[OperationIdentifier, Callable]]:
         """
         Populate the target instructions with the QOP configuration
         """
@@ -327,15 +368,26 @@ class QMBackend(Backend):
             )
         return channels
 
-    def run(self, run_input: RunInput | List[RunInput], **options):
+    def run(self, run_input: RunInput | List[RunInput], **options) -> QMJob:
         """
         Run a QuantumCircuit on the QOP backend (currently not supported)
         Args:
             run_input: The QuantumCircuit (or list thereof) to run on the backend. Can
             also be a Qiskit Pulse Schedule or ScheduleBlock
-            options: The options for the run
+            options: The options for the run (can be passed as a dictionary or as keyword arguments). It 
+            could contain the following keys:
+                - shots: The number of shots to run the circuit for (default is 1024)
+                - simulate: The simulation configuration to use (if any) on the QOP
+                - compiler_options: The options for the QOP compiler (if any)
+                
+        Returns:
+            A QMJob object that can be used to retrieve the results of the job    
         """
+        from .qm_job import QMJob
         num_shots = options.get("shots", self.options.shots)
+        simulate = options.get("simulate", self.options.simulate)
+        compiler_options = options.get("compiler_options", self.options.compiler_options)
+        
         if not isinstance(run_input, list):
             run_input = [run_input]
 
@@ -349,64 +401,77 @@ class QMBackend(Backend):
             raise NotImplementedError("Schedule execution not supported yet")
         self.update_calibrations()
         run_program = self.get_run_program(num_shots, run_input)
-        qmm = self.machine.connect()
+        qm = self.qm
+        
+        id = "pending"
+        job = QMJob(self, id, qm, run_program, 
+                    simulate=simulate,
+                    compiler_options=compiler_options)
+        
+        job.submit()
+        return job
+        
 
-    def get_run_program(self, num_shots, run_input):
+    def get_run_program(self, num_shots, run_input: List[QuantumCircuit])-> Program:
+        prog_qc_inputs = []
+        prog_cl_registers = []
+        num_circuits = len(run_input)
+        for qc in run_input:
+            for clbit in qc.clbits:
+                if len(qc.find_bit(clbit).registers) != 1:
+                    raise ValueError(
+                        "Only one register per clbit is supported."
+                    )
+            if not has_reset_at_boundary(qc):
+                qc_reset = qc.copy_empty_like()
+                qc_reset.reset(qc.qubits)
+                prog_qc_inputs.append(qc.compose(qc_reset, inplace=False, front=True))
+            else:
+                prog_qc_inputs.append(qc)
+            prog_cl_registers.append({creg.name: {'creg': creg,
+                                                  'streams': [None for _ in range(creg.size)],
+                                                  } for creg in qc.cregs})
+        
+        def process_circuit(qc: QuantumCircuit):
+            
+            with for_(shot, 0, shot < num_shots, shot + 1):
+                result = self.qiskit_to_qua_macro(qc)
+                for c, clbit in enumerate(qc.clbits):
+                    bit = qc.find_bit(clbit)
+                    bit_output = (
+                        result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{c}"]
+                        if len(bit.registers) == 0
+                        else result.result_program[bit.registers[0][0].name][bit.registers[0][1]]
+                    )
+                    assign(state_int, state_int + (1 << c) * Cast.to_int(bit_output))
+                    save(state_int, state_stream)
+                    
         with program() as prog:
-            if self._init_macro is not None:
+            if self._init_macro:
                 self._init_macro()
+            for i in range(num_circuits):
+                for creg_name, creg_info in prog_cl_registers[i].items():
+                    creg = creg_info['creg']
+                    for j in range(creg.size):
+                        creg_info['streams'][j] = declare_stream()
+                
+                
             all_measurements = declare_stream()
             shot = declare(int)
             state_int = declare(int, value=0)
             state_stream = declare_stream()
-
+        
             if len(run_input) == 1:
-                qc = run_input[0]
-                if not has_reset_at_boundary(qc):
-                    qc.reset(qc.qubits)
-                with for_(shot, 0, shot < num_shots, shot + 1):
-                    result = self.qiskit_to_qua_macro(qc)
-                    for c, clbit in enumerate(qc.clbits):
-                        bit = qc.find_bit(clbit)
-                        if len(bit.registers) == 0:
-                            bit_output = result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{c}"]
-                        else:
-                            creg, creg_index = bit.registers[0]
-                            bit_output = result.result_program[creg.name][creg_index]
-
-                        assign(state_int, state_int + 2**c * Cast.to_int(bit_output))
-
-                        save(state_int, state_stream)
-
+                process_circuit(run_input[0])
             else:
                 qc_var = declare(int)
                 with for_(qc_var, 0, qc_var < len(run_input), qc_var + 1):
                     with switch_(qc_var):
                         for i, qc in enumerate(run_input):
                             with case_(i):
-                                if not has_reset_at_boundary(qc):
-                                    qc.reset(qc.qubits)
-                                with for_(shot, 0, shot < num_shots, shot + 1):
-                                    result = self.qiskit_to_qua_macro(qc)
-                                    for c, clbit in enumerate(qc.clbits):
-                                        bit = qc.find_bit(clbit)
-                                        if len(bit.registers) == 0:
-                                            bit_output = result.result_program[
-                                                f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{c}"
-                                            ]
-                                        else:
-                                            creg, creg_index = bit.registers[0]
-                                            bit_output = result.result_program[creg.name][
-                                                creg_index
-                                            ]
-
-                                        assign(
-                                            state_int, state_int + 2**c * Cast.to_int(bit_output)
-                                        )
-
-                                        save(state_int, state_stream)
+                                process_circuit(qc)
             with stream_processing():
-                state_stream.save_all("all_measurements")
+                state_stream.buffer(num_shots).save_all("all_measurements")
 
         return prog
 
@@ -672,7 +737,6 @@ class QMBackend(Backend):
                         # Convert type of parameters to int if required (for switch case over channels)
                         if param_table is not None:
                             param_table = handle_parameterized_channel(schedule, param_table)
-                            qc.metadata["parameter_table"] = param_table
 
                         self._operation_mapping_QUA[
                             OperationIdentifier(
@@ -707,14 +771,8 @@ class QMBackend(Backend):
         #     raise ValueError(
         #         "QuantumCircuit contains parameters but no parameter table provided"
         #     )
-        basis_gates = [
-            gate for gate in self._oq3_custom_gates if gate not in oq3_keyword_instructions
-        ]
-        basis_gates += [
-            gate
-            for gate in self.target.operation_names
-            if gate not in basis_gates and gate not in oq3_keyword_instructions
-        ]
+        basis_gates = list(set(self._oq3_custom_gates + list(self.target.operation_names)) 
+                           - set(oq3_keyword_instructions))
         # Check if all custom calibrations are in the oq3 basis gates
         for gate_name in qc.calibrations.keys():
             if gate_name not in basis_gates:
@@ -813,7 +871,7 @@ class FluxTunableTransmonBackend(QMBackend):
 
     def __init__(
         self,
-        machine: QuAM,
+        machine: Quam,
     ):
         """
         Initialize the QM backend for the Flux-Tunable Transmon based QuAM

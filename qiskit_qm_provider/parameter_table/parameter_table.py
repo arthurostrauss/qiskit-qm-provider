@@ -95,6 +95,7 @@ class ParameterTable:
         self._packet = None
         self._packet_type = None
         self._direction = None
+        self._usable_for_dgx_communication = True
 
         if isinstance(parameters_dict, Dict):
             for index, (parameter_name, parameter) in enumerate(parameters_dict.items()):
@@ -181,11 +182,16 @@ class ParameterTable:
                 ]
                 for parameter in self.parameters
             }
-            struct = qua_struct(type("Struct", (object,), {"__annotations__": attributes}))
-            self._packet_type = struct
+            struct_name = f"Packet_{self.name}_{self._id}"
+            self.packet_type = qua_struct(type(struct_name, (object,), {"__annotations__": attributes}))
+            
             for parameter in self.parameters:
-                parameter.dgx_struct = struct
-                parameter.stream_id = self._id
+                if parameter.is_standalone(): # Not part of any other prior table
+                    parameter.dgx_struct = self._packet_type
+                    parameter.stream_id = self._id
+                else: 
+                    self._usable_for_dgx_communication = False
+                    
 
     def declare_variables(
         self, pause_program=False, declare_streams=True
@@ -199,6 +205,12 @@ class ParameterTable:
 
         """
         if self.input_type == InputType.DGX:
+            if not self._usable_for_dgx_communication:
+                raise ValueError(
+                    "Cannot declare variables with this table"
+                    " as some parameters are primarily attached to other tables."
+                )
+                
             qua_direction = "INCOMING" if self.direction == Direction.OUTGOING else "OUTGOING"
             self._packet = declare_struct(self._packet_type)
             self._qua_external_stream = declare_external_stream(
@@ -254,7 +266,7 @@ class ParameterTable:
             if self.direction == Direction.INCOMING:
                 raise ValueError("Cannot load input values for outgoing DGX parameter tables.")
             elif self.direction == Direction.OUTGOING:
-                fetch_from_external_stream(self._qua_external_stream, self._packet)
+                receive_from_external_stream(self._qua_external_stream, self._packet)
 
         else:
             if filter_function is not None:

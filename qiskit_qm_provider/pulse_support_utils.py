@@ -2,22 +2,26 @@ from __future__ import annotations
 
 from qiskit.circuit import Parameter
 from qiskit.circuit.parametervector import ParameterVectorElement
-from qm.qua import Math, amp as qua_amp
-from qiskit.pulse.library.pulse import Pulse as QiskitPulse
 from quam.components import Channel as QuAMChannel
-from qiskit.pulse.channels import Channel as QiskitChannel
-from qiskit.pulse import (
-    Play,
-    Instruction,
-    Schedule,
-    ScheduleBlock,
-    Acquire,
-)
 from .sympy_to_qua import sympy_to_qua
 from qiskit.circuit.parameterexpression import ParameterExpression
 from .parameter_table import ParameterTable, Parameter as QuaParameter
 from typing import Dict, Optional, Type
-from qiskit.pulse.transforms import block_to_schedule
+
+try:
+    from qiskit.pulse import (
+        Play,
+        Instruction,
+        Schedule,
+        ScheduleBlock,
+        Acquire,
+    )
+    from qiskit.pulse.transforms import block_to_schedule
+    from qiskit.pulse.library.pulse import Pulse as QiskitPulse
+
+except ImportError:
+    raise ImportError("Failed to import Qiskit Pulse. Please ensure your Qiskit version is below 2.0.0.")
+
 from .pulse_to_qua import *
 
 # TODO: Add duration to the list of real-time parameters (need ScheduleBlock to QUA compiler)

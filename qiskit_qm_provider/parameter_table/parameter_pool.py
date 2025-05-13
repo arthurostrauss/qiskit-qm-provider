@@ -70,7 +70,7 @@ class ParameterPool:
         Get all the objects.
 
         Returns:
-            Dict[int, Any]: A dictionary containing the IDs and the associated objects.
+            List[Any]: A list of all the objects.
         """
         return list(cls._parameters_dict.values())
 
@@ -177,8 +177,11 @@ class ParameterPool:
             path_to_opnic_dev (Optional[str]): The path to the OPNIC development directory
         """
         from .opnic_utils import patch_opnic_wrapper
-
-        param_tables = list(cls.get_all_objs())
+        
+        def check_function(param_table: ParameterTable | Parameter) -> bool:
+            return param_table.usable_for_dgx_communication if isinstance(param_table, ParameterTable) \
+                else param_table.is_standalone()
+        param_tables = list(filter(check_function, cls.get_all_objs()))
         patch_opnic_wrapper(param_tables, path_to_opnic_dev)
         cls._patched = True
 

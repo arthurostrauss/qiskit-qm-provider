@@ -39,7 +39,7 @@ from qm.qua import (
     QuaArray,
     declare_external_stream,
     send_to_external_stream as external_stream_send,
-    fetch_from_external_stream as external_stream_receive,
+    receive_from_external_stream as external_stream_receive,
 )
 from qm.qua.type_hints import Scalar, Vector, VectorOfAnyType, ScalarOfAnyType
 from qm.jobs.running_qm_job import RunningQmJob
@@ -237,7 +237,15 @@ class Parameter:
             raise ValueError(
                 f"Parameter {self.name} is already part of the parameter table {param_table.name}."
             )
-
+    
+    def is_standalone(self) -> bool:
+        """
+        Check if the parameter is standalone (not part of a parameter table).
+        Returns:
+            bool: True if the parameter is standalone, False otherwise.
+        """
+        return len(self._table_indices) == 0
+    
     def assign_value(
         self,
         value: Union["Parameter", ScalarOfAnyType, VectorOfAnyType],
@@ -335,7 +343,7 @@ class Parameter:
         if self.input_type == InputType.INPUT_STREAM:
             self._var = declare_input_stream(t=self.type, name=self.name, value=self.value)
         elif self.input_type == InputType.DGX:
-            if not self._table_indices:
+            if self.is_standalone():
                 # Parameter not part of a parameter table
                 dgx_struct = self.dgx_struct
                 self._var = declare_struct(dgx_struct)
@@ -350,8 +358,10 @@ class Parameter:
                     )
             else:
                 raise ValueError(
-                    "This method should be called from a ParameterTable object "
-                    "as this parameter was associated with a bigger packet."
+                    f"This parameter is part of a parameter table. "
+                    f"Please use the parameter table {ParameterPool.get_obj(self.stream_id).name} "
+                    f"forming the Struct to declare it."
+                    
                 )
 
         else:
@@ -399,11 +409,11 @@ class Parameter:
         Returns:
 
         """
-        if self._index < 0:
+        if self.is_standalone():
             if self.input_type != InputType.DGX:
                 raise ValueError("Invalid input type for this parameter. Must be dgx.")
             length = 1 if not self.is_array else self.length
-            cls_name = f"{self.name}_struct"
+            cls_name = f"{self.name}_struct_{self.stream_id}"
             dgxStruct = qua_struct(
                 type(
                     cls_name,
@@ -411,14 +421,16 @@ class Parameter:
                     {"__annotations__": {self.name: QuaArray[self.type, length]}},
                 )
             )
-
-            return dgxStruct
-        else:
-            return self._dgx_struct
+            self._dgx_struct = dgxStruct
+        
+        return self._dgx_struct
 
     @dgx_struct.setter
     def dgx_struct(self, value):
-        self._dgx_struct = value
+        if self._dgx_struct is None:
+            self._dgx_struct = value
+        else:
+            raise ValueError("DGX struct already set. Cannot change it.")
 
     @property
     def stream_id(self) -> int:
@@ -429,19 +441,17 @@ class Parameter:
             Unique ID integer of the external stream.
 
         """
-        if self._index == -1:  # Not in a ParameterTable
+        if self.is_standalone() and self._stream_id is None:  # Not in a ParameterTable
             self._stream_id = ParameterPool.get_id(self)
-            self._index = -2  # To avoid reassigning the stream ID
 
         return self._stream_id
 
     @stream_id.setter
     def stream_id(self, value: int):
-        if self._index != -1:
-            raise ValueError(
-                "Cannot set stream ID for a parameter that is part of a ParameterTable."
-            )
-        self._stream_id = value
+        if self._stream_id is None: 
+            self._stream_id = value
+        else:
+            raise ValueError("Stream ID already set. Cannot change it.")
 
     @property
     def var(self):
@@ -473,7 +483,23 @@ class Parameter:
             if isinstance(table, ParameterTable) and table.has_parameter(self):
                 tables.append(table)
         return tables
-
+    
+    @property
+    def main_table(self) -> Optional[ParameterTable]:
+        """
+        Returns:
+            The ParameterTable object used to declare the parameter. 
+            Specifically, the first table in the list of tables and the one that should be 
+            used for communication if InputType is DGX.
+            
+        :returns: ParameterTable object or None if not found.
+        """
+        if self.is_standalone():
+            return None
+        else:
+            stream_id = self.stream_id
+            return ParameterPool.get_obj(stream_id)
+        
     @property
     def type(self):
         """Type of the associated QUA variable."""
@@ -610,13 +636,11 @@ class Parameter:
             qua_advance_input_stream(self.var)
 
         elif self.input_type == InputType.DGX:
-            if self._dgx_struct is None:
+            if self.is_standalone():
                 external_stream_receive(self._external_stream_incoming, self._var)
             else:
-                raise ValueError(
-                    "This method should be called from a ParameterTable object "
-                    "as this parameter was associated with a bigger packet."
-                )
+                raise RuntimeError(f"This method should be called from the ParameterTable {ParameterPool.get_obj(self.stream_id).name}"
+                                   f" as this parameter was associated with a bigger packet.")
 
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io = IO1 if self.input_type == InputType.IO1 else IO2
@@ -697,20 +721,17 @@ class Parameter:
             job.push_to_input_stream(self.name, value)
 
         elif self.input_type == InputType.DGX:
-            if self.index < 0:
-                raise ValueError(
-                    "Cannot push value to a standalone parameter,"
-                    "Please push through the parameter table instead."
-                )
-            if self.direction == Direction.INCOMING:
-                raise ValueError("Cannot push value to Incoming stream.")
-            # Prepare the packet to be sent
-            param_dict = {self.name: [value] if not self.is_array else value}
-            param_dict = {
-                k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in param_dict.items()
-            }
+            if self.is_standalone():
+                if self.direction == Direction.INCOMING:
+                    raise ValueError("Cannot push value to Incoming stream.")
+                if not ParameterPool.configured or not ParameterPool.patched:
+                    raise ValueError("OPNIC not configured or patched.")
+                # Prepare the packet to be sent
+                param_dict = {self.name: [value] if not self.is_array else value}
+                param_dict = {
+                    k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in param_dict.items()
+                }
 
-            if ParameterPool.configured and ParameterPool.patched:
                 # from opnic_python.opnic_wrapper import OutgoingPacket, send_packet
                 if "opnic_wrapper" not in sys.path:
                     sys.path.append("/home/dpoulos/aps_demo/python-wrapper/wrapper/build/python")
@@ -721,11 +742,13 @@ class Parameter:
                 for k, v in param_dict.items():
                     setattr(packet, k, v)
                 send_packet(self.stream_id, packet)
+    
+                if verbosity > 1:
+                    print(f"Sent packet: {packet}")
             else:
-                raise ValueError("OPNIC not configured or patched.")
-
-            if verbosity > 1:
-                print(f"Sent packet: {packet}")
+                raise RuntimeError(f"This method should be called from the ParameterTable object"
+                                   f" {ParameterPool.get_obj(self.stream_id).name} as this parameter "
+                                   f"was associated with a bigger packet.")
 
     def send_to_python(self):
         """
@@ -747,11 +770,12 @@ class Parameter:
         elif self.input_type == InputType.INPUT_STREAM:
             self.save_to_stream()
         elif self.input_type == InputType.DGX:
-            if self.index >= 0:  # Part of a parameter table
-                raise ValueError(
-                    "Cannot send value to a standalone parameter,"
-                    "Please use this method through the parameter table instead."
-                )
+            if not self.is_standalone():  # Part of a parameter table
+                raise RuntimeError(f"This method should be called from the"
+                                   f" ParameterTable object {ParameterPool.get_obj(self.stream_id).name} "
+                                   f"as this parameter was associated with a bigger packet.")
+            
+               
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot send value to outgoing stream.")
 
@@ -787,11 +811,11 @@ class Parameter:
             while value.is_processing():
                 value = value.fetch_all()
         elif self.input_type == InputType.DGX:
-            if self.index < 0:
-                raise ValueError(
-                    "Cannot fetch value from a standalone parameter,"
-                    "Please fetch through the parameter table instead."
-                )
+            if not self.is_standalone():  # Part of a parameter table
+                raise RuntimeError(f"This method should be called from the"
+                                   f" ParameterTable object {ParameterPool.get_obj(self.stream_id).name} "
+                                   f"as this parameter was associated with a bigger packet.")
+
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot fetch value from outgoing stream.")
             elif not ParameterPool.configured or not ParameterPool.patched:

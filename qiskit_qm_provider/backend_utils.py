@@ -4,11 +4,12 @@ from qiskit import QuantumCircuit
 from qiskit.circuit import Gate, IfElseOp, WhileLoopOp, ForLoopOp, SwitchCaseOp
 from qiskit.circuit.library import get_standard_gate_name_mapping
 
-from quam.components import BasicQuam as QuAM, Qubit, QubitPair
+from quam.components import Qubit, QubitPair
 from .additional_gates import CRGate, SYGate, SYdgGate
+from quam_builder.architecture.superconducting.qpu.base_quam import BaseQuam
 
 
-def validate_machine(machine) -> QuAM:
+def validate_machine(machine) -> BaseQuam:
     if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
         raise ValueError(
             "Invalid QuAM instance provided, should have qubits and qubit_pairs attributes"
