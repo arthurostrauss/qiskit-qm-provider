@@ -82,6 +82,7 @@ class QMBackend(Backend):
         machine: Quam,
         channel_mapping: Optional[Dict[QiskitChannel, QuAMChannel]] = None,
         init_macro: Optional[Callable] = None,
+        qmm: Optional[QuantumMachinesManager] = None,
     ):
         """
         Initialize the QM backend
@@ -90,6 +91,7 @@ class QMBackend(Backend):
             channel_mapping: Optional mapping of Qiskit Pulse Channels to QuAM Channels.
                              This mapping enables the conversion of Qiskit schedules into parametric QUA macros.
             init_macro: Optional macro to be called at the beginning of the QUA program
+            qmm: Optional QuantumMachinesManager instance. If not provided, inferred from the machine
 
         """
 
@@ -97,7 +99,7 @@ class QMBackend(Backend):
 
         self._custom_instructions = {}
         self.machine = validate_machine(machine)
-        self._qmm: Optional[QuantumMachinesManager] = None
+        self._qmm: Optional[QuantumMachinesManager] = qmm
         self.channel_mapping: Dict[QiskitChannel, QuAMChannel] = channel_mapping
         self.reverse_channel_mapping: Dict[QuAMChannel, QiskitChannel] = (
             {v: k for k, v in channel_mapping.items()} if channel_mapping is not None else {}
@@ -498,14 +500,17 @@ class QMBackend(Backend):
 
                 for creg, stream in zip(qc.cregs, reg_streams):
                     for i in range(creg.size):
-                        assign(state_int, state_int + (1 << i) * clbits_dict[creg.name][i])
+                        assign(
+                            state_int, state_int + (1 << i) * Cast.to_int(clbits_dict[creg.name][i])
+                        )
                     save(state_int, stream)
                     assign(state_int, 0)
                 if num_solo_bits > 0:
                     for i in range(num_solo_bits):
                         assign(
                             state_int,
-                            state_int + (1 << i) * clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i],
+                            state_int
+                            + (1 << i) * Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i]),
                         )
                     save(state_int, solo_bits_stream)
                     assign(state_int, 0)
@@ -961,6 +966,7 @@ class FluxTunableTransmonBackend(QMBackend):
     def __init__(
         self,
         machine: Quam,
+        qmm: Optional[QuantumMachinesManager] = None,
     ):
         """
         Initialize the QM backend for the Flux-Tunable Transmon based QuAM
@@ -997,6 +1003,7 @@ class FluxTunableTransmonBackend(QMBackend):
             machine,
             channel_mapping=channel_mapping,
             init_macro=machine.apply_all_flux_to_joint_idle,
+            qmm=qmm,
         )
 
     @property

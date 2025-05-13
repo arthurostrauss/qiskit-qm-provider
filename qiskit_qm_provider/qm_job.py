@@ -71,6 +71,6 @@ class QMJob(JobV1):
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")
 
-        return self._result_function()
+        return self._result_function(self._qm_job)
 
         # TODO: implement result fetching
