@@ -1,8 +1,10 @@
-from typing import Optional
+from typing import Optional, Dict, List, Callable
+from collections import Counter
 
+from qiskit.primitives import BitArray, SamplerPubResult, DataBin
 from qiskit.providers.job import JobV1, JobStatus
 from qiskit.result.models import ExperimentResult, ExperimentResultData
-from qiskit.result import Result
+from qiskit.result import Result, Counts
 from qm import QuantumMachine, Program
 from qm.grpc.frontend import SimulatedResponsePart
 
@@ -10,28 +12,32 @@ from .qm_backend import QMBackend
 from qm.jobs.running_qm_job import RunningQmJob
 from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.base_job import QmBaseJob
+from .backend_utils import binary
+
 
 class QMJob(JobV1):
     """QMJob class for Quantum Machines."""
 
-    def __init__(self, backend: QMBackend, 
-                 job_id: str, 
-                 qm: QuantumMachine,
-                 program: Program,
-                 run_input_length: int,
-                 **kwargs):
-        
+    def __init__(
+        self,
+        backend: QMBackend,
+        job_id: str,
+        qm: QuantumMachine,
+        program: Program,
+        result_function: Callable[[RunningQmJob], Result],
+        **kwargs,
+    ):
+
         JobV1.__init__(self, backend, job_id, **kwargs)
         self.qm = qm
         self._qm_job: Optional[RunningQmJob] = None
         self.program = program
-        self._run_input_length = run_input_length
+        self._result_function = result_function
 
-    
     def status(self) -> JobStatus:
         """Return the job status."""
         if self._qm_job is None:
-            raise RuntimeError('QM job has not submitted yet')
+            raise RuntimeError("QM job has not submitted yet")
         status = self._qm_job.status
         mapping = {
             "unknown": JobStatus.ERROR,
@@ -43,31 +49,28 @@ class QMJob(JobV1):
             "error": JobStatus.ERROR,
         }
         return mapping.get(status, JobStatus.ERROR)
-        
-    
+
     def submit(self):
         """Submit the job to the backend."""
-        self._qm_job = self.qm.execute(self.program,
-                                       **self.metadata)
+        compiler_options = self.metadata.get("compiler_options", None)
+        simulate = self.metadata.get("simulate", None)
+        self._qm_job = self.qm.execute(
+            self.program, simulate=simulate, compiler_options=compiler_options
+        )
+
         self._job_id = self._qm_job.id
-        
+
     def cancel(self):
         """Cancel the job."""
         if self._qm_job is None:
-            raise RuntimeError('QM job is not running')
+            raise RuntimeError("QM job is not running")
         return self._qm_job.cancel()
-    
+
     def result(self):
         """Get the job result."""
         if self._qm_job is None:
-            raise RuntimeError('QM job has not submitted yet')
-        results_handle = self._qm_job.result_handles
-        results_handle.wait_for_all_values()
-        
-        state_int = results_handle.get('all_measurements').fetch_all()["value"]
-        
-        
-        
-        
-        
+            raise RuntimeError("QM job has not submitted yet")
+
+        return self._result_function()
+
         # TODO: implement result fetching

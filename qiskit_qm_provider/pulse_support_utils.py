@@ -20,7 +20,9 @@ try:
     from qiskit.pulse.library.pulse import Pulse as QiskitPulse
 
 except ImportError:
-    raise ImportError("Failed to import Qiskit Pulse. Please ensure your Qiskit version is below 2.0.0.")
+    raise ImportError(
+        "Failed to import Qiskit Pulse. Please ensure your Qiskit version is below 2.0.0."
+    )
 
 from .pulse_to_qua import *
 

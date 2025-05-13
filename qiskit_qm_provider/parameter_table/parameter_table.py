@@ -183,15 +183,16 @@ class ParameterTable:
                 for parameter in self.parameters
             }
             struct_name = f"Packet_{self.name}_{self._id}"
-            self.packet_type = qua_struct(type(struct_name, (object,), {"__annotations__": attributes}))
-            
+            self.packet_type = qua_struct(
+                type(struct_name, (object,), {"__annotations__": attributes})
+            )
+
             for parameter in self.parameters:
-                if parameter.is_standalone(): # Not part of any other prior table
+                if parameter.is_standalone():  # Not part of any other prior table
                     parameter.dgx_struct = self._packet_type
                     parameter.stream_id = self._id
-                else: 
+                else:
                     self._usable_for_dgx_communication = False
-                    
 
     def declare_variables(
         self, pause_program=False, declare_streams=True
@@ -210,7 +211,7 @@ class ParameterTable:
                     "Cannot declare variables with this table"
                     " as some parameters are primarily attached to other tables."
                 )
-                
+
             qua_direction = "INCOMING" if self.direction == Direction.OUTGOING else "OUTGOING"
             self._packet = declare_struct(self._packet_type)
             self._qua_external_stream = declare_external_stream(

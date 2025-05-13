@@ -237,7 +237,7 @@ class Parameter:
             raise ValueError(
                 f"Parameter {self.name} is already part of the parameter table {param_table.name}."
             )
-    
+
     def is_standalone(self) -> bool:
         """
         Check if the parameter is standalone (not part of a parameter table).
@@ -245,7 +245,7 @@ class Parameter:
             bool: True if the parameter is standalone, False otherwise.
         """
         return len(self._table_indices) == 0
-    
+
     def assign_value(
         self,
         value: Union["Parameter", ScalarOfAnyType, VectorOfAnyType],
@@ -361,7 +361,6 @@ class Parameter:
                     f"This parameter is part of a parameter table. "
                     f"Please use the parameter table {ParameterPool.get_obj(self.stream_id).name} "
                     f"forming the Struct to declare it."
-                    
                 )
 
         else:
@@ -422,7 +421,7 @@ class Parameter:
                 )
             )
             self._dgx_struct = dgxStruct
-        
+
         return self._dgx_struct
 
     @dgx_struct.setter
@@ -448,7 +447,7 @@ class Parameter:
 
     @stream_id.setter
     def stream_id(self, value: int):
-        if self._stream_id is None: 
+        if self._stream_id is None:
             self._stream_id = value
         else:
             raise ValueError("Stream ID already set. Cannot change it.")
@@ -483,15 +482,15 @@ class Parameter:
             if isinstance(table, ParameterTable) and table.has_parameter(self):
                 tables.append(table)
         return tables
-    
+
     @property
     def main_table(self) -> Optional[ParameterTable]:
         """
         Returns:
-            The ParameterTable object used to declare the parameter. 
-            Specifically, the first table in the list of tables and the one that should be 
+            The ParameterTable object used to declare the parameter.
+            Specifically, the first table in the list of tables and the one that should be
             used for communication if InputType is DGX.
-            
+
         :returns: ParameterTable object or None if not found.
         """
         if self.is_standalone():
@@ -499,7 +498,7 @@ class Parameter:
         else:
             stream_id = self.stream_id
             return ParameterPool.get_obj(stream_id)
-        
+
     @property
     def type(self):
         """Type of the associated QUA variable."""
@@ -639,8 +638,10 @@ class Parameter:
             if self.is_standalone():
                 external_stream_receive(self._external_stream_incoming, self._var)
             else:
-                raise RuntimeError(f"This method should be called from the ParameterTable {ParameterPool.get_obj(self.stream_id).name}"
-                                   f" as this parameter was associated with a bigger packet.")
+                raise RuntimeError(
+                    f"This method should be called from the ParameterTable {ParameterPool.get_obj(self.stream_id).name}"
+                    f" as this parameter was associated with a bigger packet."
+                )
 
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io = IO1 if self.input_type == InputType.IO1 else IO2
@@ -742,13 +743,15 @@ class Parameter:
                 for k, v in param_dict.items():
                     setattr(packet, k, v)
                 send_packet(self.stream_id, packet)
-    
+
                 if verbosity > 1:
                     print(f"Sent packet: {packet}")
             else:
-                raise RuntimeError(f"This method should be called from the ParameterTable object"
-                                   f" {ParameterPool.get_obj(self.stream_id).name} as this parameter "
-                                   f"was associated with a bigger packet.")
+                raise RuntimeError(
+                    f"This method should be called from the ParameterTable object"
+                    f" {ParameterPool.get_obj(self.stream_id).name} as this parameter "
+                    f"was associated with a bigger packet."
+                )
 
     def send_to_python(self):
         """
@@ -771,11 +774,12 @@ class Parameter:
             self.save_to_stream()
         elif self.input_type == InputType.DGX:
             if not self.is_standalone():  # Part of a parameter table
-                raise RuntimeError(f"This method should be called from the"
-                                   f" ParameterTable object {ParameterPool.get_obj(self.stream_id).name} "
-                                   f"as this parameter was associated with a bigger packet.")
-            
-               
+                raise RuntimeError(
+                    f"This method should be called from the"
+                    f" ParameterTable object {ParameterPool.get_obj(self.stream_id).name} "
+                    f"as this parameter was associated with a bigger packet."
+                )
+
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot send value to outgoing stream.")
 
@@ -812,9 +816,11 @@ class Parameter:
                 value = value.fetch_all()
         elif self.input_type == InputType.DGX:
             if not self.is_standalone():  # Part of a parameter table
-                raise RuntimeError(f"This method should be called from the"
-                                   f" ParameterTable object {ParameterPool.get_obj(self.stream_id).name} "
-                                   f"as this parameter was associated with a bigger packet.")
+                raise RuntimeError(
+                    f"This method should be called from the"
+                    f" ParameterTable object {ParameterPool.get_obj(self.stream_id).name} "
+                    f"as this parameter was associated with a bigger packet."
+                )
 
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot fetch value from outgoing stream.")

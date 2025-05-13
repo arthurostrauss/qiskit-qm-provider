@@ -7,6 +7,8 @@ __all__ = [
     "SYdgGate",
     "CRGate",
 ]
+
+
 class SYGate(Gate):
     def __init__(self, label=None):
         super().__init__("sy", 1, [], label=label)
@@ -27,6 +29,7 @@ class SYGate(Gate):
     def __array__(self, dtype=None, copy=None):
         return gate_map()["ry"](np.pi / 2).__array__(dtype=dtype, copy=copy)
 
+
 class SYdgGate(Gate):
     def __init__(self, label=None):
         super().__init__("sydg", 1, [], label=label)
@@ -46,6 +49,7 @@ class SYdgGate(Gate):
 
     def __array__(self, dtype=None, copy=None):
         return gate_map()["ry"](-np.pi / 2).__array__(dtype=dtype, copy=copy)
+
 
 class CRGate(Gate):
     def __init__(self, label=None):

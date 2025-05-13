@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import List
+
 from qiskit import QuantumCircuit
 from qiskit.circuit import Gate, IfElseOp, WhileLoopOp, ForLoopOp, SwitchCaseOp
 from qiskit.circuit.library import get_standard_gate_name_mapping
@@ -20,6 +22,36 @@ def validate_machine(machine) -> BaseQuam:
         raise ValueError("All qubit pairs should be of type QubitPair")
 
     return machine
+
+
+def validate_circuits(
+    circuits: List[QuantumCircuit], should_reset: bool = True, check_for_params: bool = False
+) -> List[QuantumCircuit]:
+    """
+    Validate the circuits to be compiled. The circuits should be a list of QuantumCircuits.
+    :param circuits: List of QuantumCircuits to be validated.
+    :param should_reset: If True, check if the circuit has a reset at the boundary.
+    :param check_for_params: If True, check if the circuit has compile-time parameters.
+    :return: Modified circuits with an added reset if needed.
+    """
+    if not all(isinstance(qc, QuantumCircuit) for qc in circuits):
+        raise ValueError("Input should be a QuantumCircuit or a Qiskit Pulse Schedule")
+    if check_for_params and not all(len(qc.parameters) == 0 for qc in circuits):
+        raise ValueError("Input should not contain parameters")
+
+    new_circuits = []
+    for qc in circuits:
+        for clbit in qc.clbits:
+            if len(qc.find_bit(clbit).registers) != 1:
+                raise ValueError("Only one register per clbit is supported.")
+        if not has_reset_at_boundary(qc) and should_reset:
+            qc_reset = qc.copy_empty_like()
+            qc_reset.reset(qc.qubits)
+            new_circuits.append(qc.compose(qc_reset, inplace=False, front=True))
+        else:
+            new_circuits.append(qc)
+
+    return new_circuits
 
 
 def look_for_standard_op(op: str):
@@ -82,3 +114,13 @@ control_flow_name_mapping = {
 }
 oq3_keyword_instructions = ("measure", "reset", "delay", "nop")
 _QASM3_DUMP_LOOSE_BIT_PREFIX = "_bit"
+
+
+def binary(val: int, num_bits: int = 0) -> str:
+    """
+    Convert an integer to a binary string with leading zeros.
+    :param val: The integer value to convert.
+    :param num_bits: The number of bits in the binary representation.
+    :return: The binary string representation of the integer.
+    """
+    return bin(val)[2:].zfill(num_bits)

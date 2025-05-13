@@ -177,10 +177,14 @@ class ParameterPool:
             path_to_opnic_dev (Optional[str]): The path to the OPNIC development directory
         """
         from .opnic_utils import patch_opnic_wrapper
-        
+
         def check_function(param_table: ParameterTable | Parameter) -> bool:
-            return param_table.usable_for_dgx_communication if isinstance(param_table, ParameterTable) \
+            return (
+                param_table.usable_for_dgx_communication
+                if isinstance(param_table, ParameterTable)
                 else param_table.is_standalone()
+            )
+
         param_tables = list(filter(check_function, cls.get_all_objs()))
         patch_opnic_wrapper(param_tables, path_to_opnic_dev)
         cls._patched = True
