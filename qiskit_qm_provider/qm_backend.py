@@ -158,6 +158,14 @@ class QMBackend(Backend):
             self._qmm = self.machine.connect()
         return self._qmm
 
+    @qmm.setter
+    def qmm(self, qmm: QuantumMachinesManager):
+        """
+        Set the QuantumMachinesManager instance. This is a property that reopens a QuantumMachinesManager each time
+        it is called for the underlying configuration might have changed between two calls
+        """
+        self._qmm = qmm
+
     @property
     def qm(self) -> QuantumMachine:
         """

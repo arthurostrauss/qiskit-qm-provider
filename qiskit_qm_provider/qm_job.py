@@ -5,7 +5,7 @@ from qiskit.primitives import BitArray, SamplerPubResult, DataBin
 from qiskit.providers.job import JobV1, JobStatus
 from qiskit.result.models import ExperimentResult, ExperimentResultData
 from qiskit.result import Result, Counts
-from qm import QuantumMachine, Program
+from qm import QuantumMachine, Program, SimulationConfig
 from qm.grpc.frontend import SimulatedResponsePart
 
 from .qm_backend import QMBackend
@@ -54,9 +54,12 @@ class QMJob(JobV1):
         """Submit the job to the backend."""
         compiler_options = self.metadata.get("compiler_options", None)
         simulate = self.metadata.get("simulate", None)
-        self._qm_job = self.qm.execute(
-            self.program, simulate=simulate, compiler_options=compiler_options
-        )
+        if isinstance(simulate, SimulationConfig):
+            self._qm_job = self.qm.simulate(
+                self.program, simulate=simulate, compiler_options=compiler_options
+            )
+        else:
+            self._qm_job = self.qm.execute(self.program, compiler_options=compiler_options)
 
         self._job_id = self._qm_job.id
 
@@ -73,4 +76,9 @@ class QMJob(JobV1):
 
         return self._result_function(self._qm_job)
 
-        # TODO: implement result fetching
+    @property
+    def qm_job(self) -> Optional[RunningQmJob]:
+        """Get the QM job."""
+        if self._qm_job is None:
+            raise RuntimeError("QM job has not submitted yet")
+        return self._qm_job
