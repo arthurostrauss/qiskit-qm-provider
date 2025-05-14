@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Optional, Dict, List, Callable
 from collections import Counter
 
@@ -30,7 +32,7 @@ class QMJob(JobV1):
 
         JobV1.__init__(self, backend, job_id, **kwargs)
         self.qm = qm
-        self._qm_job: Optional[RunningQmJob] = None
+        self._qm_job: Optional[RunningQmJob | QmPendingJob | List[QmPendingJob]] = None
         self.program = program
         self._result_function = result_function
 
@@ -54,14 +56,21 @@ class QMJob(JobV1):
         """Submit the job to the backend."""
         compiler_options = self.metadata.get("compiler_options", None)
         simulate = self.metadata.get("simulate", None)
+
         if isinstance(simulate, SimulationConfig):
             self._qm_job = self.qm.simulate(
                 self.program, simulate=simulate, compiler_options=compiler_options
             )
         else:
-            self._qm_job = self.qm.execute(self.program, compiler_options=compiler_options)
-
-        self._job_id = self._qm_job.id
+            if isinstance(self.program, list):
+                self._job_id = ""
+                self._qm_job = []
+                for prog in self.program:
+                    self._qm_job.append(self.qm.queue.add(prog, compiler_options=compiler_options))
+                self._job_id += ",".join([job.id for job in self._qm_job])
+            else:
+                self._qm_job = self.qm.execute(self.program, compiler_options=compiler_options)
+                self._job_id = self._qm_job.id
 
     def cancel(self):
         """Cancel the job."""
@@ -77,7 +86,7 @@ class QMJob(JobV1):
         return self._result_function(self._qm_job)
 
     @property
-    def qm_job(self) -> Optional[RunningQmJob]:
+    def qm_job(self) -> Optional[RunningQmJob | List[QmPendingJob | RunningQmJob]]:
         """Get the QM job."""
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")

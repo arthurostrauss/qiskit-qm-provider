@@ -9,6 +9,7 @@ from qiskit.circuit.library import get_standard_gate_name_mapping
 from quam.components import Qubit, QubitPair
 from .additional_gates import CRGate, SYGate, SYdgGate
 from quam_builder.architecture.superconducting.qpu.base_quam import BaseQuam
+from oqc import OperationIdentifier
 
 
 def validate_machine(machine) -> BaseQuam:
@@ -52,6 +53,25 @@ def validate_circuits(
             new_circuits.append(qc)
 
     return new_circuits
+
+
+def has_conflicting_calibrations(circuits: List[QuantumCircuit]) -> bool:
+    """
+    Check if the circuits have conflicting calibrations.
+    :param circuits: List of QuantumCircuits to be checked.
+    :return: True if there are conflicting calibrations, False otherwise.
+    """
+    custom_gates = []
+    for qc in circuits:
+        if hasattr(qc, "calibrations") and qc.calibrations:
+            for gate_name, cal_info in qc.calibrations.items():
+                for qubits, parameters in cal_info.keys():
+                    op_id = OperationIdentifier(gate_name, len(parameters), qubits)
+                    if op_id not in custom_gates:
+                        custom_gates.append(op_id)
+                    else:
+                        return True
+    return False
 
 
 def look_for_standard_op(op: str):

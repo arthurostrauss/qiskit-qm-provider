@@ -182,6 +182,7 @@ class Parameter:
             direction = Direction(direction) if isinstance(direction, str) else direction
         self._direction = direction
         self._table_indices: Dict[str, int] = {}
+        self._main_table = None
 
         if self._input_type == InputType.DGX and self.direction is None:
             raise ValueError("Direction must be provided for DGX input type.")
@@ -226,11 +227,7 @@ class Parameter:
         """
         if self._index == -1:
             self._index = -2
-        if self.input_type == InputType.DGX and not len(self._table_indices) <= 1:
-            raise ValueError(
-                "This parameter is already part of a parameter table. In DGX mode, "
-                "you cannot assign the same parameter to multiple tables."
-            )
+
         if param_table.name not in self._table_indices:
             self._table_indices[param_table.name] = index
         else:
@@ -244,7 +241,18 @@ class Parameter:
         Returns:
             bool: True if the parameter is standalone, False otherwise.
         """
-        return len(self._table_indices) == 0
+        return self.main_table is None
+
+    @property
+    def main_table(self) -> Optional[ParameterTable]:
+        """
+        Returns:
+            The ParameterTable object used to declare the parameter.
+            Specifically, the one that should be used for communication if InputType is DGX.
+        :returns: ParameterTable object or None if not found.
+
+        """
+        return self._main_table
 
     def assign_value(
         self,

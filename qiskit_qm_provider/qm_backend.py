@@ -59,11 +59,11 @@ from .backend_utils import (
     validate_machine,
     look_for_standard_op,
     get_extended_gate_name_mapping,
-    has_reset_at_boundary,
     control_flow_name_mapping,
     _QASM3_DUMP_LOOSE_BIT_PREFIX,
     oq3_keyword_instructions,
     validate_circuits,
+    has_conflicting_calibrations,
 )
 from .qm_instruction_properties import QMInstructionProperties
 
@@ -414,8 +414,10 @@ class QMBackend(Backend):
             run_input, should_reset=not skip_reset, check_for_params=True
         )
         num_circuits = len(new_circuits)
+        self.update_target()
+        for qc in new_circuits:
+            self.update_calibrations(qc)
 
-        self.update_calibrations()
         run_program = self.get_run_program(num_shots, new_circuits)
         qm = self.qm
 
@@ -426,9 +428,15 @@ class QMBackend(Backend):
             if len(solo_bits) > 0:
                 cregs_dicts[i][_QASM3_DUMP_LOOSE_BIT_PREFIX] = len(solo_bits)
 
-        def result_function(qm_job: RunningQmJob) -> Result:
-            results_handle = qm_job.result_handles
-            results_handle.wait_for_all_values()
+        def result_function(qm_job: RunningQmJob | List[RunningQmJob]) -> Result:
+            is_job_list = isinstance(qm_job, list)
+            if is_job_list:
+                results_handle = [job.result_handles for job in qm_job]
+                for handle in results_handle:
+                    handle.wait_for_all_values()
+            else:
+                results_handle = qm_job.result_handles
+                results_handle.wait_for_all_values()
 
             # Collect all data from stream processing in the correct registers and feed
             # it to the result object
@@ -436,7 +444,10 @@ class QMBackend(Backend):
             for i in range(num_circuits):
                 qc_meas_data = {}
                 for creg, creg_size in cregs_dicts[i].items():
-                    data = results_handle.get(f"{creg}_{i}").fetch_all()["value"]
+                    if is_job_list:
+                        data = results_handle[i].get(f"{creg}_{i}").fetch_all()["value"]
+                    else:
+                        data = results_handle.get(f"{creg}_{i}").fetch_all()["value"]
                     # time_stamps = results_handle.get(f'{creg}_{i}').fetch_all()["timestamp"]
                     bit_array = BitArray.from_samples(data, creg_size)
                     qc_meas_data[creg] = bit_array
@@ -473,9 +484,10 @@ class QMBackend(Backend):
         )
 
         job.submit()
+        self._operation_mapping_QUA = self._ref_operation_mapping_QUA.copy()
         return job
 
-    def get_run_program(self, num_shots, circuits: List[QuantumCircuit]) -> Program:
+    def get_run_program(self, num_shots, circuits: List[QuantumCircuit]) -> Program | List[Program]:
         num_circuits = len(circuits)
 
         def process_circuit(
@@ -523,57 +535,86 @@ class QMBackend(Backend):
                     save(state_int, solo_bits_stream)
                     assign(state_int, 0)
 
-        with program() as prog:
-            if self._init_macro:
-                self._init_macro()
+        if not has_conflicting_calibrations(circuits):
+            with program() as prog:
+                if self._init_macro:
+                    self._init_macro()
 
-            shot = declare(int)
-            state_int = declare(int, value=0)
-            num_registers = [len(circuits[i].cregs) for i in range(num_circuits)]
+                shot = declare(int)
+                state_int = declare(int, value=0)
+                num_registers = [len(circuits[i].cregs) for i in range(num_circuits)]
 
-            num_solo_bits = [
-                len(
-                    [
-                        bit
-                        for bit in circuits[0].clbits
-                        if len(circuits[i].find_bit(bit).registers) == 0
-                    ]
-                )
-                for i in range(num_circuits)
-            ]
-            regs_streams = [
-                [declare_stream() for _ in range(num_cregs)] for num_cregs in num_registers
-            ]
-            solo_bits_stream = [declare_stream() for _ in range(num_circuits)]
+                num_solo_bits = [
+                    len(
+                        [
+                            bit
+                            for bit in circuits[0].clbits
+                            if len(circuits[i].find_bit(bit).registers) == 0
+                        ]
+                    )
+                    for i in range(num_circuits)
+                ]
+                regs_streams = [
+                    [declare_stream() for _ in range(num_cregs)] for num_cregs in num_registers
+                ]
+                solo_bits_stream = [declare_stream() for _ in range(num_circuits)]
 
-            if num_circuits == 1:
-                process_circuit(
-                    circuits[0],
-                    state_int,
-                    shot,
-                    regs_streams[0],
-                    solo_bits_stream[0] if num_solo_bits[0] > 0 else None,
-                )
-            else:
-                qc_var = declare(int)
-                with for_(qc_var, 0, qc_var < len(circuits), qc_var + 1):
-                    with switch_(qc_var):
-                        for i, qc in enumerate(circuits):
-                            with case_(i):
-                                process_circuit(
-                                    qc,
-                                    state_int,
-                                    shot,
-                                    regs_streams[i],
-                                    solo_bits_stream[i] if num_solo_bits[i] > 0 else None,
-                                )
+                if num_circuits == 1:
+                    process_circuit(
+                        circuits[0],
+                        state_int,
+                        shot,
+                        regs_streams[0],
+                        solo_bits_stream[0] if num_solo_bits[0] > 0 else None,
+                    )
+                else:
+                    qc_var = declare(int)
+                    with for_(qc_var, 0, qc_var < len(circuits), qc_var + 1):
+                        with switch_(qc_var):
+                            for i, qc in enumerate(circuits):
+                                with case_(i):
+                                    process_circuit(
+                                        qc,
+                                        state_int,
+                                        shot,
+                                        regs_streams[i],
+                                        solo_bits_stream[i] if num_solo_bits[i] > 0 else None,
+                                    )
 
-            with stream_processing():
-                for i, creg_streams in enumerate(regs_streams):
-                    for creg, creg_stream in zip(circuits[i].cregs, creg_streams):
-                        creg_stream.save_all(f"{creg.name}_{i}")
+                with stream_processing():
+                    for i, creg_streams in enumerate(regs_streams):
+                        for creg, creg_stream in zip(circuits[i].cregs, creg_streams):
+                            creg_stream.save_all(f"{creg.name}_{i}")
 
-        return prog
+            return prog
+        else:
+            progs = []
+            for j, qc in enumerate(circuits):
+                with program() as prog:
+                    if self._init_macro:
+                        self._init_macro()
+                    shot = declare(int)
+                    state_int = declare(int, value=0)
+                    num_registers = len(qc.cregs)
+                    num_solo_bits = len(
+                        [bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0]
+                    )
+                    regs_streams = [declare_stream() for _ in range(num_registers)]
+                    solo_bits_stream = declare_stream() if num_solo_bits > 0 else None
+                    process_circuit(
+                        qc,
+                        state_int,
+                        shot,
+                        regs_streams,
+                        solo_bits_stream,
+                    )
+
+                with stream_processing():
+                    for i, creg_stream in enumerate(regs_streams):
+                        creg_stream.save_all(f"{qc.cregs[i].name}_{j}")
+
+                progs.append(prog)
+            return progs
 
     def schedule_to_qua_macro(
         self,
@@ -587,6 +628,8 @@ class QMBackend(Backend):
         Args:
             sched: The Qiskit Pulse Schedule to convert
             param_table: The parameter table to use for the conversion of parameterized pulses to QUA variables
+            input_type: The input type to use for the conversion of parameterized pulses to QUA variables.
+                Should be specified only if the schedule is parameterized and the parameter table is not provided.
 
         Returns:
             The QUA macro corresponding to the Qiskit Pulse Schedule
@@ -725,9 +768,8 @@ class QMBackend(Backend):
             else:
                 self.get_quam_channel(channel).operations[pulse.name] = QuAMQiskitPulse(pulse)
 
-    def update_calibrations(
+    def update_target(
         self,
-        qc: Optional[QuantumCircuit | List[QuantumCircuit]] = None,
         input_type: Optional[InputType] = None,
     ):
         """
@@ -745,7 +787,7 @@ class QMBackend(Backend):
         """
         # Check the target object for new operations
         for op_name, op_properties in self.target.items():
-            gate_set = list(set(key.name for key in self._operation_mapping_QUA.keys())) + list(
+            gate_set = list(set(key.name for key in self._ref_operation_mapping_QUA.keys())) + list(
                 CONTROL_FLOW_OP_NAMES
             )
             if op_name not in gate_set:
@@ -778,14 +820,11 @@ class QMBackend(Backend):
                             num_params,
                             qubits,
                         )
-                        self._operation_mapping_QUA[op_id] = sched
+                        self._ref_operation_mapping_QUA[op_id] = sched
 
-                    elif isinstance(properties, InstructionProperties):
-                        if properties.calibration is None:
-                            raise ValueError(
-                                f"Operation {op_name} has no calibration defined in the target,"
-                                f"hence cannot be added to the QUA operations mapping"
-                            )
+                    elif isinstance(properties, InstructionProperties) and hasattr(
+                        properties, "calibration"
+                    ):
                         sched = validate_schedule(properties.calibration)
                         num_params = len(sched.parameters)
                         if num_params > 0:
@@ -797,10 +836,17 @@ class QMBackend(Backend):
                                     name=sched.name + "_param_table",
                                 ),
                             )
+                            if isinstance(param_table, Dict):
+                                if len(param_table) == 1:
+                                    param_table = list(param_table.values())[0]
+                                else:
+                                    param_table = ParameterTable.from_other_tables(
+                                        list(param_table.values())
+                                    )
 
                         else:
                             param_table = None
-                        self._operation_mapping_QUA[
+                        self._ref_operation_mapping_QUA[
                             OperationIdentifier(
                                 op_name,
                                 num_params,
@@ -808,54 +854,61 @@ class QMBackend(Backend):
                             )
                         ] = self.schedule_to_qua_macro(sched, param_table)
 
-        if qc is not None:
-            if not isinstance(qc, QuantumCircuit):
-                raise ValueError("qc should be a QuantumCircuit")
-            if not hasattr(qc, "calibrations"):
-                raise ValueError("qc should have calibrations")
-            if qc.parameters or qc.iter_vars():
-                param_table = qc.metadata.get(
-                    "parameter_table",
-                    ParameterTable.from_qiskit(
-                        qc, input_type=input_type, name=qc.name + "_param_table"
-                    ),
-                )
-            else:
-                param_table = None
+        self._operation_mapping_QUA = self._ref_operation_mapping_QUA.copy()
 
-            if hasattr(qc, "calibrations") and qc.calibrations:  # Check for custom calibrations
-                for gate_name, cal_info in qc.calibrations.items():
-                    if (
-                        gate_name not in self._oq3_custom_gates
-                    ):  # Make it a basis gate for OQ compiler
-                        self._oq3_custom_gates.append(gate_name)
-                    for (qubits, parameters), schedule in cal_info.items():
-                        schedule = validate_schedule(
-                            schedule
-                        )  # Check that schedule has fixed duration
+    def update_calibrations(self, qc: QuantumCircuit, input_type: Optional[InputType] = None):
+        # if qc.parameters and param_table is None:
+        #     raise ValueError(
+        #         "QuantumCircuit contains parameters but no parameter table provided"
+        #     )
 
-                        # Convert type of parameters to int if required (for switch case over channels)
-                        if param_table is not None:
-                            param_table = handle_parameterized_channel(schedule, param_table)
+        if qc.parameters or qc.iter_vars():
+            param_table = qc.metadata.get(
+                "qua",
+                ParameterTable.from_qiskit(
+                    qc, input_type=input_type, name=qc.name + "_param_table"
+                ),
+            )
+            if isinstance(param_table, Dict):
+                if len(param_table) == 1:
+                    param_table = list(param_table.values())[0]
+                else:
+                    param_table = ParameterTable.from_other_tables(list(param_table.values()))
 
-                        self._operation_mapping_QUA[
-                            OperationIdentifier(
-                                gate_name,
-                                len(parameters),
-                                qubits,
-                            )
-                        ] = self.schedule_to_qua_macro(schedule, param_table)
+        else:
+            param_table = None
 
-                        self.add_pulse_operations(schedule, name=schedule.name)
+        if hasattr(qc, "calibrations") and qc.calibrations:  # Check for custom calibrations
+            for gate_name, cal_info in qc.calibrations.items():
+                if gate_name not in self._oq3_custom_gates:  # Make it a basis gate for OQ compiler
+                    self._oq3_custom_gates.append(gate_name)
+                for (qubits, parameters), schedule in cal_info.items():
+                    schedule = validate_schedule(schedule)  # Check that schedule has fixed duration
+
+                    # Convert type of parameters to int if required (for switch case over channels)
+                    if param_table is not None:
+                        param_table = handle_parameterized_channel(schedule, param_table)
+
+                    self._operation_mapping_QUA[
+                        OperationIdentifier(
+                            gate_name,
+                            len(parameters),
+                            qubits,
+                        )
+                    ] = self.schedule_to_qua_macro(schedule, param_table)
+
+                    self.add_pulse_operations(schedule, name=schedule.name)
 
     def quantum_circuit_to_qua(
         self,
         qc: QuantumCircuit,
         param_table: Optional[ParameterTable | List[ParameterTable | Parameter]] = None,
-    ):
+    ) -> CompilationResult:
         """
         Convert a QuantumCircuit to a QUA program (can be called within an existing QUA program or to generate a
-        program for the circuit)
+        program for the circuit).
+        If executed outside of a QUA program scope, the resulting QUA program can be accessed through:
+        prog = backend.quantum_circuit_to_qua(qc).result_program.dsl_program
 
         Args:
             qc: The QuantumCircuit to convert
@@ -867,21 +920,19 @@ class QMBackend(Backend):
         Returns:
             Compilation result of the QuantumCircuit to QUA
         """
-        # if qc.parameters and param_table is None:
-        #     raise ValueError(
-        #         "QuantumCircuit contains parameters but no parameter table provided"
-        #     )
+
         basis_gates = list(
             set(self._oq3_custom_gates + list(self.target.operation_names))
             - set(oq3_keyword_instructions)
         )
         # Check if all custom calibrations are in the oq3 basis gates
-        for gate_name in qc.calibrations.keys():
-            if gate_name not in basis_gates:
-                raise ValueError(
-                    f"Custom calibration {gate_name} not in basis gates {basis_gates}",
-                    f"Run update_calibrations() before compiling the circuit",
-                )
+        if hasattr(qc, "calibrations") and qc.calibrations:
+            for gate_name in qc.calibrations.keys():
+                if gate_name not in basis_gates:
+                    raise ValueError(
+                        f"Custom calibration {gate_name} not in basis gates {basis_gates}",
+                        f"Run update_calibrations() before compiling the circuit",
+                    )
         exporter = Exporter(includes=(), basis_gates=basis_gates, disable_constants=True)
         open_qasm_code = exporter.dumps(qc)
         open_qasm_code = "\n".join(

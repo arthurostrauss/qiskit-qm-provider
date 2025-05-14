@@ -12,6 +12,7 @@ import copy
 import warnings
 import sys
 from itertools import chain
+from numbers import Number
 from typing import Optional, List, Dict, Union, Tuple, Literal, Callable, Type
 import numpy as np
 from qiskit.circuit.classical.expr import Var
@@ -95,7 +96,7 @@ class ParameterTable:
         self._packet = None
         self._packet_type = None
         self._direction = None
-        self._usable_for_dgx_communication = True
+        self._usable_for_dgx_communication = False
 
         if isinstance(parameters_dict, Dict):
             for index, (parameter_name, parameter) in enumerate(parameters_dict.items()):
@@ -183,16 +184,9 @@ class ParameterTable:
                 for parameter in self.parameters
             }
             struct_name = f"Packet_{self.name}_{self._id}"
-            self.packet_type = qua_struct(
+            self._packet_type = qua_struct(
                 type(struct_name, (object,), {"__annotations__": attributes})
             )
-
-            for parameter in self.parameters:
-                if parameter.is_standalone():  # Not part of any other prior table
-                    parameter.dgx_struct = self._packet_type
-                    parameter.stream_id = self._id
-                else:
-                    self._usable_for_dgx_communication = False
 
     def declare_variables(
         self, pause_program=False, declare_streams=True
@@ -206,21 +200,34 @@ class ParameterTable:
 
         """
         if self.input_type == InputType.DGX:
-            if not self._usable_for_dgx_communication:
-                raise ValueError(
-                    "Cannot declare variables with this table"
-                    " as some parameters are primarily attached to other tables."
-                )
 
-            qua_direction = "INCOMING" if self.direction == Direction.OUTGOING else "OUTGOING"
+            qua_direction = (
+                QuaStreamDirection.INCOMING
+                if self.direction == Direction.OUTGOING
+                else QuaStreamDirection.OUTGOING
+            )
             self._packet = declare_struct(self._packet_type)
             self._qua_external_stream = declare_external_stream(
                 self._packet, self._id, qua_direction
             )
 
             for parameter in self.parameters:
+                # In ParameterTable.declare_variables(), DGX path:
+                if parameter.is_declared:
+                    main_table_name = "an unknown table (main_table not set)"
+                    if parameter.main_table is not None:  # Check if main_table is actually set
+                        main_table_name = parameter.main_table.name
+                    raise ValueError(
+                        f"Parameter {parameter.name} already declared. "
+                        f"It was declared through table '{main_table_name}'."
+                    )
+
                 parameter._var = self._packet
                 parameter._is_declared = True
+                parameter.stream_id = self._id
+                parameter.dgx_struct = self._packet_type
+                parameter._main_table = self
+
                 if parameter.is_array:
                     parameter._counter_var = declare(int)
 
@@ -230,7 +237,6 @@ class ParameterTable:
             if self._direction == Direction.INCOMING:  # OPX -> DGX (Initialize the packet)
                 for parameter in self.parameters:
                     if parameter.is_array:
-
                         for i in range(parameter.length):
                             assign(parameter.var[i], parameter.value[i])
                     else:
@@ -239,6 +245,7 @@ class ParameterTable:
             if pause_program:
                 pause()
 
+            self._usable_for_dgx_communication = True
             return self._packet
 
         else:
@@ -262,6 +269,11 @@ class ParameterTable:
         Args: filter_func: Optional function to filter the parameters to be loaded.
         """
         if self.input_type == InputType.DGX:
+            if not self._usable_for_dgx_communication:
+                raise ValueError(
+                    "Parameter table not usable for DGX communication, as it contains parameters that "
+                    "were either undeclared or declared through a different table forming main communication packet."
+                )
             if filter_function is not None:
                 warnings.warn("Filter function is not supported for DGX parameter tables.")
             if self.direction == Direction.INCOMING:
@@ -328,7 +340,7 @@ class ParameterTable:
             text += f"{parameter_name}: {parameter.value}, \n"
         print(text)
 
-    def get_type(self, parameter: Union[str, int]) -> Type:
+    def get_type(self, parameter: Union[str, int, Parameter]) -> Type:
         """
         Get the type of a specific parameter in the parameter table (specified by name or index).
 
@@ -345,6 +357,10 @@ class ParameterTable:
                 if param.get_index(self) == parameter:
                     return param.type
             raise IndexError(f"No parameter with index {parameter} in the parameter table.")
+        elif isinstance(parameter, Parameter):
+            if parameter not in self.parameters:
+                raise KeyError("Provided ParameterValue not in this ParameterTable.")
+            return parameter.type
         else:
             raise ValueError("Invalid parameter name. Please use a string or an int.")
 
@@ -360,7 +376,7 @@ class ParameterTable:
             raise KeyError(f"No parameter named {parameter_name} in the parameter table.")
         return self.table[parameter_name].get_index(self)
 
-    def get_parameter(self, parameter: Union[str, int]) -> Parameter:
+    def get_parameter(self, parameter: Union[str, int, Parameter]) -> Parameter:
         """
         Get the Parameter object of a specific parameter in the parameter table.
         This object contains the QUA variable corresponding to the parameter, its type,
@@ -368,7 +384,7 @@ class ParameterTable:
 
         Args: parameter: Name or index (within current table) of the parameter to be returned.
 
-        Returns: ParameterValue object corresponding to the specified input.
+        Returns: Parameter object corresponding to the specified input.
         """
         if isinstance(parameter, str):
             if parameter not in self.table.keys():
@@ -380,6 +396,10 @@ class ParameterTable:
                     return param
 
             raise IndexError(f"No parameter with index {parameter} in the parameter table.")
+        elif isinstance(parameter, Parameter):
+            if parameter not in self.parameters:
+                raise KeyError("Provided Parameter not in this ParameterTable.")
+            return parameter
         else:
             raise ValueError("Invalid parameter name. Please use a string or an int.")
 
@@ -401,7 +421,7 @@ class ParameterTable:
         else:
             raise ValueError("Invalid parameter name. Please use a string or an int.")
 
-    def get_variable(self, parameter: Union[str, int]) -> QuaVariable | QuaArrayVariable:
+    def get_variable(self, parameter: Union[str, int, Parameter]) -> QuaVariable | QuaArrayVariable:
         """
         Get the QUA variable corresponding to the specified parameter name.
 
@@ -410,47 +430,45 @@ class ParameterTable:
 
         """
         if isinstance(parameter, str):
-            if parameter not in self.table:
+            try:
+                return self.table[parameter].var
+            except KeyError:
                 raise KeyError(f"No parameter named {parameter} in the parameter table.")
-            return self.table[parameter].var
 
         if isinstance(parameter, int):
             for param in self.parameters:
                 if param.get_index(self) == parameter:
                     return param.var
             raise IndexError(f"No parameter with index {parameter} in the parameter table.")
+        if isinstance(parameter, Parameter):
+            if parameter not in self.parameters:
+                raise KeyError("Provided ParameterValue not in this ParameterTable.")
+            return parameter.var
 
         raise ValueError("Invalid parameter name. Please use a string or an int.")
 
-    def add_parameter(self, parameter: Union[Parameter, List[Parameter]]):
+    def add_parameters(self, parameters: Union[Parameter, List[Parameter]]):
         """
         Add a (list of) parameter(s) to the parameter table. The index of the parameter is automatically set to the
         next available index in the table.
-        Args: parameter_value: (List of) ParameterValue(s) object(s) to be added to current parameter table.
+        Args: parameters: (List of) Parameter(s) object(s) to be added to the current parameter table.
         """
         if self.is_declared:
-            raise ValueError(
-                "Cannot add parameters to a parameter table that has already been declared."
-            )
-        if isinstance(parameter, List):
-            for parameter in parameter:
-                if not isinstance(parameter, Parameter):
-                    raise ValueError("Invalid parameter type. Please use a ParameterValue object.")
-                if parameter.name in self.table.keys():
-                    raise KeyError(
-                        f"Parameter {parameter.name} already exists in the parameter table."
-                    )
-                max_index = max([param.get_index(self) for param in self.parameters])
-                parameter.set_index(self, max_index + 1)
-                if parameter.input_type != self.input_type:
-                    raise ValueError("All parameters in the table must have the same input type.")
-                parameter.stream_id = self._id
-                parameter.dgx_struct = self._packet_type
+            raise ValueError("Cannot add parameters to a table that has already been declared.")
+        if isinstance(parameters, Parameter):
+            parameters = [parameters]
 
-                self.table[parameter.name] = parameter
+        start_idx = len(self.table)
+        for i, parameter in enumerate(parameters):
+            if not isinstance(parameter, Parameter):
+                raise ValueError("Invalid parameter type. Please use a Parameter object.")
+            if parameter.name in self.table.keys():
+                raise KeyError(f"Parameter {parameter.name} already exists in the parameter table.")
+            parameter.set_index(self, start_idx + i)
+            if parameter.input_type != self.input_type:
+                raise ValueError("All parameters in the table must have the same input type.")
 
-        elif isinstance(parameter, Parameter):
-            self.add_parameter([parameter])
+            self.table[parameter.name] = parameter
 
     def remove_parameter(self, parameter_value: Union[str, Parameter]):
         """
@@ -483,7 +501,7 @@ class ParameterTable:
             self.add_table([parameter_table])
         elif isinstance(parameter_table, List):
             for table in parameter_table:
-                self.add_parameter(table.parameters)
+                self.add_parameters(table.parameters)
 
         else:
             raise ValueError(
@@ -643,40 +661,47 @@ class ParameterTable:
                         "Invalid parameter name. Please use a string or a Parameter object."
                     )
         else:
+            if not self._usable_for_dgx_communication:
+                raise ValueError(
+                    "Parameter table not usable for DGX communication, as it contains parameters that "
+                    "were either undeclared or declared through a different table forming main communication packet."
+                )
             if self.direction == Direction.INCOMING:
                 raise ValueError("Cannot push values to incoming DGX parameter tables.")
             # Check if all parameters are in the dictionary
-            for parameter in self.parameters:
-                if parameter not in param_dict.keys() and parameter.name not in param_dict.keys():
+            values_for_packet = {}
+            for p_obj in self.parameters:
+                value = None
+                if p_obj in param_dict:
+                    value = param_dict[p_obj]
+                elif p_obj.name in param_dict:
+                    value = param_dict[p_obj.name]
+                else:
                     raise KeyError(
-                        f"Parameter {parameter.name} not found in the dictionary, all packet must be filled."
+                        f"Parameter '{p_obj.name}' not found in the input dictionary;"
+                        f"all packet fields must be provided."
                     )
-            # Transform all values to fit the packet (convert to list if necessary)
-            packet_dict = {
-                parameter.name if isinstance(parameter, Parameter) else parameter: (
-                    [param_dict[parameter]] if not parameter.is_array else param_dict[parameter]
+                processed_value = value.tolist() if isinstance(value, np.ndarray) else value
+                processed_value = (
+                    [processed_value]
+                    if not p_obj.is_array and isinstance(processed_value, Number)
+                    else processed_value
                 )
-                for parameter in self.parameters
-            }
-            # Convert potential numpy arrays to lists
-            packet_dict = {
-                key: value.tolist() if isinstance(value, np.ndarray) else value
-                for key, value in packet_dict.items()
-            }
+                values_for_packet[p_obj.name] = processed_value
 
             if ParameterPool.configured and ParameterPool.patched:
                 if "opnic_wrapper" not in sys.modules:
                     sys.path.append("/home/dpoulos/aps_demo/python-wrapper/wrapper/build/python")
                 from opnic_wrapper import OutgoingPacket, send_packet
 
-                flattened_values = list(chain(*packet_dict.values()))
+                flattened_values = list(chain(*values_for_packet.values()))
                 packet = OutgoingPacket(flattened_values)
                 send_packet(self.stream_id, packet)
             else:
                 raise ValueError("OPNIC wrapper not configured or patched.")
 
             if verbosity > 1:
-                print(f"Sent packet: {packet_dict}")
+                print(f"Sent packet: {values_for_packet}")
 
     def send_to_python(self):
         """
@@ -689,6 +714,11 @@ class ParameterTable:
             for parameter in self.parameters:
                 parameter.send_to_python()
         else:
+            if not self._usable_for_dgx_communication:
+                raise ValueError(
+                    "Parameter table not usable for DGX communication, as it contains parameters that "
+                    "were either undeclared or declared through a different table forming main communication packet."
+                )
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot send values to outgoing DGX parameter tables.")
             send_to_external_stream(self._qua_external_stream, self._packet)
@@ -718,6 +748,11 @@ class ParameterTable:
             for parameter, result in zip(self.parameters, results):
                 param_dict[parameter.name] = result
         else:  # DGX
+            if not self._usable_for_dgx_communication:
+                raise ValueError(
+                    "Parameter table not usable for DGX communication, as it contains parameters that "
+                    "were either undeclared or declared through a different table forming main communication packet."
+                )
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot fetch values from outgoing DGX parameter tables.")
             elif not ParameterPool.configured or not ParameterPool.patched:
@@ -817,6 +852,31 @@ class ParameterTable:
             qc.metadata["qua"][new_table.name] = new_table
         else:
             qc.metadata["qua"] = {new_table.name: new_table}
+
+        return new_table
+
+    @classmethod
+    def from_other_tables(
+        cls, tables: Union[List["ParameterTable"], "ParameterTable"], name: Optional[str] = None
+    ) -> "ParameterTable":
+        """
+        Create a ParameterTable object from a list of other ParameterTable objects.
+        Args: tables: List of ParameterTable objects to be merged into a new table.
+        """
+        if isinstance(tables, ParameterTable):
+            tables = [tables]
+        if not tables:
+            raise ValueError("No parameter tables provided.")
+        parameters = []
+        ref_input_type = tables[0].input_type
+        for table in tables:
+            if table.input_type != ref_input_type:
+                raise ValueError("All parameter tables must have the same input type.")
+            parameters.extend(table.parameters)
+
+        new_table = cls(
+            parameters, name if name is not None else "_".join([table.name for table in tables])
+        )
 
         return new_table
 

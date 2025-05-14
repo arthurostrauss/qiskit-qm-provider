@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from qiskit.circuit import Parameter
+from qiskit.circuit.parametertable import ParameterView
 from qiskit.circuit.parametervector import ParameterVectorElement
 from quam.components import Channel as QuAMChannel
 from .sympy_to_qua import sympy_to_qua
@@ -113,7 +114,9 @@ def validate_instruction(instruction: Instruction, quam_channel: QuAMChannel) ->
         raise ValueError(f"Instruction {instruction} not supported on QM backend")
 
 
-def validate_parameters(params, param_table: ParameterTable, param_mapping=None) -> ParameterTable:
+def validate_parameters(
+    params: ParameterView, param_table: ParameterTable, param_mapping=None
+) -> ParameterTable:
     """
     Validate the parameters of the instruction by checking them against the parameter table
     and a possible parameter mapping
