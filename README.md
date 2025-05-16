@@ -52,14 +52,14 @@ Here’s an example of how to get started with the `qiskit-qm-provider`:
 
 ```python
 from qiskit import QuantumCircuit, transpile
-from qm_provider import QMBackend
-from quam import load_quam  # Hypothetical QUAM loader
+from qiskit_qm_provider import QMBackend
+from quam_builder.architecture.superconducting.qpu import FluxTunableQuam # Hypothetical QUAM loader
 
 # Step 1: Load your QUAM object
-quam = load_quam("path_to_quam_configuration")
+machine = FluxTunableQuam.load("your_quam_state")
 
 # Step 2: Initialize the QMBackend with the QUAM object
-backend = QMBackend(quam)
+backend = QMBackend(machine)
 
 # Step 3: Create a quantum circuit in Qiskit
 qc = QuantumCircuit(2)
@@ -84,11 +84,14 @@ print(result.get_counts())
 To implement custom primitives like `Sampler` and `Estimator`, wrap the backend using `BackendEstimatorV2` and `SamplerV2` from Qiskit:
 
 ```python
-from qiskit.primitives import BackendEstimatorV2, SamplerV2
+from qiskit.primitives import BackendEstimatorV2, BackendSamplerV2
+from qiskit_qm_provider import QMSamplerV2, QMSamplerOptions
+from qiskit_qm_provider import InputType
 
 estimator = BackendEstimatorV2(backend)
-sampler = SamplerV2(backend)
+sampler = QMSamplerV2(backend=backend, options=QMSamplerOptions(input_type=InputType.INPUT_STREAM))
 ```
+
 
 #### Embedding Circuits into QUA Programs
 The backend provides a `quantum_circuit_to_qua` function, enabling users to embed Qiskit circuits with control flow logic into larger QUA programs. Inputs such as gate parameters, switch cases, or conditional statements can be dynamically adapted in real-time.

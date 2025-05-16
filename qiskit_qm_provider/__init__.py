@@ -4,3 +4,4 @@ from .fixed_point import FixedPoint
 from .parameter_table import *
 from .additional_gates import *
 from .qm_instruction_properties import QMInstructionProperties
+from .qm_sampler import QMSamplerV2, QMSamplerOptions

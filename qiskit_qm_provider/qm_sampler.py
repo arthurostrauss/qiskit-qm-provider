@@ -53,7 +53,7 @@ class QMSamplerOptions:
     """
 
 
-class QMSampler(BaseSamplerV2):
+class QMSamplerV2(BaseSamplerV2):
     """QM Sampler class."""
 
     def __init__(self, backend: QMBackend, options: QMSamplerOptions | None = None):
