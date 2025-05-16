@@ -17,14 +17,12 @@ from typing import Optional, List, Dict, Union, Tuple, Literal, Callable, Type
 import numpy as np
 from qiskit.circuit.classical.expr import Var
 from qiskit.circuit.classical.types import Uint, Bool
-from qiskit.pulse import Schedule, ScheduleBlock
 from qm import QuantumMachine
 from qm.jobs.running_qm_job import RunningQmJob
 from qm.qua import *
-from qm.qua.type_hints import QuaScalar
 from qm.qua._expressions import QuaArrayVariable
 from qualang_tools.results import fetching_tool
-from quam.utils.qua_types import QuaVariable
+from quam.utils.qua_types import QuaVariable, QuaScalar
 
 from qiskit.circuit import QuantumCircuit, Parameter as QiskitParameter
 from qiskit.circuit.parametervector import ParameterVector, ParameterVectorElement
@@ -784,13 +782,14 @@ class ParameterTable:
     @classmethod
     def from_qiskit(
         cls,
-        qc: QuantumCircuit | Schedule | ScheduleBlock,
+        qc: QuantumCircuit,
         input_type: Literal["INPUT_STREAM", "DGX", "IO1", "IO2"] | InputType = None,
         filter_function: Optional[Callable[[Parameter | Var], bool]] = None,
         name: Optional[str] = None,
-    ) -> "ParameterTable":
+    ) -> Optional["ParameterTable"]:
         """
         Create a ParameterTable object from a QuantumCircuit object (and stores it in circuit metadata).
+        Returns None if no parameters are found.
         Args:
             qc: QuantumCircuit object to be converted to a ParameterTable object.
             input_type: Input type of the parameters in the table.
@@ -847,6 +846,8 @@ class ParameterTable:
                             direction=Direction.OUTGOING,
                         )
                     )
+        if len(param_list) == 0:
+            return
         new_table = cls(param_list, name if name is not None else qc.name)
         if "qua" in qc.metadata:
             qc.metadata["qua"][new_table.name] = new_table

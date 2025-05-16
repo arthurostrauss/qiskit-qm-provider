@@ -76,6 +76,10 @@ class QMJob(JobV1):
         """Cancel the job."""
         if self._qm_job is None:
             raise RuntimeError("QM job is not running")
+        if isinstance(self._qm_job, list):
+            for job in self._qm_job:
+                job.cancel()
+            return
         return self._qm_job.cancel()
 
     def result(self):

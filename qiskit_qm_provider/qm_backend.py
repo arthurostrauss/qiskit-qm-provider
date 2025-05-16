@@ -490,7 +490,7 @@ class QMBackend(Backend):
     def get_run_program(self, num_shots, circuits: List[QuantumCircuit]) -> Program | List[Program]:
         num_circuits = len(circuits)
 
-        def process_circuit(
+        def _process_circuit(
             qc: QuantumCircuit,
             state_int: QuaScalar[int],
             shot_var: QuaScalar[int],
@@ -505,7 +505,7 @@ class QMBackend(Backend):
                     for creg in qc.cregs
                 }
                 num_solo_bits = len(
-                    [bit for bit in circuits[0].clbits if len(qc.find_bit(bit).registers) == 0]
+                    [bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0]
                 )
                 if num_solo_bits > 0:
                     if solo_bits_stream is None:
@@ -560,7 +560,7 @@ class QMBackend(Backend):
                 solo_bits_stream = [declare_stream() for _ in range(num_circuits)]
 
                 if num_circuits == 1:
-                    process_circuit(
+                    _process_circuit(
                         circuits[0],
                         state_int,
                         shot,
@@ -573,7 +573,7 @@ class QMBackend(Backend):
                         with switch_(qc_var):
                             for i, qc in enumerate(circuits):
                                 with case_(i):
-                                    process_circuit(
+                                    _process_circuit(
                                         qc,
                                         state_int,
                                         shot,
@@ -601,7 +601,7 @@ class QMBackend(Backend):
                     )
                     regs_streams = [declare_stream() for _ in range(num_registers)]
                     solo_bits_stream = declare_stream() if num_solo_bits > 0 else None
-                    process_circuit(
+                    _process_circuit(
                         qc,
                         state_int,
                         shot,
