@@ -876,7 +876,7 @@ class ParameterTable:
             parameters.extend(table.parameters)
 
         new_table = cls(
-            parameters, name if name is not None else "_".join([table.name for table in tables])
+            list(set(parameters)), name if name is not None else "_".join([table.name for table in tables])
         )
 
         return new_table
