@@ -555,23 +555,25 @@ class Parameter:
         else:
             raise ValueError("Output stream not declared.")
 
-    def stream_processing(self, mode: Literal["save", "save_all"] = "save_all"):
+    def stream_processing(self, mode: Literal["save", "save_all"] = "save_all",
+                          buffer: Union[Tuple[int], int]= None):
         """
         Process the output stream associated with the parameter.
+        Args:
+            mode: Mode of processing the stream. Can be "save" or "save_all". Default is "save_all".
+            buffer: Buffer size for the stream. If None, the default buffer size is used (no buffer for a single variable 
+                and buffer of array size for an array).
         """
+        if mode not in ["save", "save_all"]:
+            raise ValueError("Invalid mode. Must be 'save' or 'save_all'.")
+        if buffer is None and self.is_array:
+            buffer = self.length
         if self.stream is not None:
-            if mode == "save":
-                if self.is_array:
-                    self.stream.buffer(self.length).save(self.name)
-                else:
-                    self.stream.save(self.name)
-            elif mode == "save_all":
-                if self.is_array:
-                    self.stream.buffer(self.length).save_all(self.name)
-                else:
-                    self.stream.save_all(self.name)
+            if buffer is not None:
+                stream = self.stream.buffer(buffer)
             else:
-                raise ValueError("Invalid mode. Must be 'save' or 'save_all'.")
+                stream = self.stream
+            getattr(stream, mode)(self.name)
         else:
             raise ValueError("Output stream not declared.")
 
@@ -761,7 +763,7 @@ class Parameter:
                     f"was associated with a bigger packet."
                 )
 
-    def send_to_python(self):
+    def stream_back(self):
         """
         QUA macro designed to send the value of the parameter to Python.
         This method uses IO variables if input type is IO1 or IO2, and
@@ -797,31 +799,60 @@ class Parameter:
         self,
         job: RunningQmJob,
         qm: Optional[QuantumMachine] = None,
+        fetching_index: Optional[int]=0,
+        fetching_size: Optional[int]=1,    
         verbosity: int = 1,
     ):
         """
-        To be outside QUA program: fetch an output value from the OPX to Python.
-        Returns:
-            Value fetched from the OPX.
+        Fetches data based on the specified input type and returns the fetched value.
+
+        This method handles various input types defined by the `InputType` enumeration 
+        (IO1, IO2, INPUT_STREAM, DGX). It manages the fetching logic, including waiting 
+        for paused jobs, accessing specified result streams, and interacting with 
+        external modules when necessary. For DGX input type, it also checks configurations 
+        and fetches data based on parameters related to outgoing or incoming streams.
+
+        :param job: The job instance of the RunningQmJob for which data is being fetched.
+        :type job: RunningQmJob
+        :param qm: The QuantumMachine instance utilized for fetching the data. Defaults to None.
+        :type qm: Optional[QuantumMachine]
+        :param fetching_index: The starting index for fetching data when required. Defaults to 0.
+        :type fetching_index: Optional[int]
+        :param fetching_size: Number of items to fetch from the source, if applicable. Defaults to 1.
+        :type fetching_size: Optional[int]
+        :param verbosity: Level of output verbosity for log printing. A verbosity > 1 enables detailed logging.
+        :type verbosity: int
+        :return: The fetched value depending upon the input type and fetching logic.
         """
         if self.input_type in [InputType.IO1, InputType.IO2]:
             io = "get_io1_value" if self.input_type == InputType.IO1 else "get_io2_value"
             if qm is None:
                 raise ValueError("QuantumMachine object must be provided.")
-            if not self.is_array:
-                wait_until_job_is_paused(job)
-                value = getattr(qm, io)()
-                job.resume()
-            else:
-                value = []
-                for i in range(self.length):
+            value = []
+            for i in range(fetching_index, fetching_index + fetching_size):
+                if not self.is_array:
                     wait_until_job_is_paused(job)
                     value.append(getattr(qm, io)())
                     job.resume()
+                else:
+                    temp_array = []
+                    for i in range(self.length):
+                        wait_until_job_is_paused(job)
+                        temp_array.append(getattr(qm, io)())
+                        job.resume()
+                    value.append(temp_array)
+                        
         elif self.input_type == InputType.INPUT_STREAM:
-            value = fetching_tool(job, [self.name], mode="live")
-            while value.is_processing():
-                value = value.fetch_all()
+            result_handle = job.result_handles
+            if self.name not in result_handle:
+                raise ValueError(
+                    f"Parameter {self.name} not found in the result handles. "
+                    "Make sure to save the parameter to the stream first."
+                )
+            result = result_handle.get(self.name)
+            result.wait_for_values(fetching_index + fetching_size)
+            value = result.fetch(slice(fetching_index, fetching_index + fetching_size))["value"]
+            
         elif self.input_type == InputType.DGX:
             if not self.is_standalone():  # Part of a parameter table
                 raise RuntimeError(

@@ -710,7 +710,7 @@ class ParameterTable:
         """
         if self.input_type != InputType.DGX:
             for parameter in self.parameters:
-                parameter.send_to_python()
+                parameter.stream_back()
         else:
             if not self._usable_for_dgx_communication:
                 raise ValueError(
