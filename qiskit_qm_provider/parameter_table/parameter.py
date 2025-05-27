@@ -555,22 +555,25 @@ class Parameter:
         else:
             raise ValueError("Output stream not declared.")
 
-    def stream_processing(self, mode: Literal["save", "save_all"] = "save_all",
-                          buffer: Union[Tuple[int], int]= None):
+    def stream_processing(
+        self, mode: Literal["save", "save_all"] = "save_all", buffer: Union[Tuple[int], int] = None
+    ):
         """
         Process the output stream associated with the parameter.
         Args:
             mode: Mode of processing the stream. Can be "save" or "save_all". Default is "save_all".
-            buffer: Buffer size for the stream. If None, the default buffer size is used (no buffer for a single variable 
+            buffer: Buffer size for the stream. If None, the default buffer size is used (no buffer for a single variable
                 and buffer of array size for an array).
         """
         if mode not in ["save", "save_all"]:
             raise ValueError("Invalid mode. Must be 'save' or 'save_all'.")
         if buffer is None and self.is_array:
             buffer = self.length
+        elif isinstance(buffer, int):
+            buffer = (buffer,)
         if self.stream is not None:
             if buffer is not None:
-                stream = self.stream.buffer(buffer)
+                stream = self.stream.buffer(*buffer)
             else:
                 stream = self.stream
             getattr(stream, mode)(self.name)
@@ -799,17 +802,17 @@ class Parameter:
         self,
         job: RunningQmJob,
         qm: Optional[QuantumMachine] = None,
-        fetching_index: Optional[int]=0,
-        fetching_size: Optional[int]=1,    
+        fetching_index: Optional[int] = 0,
+        fetching_size: Optional[int] = 1,
         verbosity: int = 1,
     ):
         """
         Fetches data based on the specified input type and returns the fetched value.
 
-        This method handles various input types defined by the `InputType` enumeration 
-        (IO1, IO2, INPUT_STREAM, DGX). It manages the fetching logic, including waiting 
-        for paused jobs, accessing specified result streams, and interacting with 
-        external modules when necessary. For DGX input type, it also checks configurations 
+        This method handles various input types defined by the `InputType` enumeration
+        (IO1, IO2, INPUT_STREAM, DGX). It manages the fetching logic, including waiting
+        for paused jobs, accessing specified result streams, and interacting with
+        external modules when necessary. For DGX input type, it also checks configurations
         and fetches data based on parameters related to outgoing or incoming streams.
 
         :param job: The job instance of the RunningQmJob for which data is being fetched.
@@ -841,7 +844,7 @@ class Parameter:
                         temp_array.append(getattr(qm, io)())
                         job.resume()
                     value.append(temp_array)
-                        
+
         elif self.input_type == InputType.INPUT_STREAM:
             result_handle = job.result_handles
             if self.name not in result_handle:
@@ -852,7 +855,7 @@ class Parameter:
             result = result_handle.get(self.name)
             result.wait_for_values(fetching_index + fetching_size)
             value = result.fetch(slice(fetching_index, fetching_index + fetching_size))["value"]
-            
+
         elif self.input_type == InputType.DGX:
             if not self.is_standalone():  # Part of a parameter table
                 raise RuntimeError(

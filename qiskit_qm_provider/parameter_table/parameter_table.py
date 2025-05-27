@@ -297,13 +297,21 @@ class ParameterTable:
             if parameter.is_declared and parameter.stream is not None:
                 parameter.save_to_stream()
 
-    def stream_processing(self):
+    def stream_processing(
+        self,
+        mode: Literal["save", "save_all"] = "save_all",
+        buffering: Optional[Dict[str, Tuple[int]]] = None,
+    ):
         """
         Process all the streams in the parameter table.
         """
         for parameter in self.parameters:
             if parameter.stream is not None:
-                parameter.stream_processing()
+                if buffering is not None and parameter.name in buffering:
+                    buffer = buffering[parameter.name]
+                else:
+                    buffer = None
+                parameter.stream_processing(mode, buffer)
 
     def assign_parameters(
         self,
@@ -701,7 +709,7 @@ class ParameterTable:
             if verbosity > 1:
                 print(f"Sent packet: {values_for_packet}")
 
-    def send_to_python(self):
+    def stream_back(self):
         """
         Stream the values of the parameters to Python.
             This method is used as a QUA macro to send the values of the parameters to Python.
@@ -876,7 +884,8 @@ class ParameterTable:
             parameters.extend(table.parameters)
 
         new_table = cls(
-            list(set(parameters)), name if name is not None else "_".join([table.name for table in tables])
+            list(set(parameters)),
+            name if name is not None else "_".join([table.name for table in tables]),
         )
 
         return new_table

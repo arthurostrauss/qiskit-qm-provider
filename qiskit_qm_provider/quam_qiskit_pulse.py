@@ -30,12 +30,14 @@ def return_samples_output(pulse: SymbolicPulse):
     Return the samples of a SymbolicPulse to be used in the QUA compiler
     """
     if np.abs(pulse.angle) < 1e-10:
-        return pulse.amp if isinstance(pulse, Constant) else pulse.get_waveform().samples.real
+        return (
+            pulse.amp if isinstance(pulse, Constant) else pulse.get_waveform().samples.real.tolist()
+        )
     else:
         return (
             pulse.amp * np.exp(1j * pulse.angle)
             if isinstance(pulse, Constant)
-            else pulse.get_waveform().samples
+            else pulse.get_waveform().samples.tolist()
         )
 
 

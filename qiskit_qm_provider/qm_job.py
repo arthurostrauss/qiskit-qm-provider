@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Optional, Dict, List, Callable
+from typing import Optional, Dict, List, Callable, Union
 from collections import Counter
 
+from iqcc_cloud_client import IQCC_Cloud
 from qiskit.primitives import BitArray, SamplerPubResult, DataBin
 from qiskit.providers.job import JobV1, JobStatus
 from qiskit.result.models import ExperimentResult, ExperimentResultData
@@ -24,7 +25,7 @@ class QMJob(JobV1):
         self,
         backend: QMBackend,
         job_id: str,
-        qm: QuantumMachine,
+        qm: Union[QuantumMachine, IQCC_Cloud],
         program: Program,
         result_function: Callable[[RunningQmJob], Result],
         **kwargs,
@@ -95,3 +96,36 @@ class QMJob(JobV1):
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")
         return self._qm_job
+
+
+class IQCCJob(QMJob):
+    """IQCC Job class for Quantum Machines."""
+
+    def __init__(
+        self,
+        backend: QMBackend,
+        job_id: str,
+        qm: IQCC_Cloud,
+        program: Program,
+        result_function: Callable[[RunningQmJob], Result],
+        **kwargs,
+    ):
+        super().__init__(backend, job_id, qm, program, result_function, **kwargs)
+        self._qm_job = None
+
+    def status(self) -> JobStatus:
+        raise NotImplementedError(
+            "IQCCJob does not support status method. Use IQCC_Cloud methods to check job status."
+        )
+
+    def submit(self):
+        """Submit the job to the IQCC backend."""
+        if self._qm_job is not None:
+            raise RuntimeError("IQCC job has already been submitted")
+        try:
+            config = self.metadata["config"]
+        except KeyError:
+            raise ValueError("Job metadata must contain 'config' key for IQCC job submission")
+
+        qm: IQCC_Cloud = self.qm
+        self._qm_job = qm.execute(self.program, config)

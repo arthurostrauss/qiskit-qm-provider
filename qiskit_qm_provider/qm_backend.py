@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import datetime
 from typing import Iterable, List, Dict, Optional, Callable, Union, Tuple, Any, TYPE_CHECKING
 from inspect import Signature, Parameter as sigParam
 
+import numpy as np
+from iqcc_cloud_client import IQCC_Cloud
 from qiskit.circuit import (
     QuantumCircuit,
     Parameter as QiskitParameter,
@@ -24,13 +27,19 @@ from qiskit.pulse.library import SymbolicPulse, Waveform, Pulse as QiskitPulse
 from qiskit.result import Result
 from qiskit.result.models import ExperimentResult, ExperimentResultData
 
-from qiskit.transpiler import Target, InstructionProperties
+from qiskit.transpiler import Target, InstructionProperties, CouplingMap
 from qiskit.qasm3 import Exporter
 from qm.jobs.running_qm_job import RunningQmJob
 
 # QUA and Quam imports
 from qm.qua import *
-from qm import QuantumMachinesManager, Program, DictQuaConfig, QuantumMachine
+from qm import (
+    QuantumMachinesManager,
+    Program,
+    DictQuaConfig,
+    QuantumMachine,
+    StreamingResultFetcher,
+)
 from qm.qua._dsl import _ResultSource
 from qualang_tools.addons.variables import assign_variables_to_element
 from quam.components import Channel as QuAMChannel, QubitPair
@@ -44,6 +53,12 @@ from oqc import (
     OperationIdentifier,
     QubitsMapping,
     CompilationResult,
+)
+from quam_libs.cloud_infrastructure import (
+    CloudQuantumMachine,
+    CloudQuantumMachinesManager,
+    CloudJob,
+    CloudResultHandles,
 )
 
 # Helper modules
@@ -68,7 +83,7 @@ from .backend_utils import (
 from .qm_instruction_properties import QMInstructionProperties
 
 if TYPE_CHECKING:
-    from .qm_job import QMJob
+    from .qm_job import QMJob, IQCCJob
 __all__ = [
     "QMBackend",
     "FluxTunableTransmonBackend",
@@ -105,7 +120,9 @@ class QMBackend(Backend):
             {v: k for k, v in channel_mapping.items()} if channel_mapping is not None else {}
         )
         self._qubit_dict = {qubit.name: i for i, qubit in enumerate(machine.active_qubits)}
-        self._target, self._ref_operation_mapping_QUA = self._populate_target(machine)
+        self._target, self._ref_operation_mapping_QUA, self._coupling_map = self._populate_target(
+            machine
+        )
         self._operation_mapping_QUA = self._ref_operation_mapping_QUA.copy()
         self._oq3_custom_gates = []
         self._init_macro = init_macro
@@ -149,7 +166,7 @@ class QMBackend(Backend):
         return {i: qubit for i, qubit in enumerate(self.machine.active_qubits)}
 
     @property
-    def qmm(self):
+    def qmm(self) -> Union[QuantumMachinesManager, CloudQuantumMachinesManager, IQCC_Cloud]:
         """
         Returns the QuantumMachinesManager instance. This is a property that reopens a QuantumMachinesManager each time
         it is called for the underlying configuration might have changed between two calls
@@ -159,7 +176,7 @@ class QMBackend(Backend):
         return self._qmm
 
     @qmm.setter
-    def qmm(self, qmm: QuantumMachinesManager):
+    def qmm(self, qmm: Union[QuantumMachinesManager, CloudQuantumMachinesManager]):
         """
         Set the QuantumMachinesManager instance. This is a property that reopens a QuantumMachinesManager each time
         it is called for the underlying configuration might have changed between two calls
@@ -167,12 +184,16 @@ class QMBackend(Backend):
         self._qmm = qmm
 
     @property
-    def qm(self) -> QuantumMachine:
+    def qm(self) -> Union[QuantumMachine, CloudQuantumMachine, IQCC_Cloud]:
         """
         Returns the QuantumMachine instance. This is a property that reopens a QuantumMachine each time
         it is called for the underlying configuration might have changed between two calls
         """
-        return self.qmm.open_qm(self.qm_config)
+        return (
+            self.qmm.open_qm(self.qm_config, close_other_machines=True)
+            if isinstance(self.qmm, QuantumMachinesManager)
+            else self.qmm
+        )
 
     @property
     def qm_config(self) -> DictQuaConfig:
@@ -203,7 +224,9 @@ class QMBackend(Backend):
             skip_reset=False,
         )
 
-    def _populate_target(self, machine: Quam) -> Tuple[Target, Dict[OperationIdentifier, Callable]]:
+    def _populate_target(
+        self, machine: Quam
+    ) -> Tuple[Target, Dict[OperationIdentifier, Callable], CouplingMap]:
         """
         Populate the target instructions with the QOP configuration
         """
@@ -215,7 +238,7 @@ class QMBackend(Backend):
             num_qubits=len(machine.active_qubits),
             min_length=16,
             qubit_properties=[
-                QubitProperties(t1=qubit.T1, t2=qubit.T2ramsey, frequency=qubit.f_01)
+                QubitProperties(t1=qubit.T1, t2=qubit.T2echo, frequency=qubit.f_01)
                 for qubit in machine.active_qubits
             ],
         )
@@ -223,6 +246,7 @@ class QMBackend(Backend):
         operations_dict = {}
         operations_qua_dict = {}
         name_to_op_dict = {}
+        coupling_map = []
 
         # Add single qubit instructions
         for q, qubit in enumerate(machine.active_qubits):
@@ -261,6 +285,7 @@ class QMBackend(Backend):
         for qubit_pair in machine.active_qubit_pairs:
             q_ctrl = self.qubit_dict[qubit_pair.qubit_control.name]
             q_tgt = self.qubit_dict[qubit_pair.qubit_target.name]
+            coupling_map.append([q_ctrl, q_tgt])
             for op, func in qubit_pair.macros.items():
                 op_ = look_for_standard_op(op)
                 if op_ in gate_map:
@@ -301,7 +326,7 @@ class QMBackend(Backend):
         for flow_op_name, control_flow_op in control_flow_name_mapping.items():
             target.add_instruction(control_flow_op, name=flow_op_name)
 
-        return target, operations_qua_dict
+        return target, operations_qua_dict, CouplingMap(coupling_map)
 
     def get_quam_channel(self, channel: QiskitChannel):
         """
@@ -401,7 +426,7 @@ class QMBackend(Backend):
         Returns:
             A QMJob object that can be used to retrieve the results of the job
         """
-        from .qm_job import QMJob
+        from .qm_job import QMJob, IQCCJob
 
         num_shots = options.get("shots", self.options.shots)
         simulate = options.get("simulate", self.options.simulate)
@@ -428,15 +453,17 @@ class QMBackend(Backend):
             if len(solo_bits) > 0:
                 cregs_dicts[i][_QASM3_DUMP_LOOSE_BIT_PREFIX] = len(solo_bits)
 
-        def result_function(qm_job: RunningQmJob | List[RunningQmJob]) -> Result:
+        def result_function(qm_job: RunningQmJob | List[RunningQmJob] | CloudJob | Dict) -> Result:
             is_job_list = isinstance(qm_job, list)
             if is_job_list:
                 results_handle = [job.result_handles for job in qm_job]
                 for handle in results_handle:
                     handle.wait_for_all_values()
-            else:
+            elif isinstance(qm_job, (RunningQmJob, CloudJob)):
                 results_handle = qm_job.result_handles
                 results_handle.wait_for_all_values()
+            else:
+                results_handle = qm_job["result"]
 
             # Collect all data from stream processing in the correct registers and feed
             # it to the result object
@@ -445,9 +472,19 @@ class QMBackend(Backend):
                 qc_meas_data = {}
                 for creg, creg_size in cregs_dicts[i].items():
                     if is_job_list:
-                        data = results_handle[i].get(f"{creg}_{i}").fetch_all()["value"]
+                        data = (
+                            np.array(results_handle[i].get(f"{creg}_{i}").fetch_all()["value"])
+                            .flatten()
+                            .tolist()
+                        )
+                    elif isinstance(results_handle, (StreamingResultFetcher, CloudResultHandles)):
+                        data = (
+                            np.array(results_handle.get(f"{creg}_{i}").fetch_all()["value"])
+                            .flatten()
+                            .tolist()
+                        )
                     else:
-                        data = results_handle.get(f"{creg}_{i}").fetch_all()["value"]
+                        data = np.array(results_handle.get(f"{creg}_{i}")).flatten().tolist()
                     # time_stamps = results_handle.get(f'{creg}_{i}').fetch_all()["timestamp"]
                     bit_array = BitArray.from_samples(data, creg_size)
                     qc_meas_data[creg] = bit_array
@@ -468,12 +505,18 @@ class QMBackend(Backend):
                 experiment_data.append(experiment_result)
 
             result = Result(
-                data=experiment_data if num_circuits > 1 else experiment_data[0],
-                header={"backend_name": self.name, "job_id": qm_job.id},
+                results=experiment_data if num_circuits > 1 else experiment_data[0],
+                backend_name=self.name,
+                job_id=qm_job.id if hasattr(qm_job, "id") else "unknown",
+                backend_version=2,
+                qobj_id=None,
+                success=True,
+                date=datetime.datetime.now().isoformat(),
             )
             return result
 
-        job = QMJob(
+        job_obj = IQCCJob if isinstance(self.qmm, IQCC_Cloud) else QMJob
+        job = job_obj(
             self,
             id,
             qm,
@@ -481,6 +524,7 @@ class QMBackend(Backend):
             simulate=simulate,
             compiler_options=compiler_options,
             result_function=result_function,
+            config=self.qm_config,
         )
 
         job.submit()
@@ -1040,17 +1084,17 @@ class FluxTunableTransmonBackend(QMBackend):
                 "Invalid QuAM instance provided, should have qubits and qubit_pairs attributes"
             )
         drive_channel_mapping = {
-            DriveChannel(i): qubit.xy for i, qubit in enumerate(machine.qubits.values())
+            DriveChannel(i): qubit.xy for i, qubit in enumerate(machine.active_qubits)
         }
         flux_channel_mapping = {
-            FluxChannel(i): qubit.z for i, qubit in enumerate(machine.qubits.values())
+            FluxChannel(i): qubit.z for i, qubit in enumerate(machine.active_qubits)
         }
         readout_channel_mapping = {
-            MeasureChannel(i): qubit.resonator for i, qubit in enumerate(machine.qubits.values())
+            MeasureChannel(i): qubit.resonator for i, qubit in enumerate(machine.active_qubits)
         }
         control_channel_mapping = {
             ControlChannel(i): qubit_pair.coupler
-            for i, qubit_pair in enumerate(machine.qubit_pairs.values())
+            for i, qubit_pair in enumerate(machine.active_qubit_pairs)
         }
         channel_mapping = {
             **drive_channel_mapping,
@@ -1072,7 +1116,7 @@ class FluxTunableTransmonBackend(QMBackend):
         """
         return {
             i: (qubit.xy.name, qubit.z.name, qubit.resonator.name)
-            for i, qubit in enumerate(self.machine.qubits.values())
+            for i, qubit in enumerate(self.machine.active_qubits)
         }
 
     @property
@@ -1080,7 +1124,7 @@ class FluxTunableTransmonBackend(QMBackend):
         """
         Retrieve the measurement map for the backend.
         """
-        return [[i] for i in range(len(self.machine.qubits))]
+        return [[i] for i in range(len(self.machine.active_qubits))]
 
     def flux_channel(self, qubit: int):
         """

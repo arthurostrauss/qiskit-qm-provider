@@ -17,7 +17,6 @@ from qiskit.circuit import QuantumCircuit
 from dataclasses import dataclass
 
 from qiskit.primitives.containers.sampler_pub import SamplerPub
-from qiskit.primitives.primitive_job import PrimitiveJob
 from qm import Program
 from qm.qua import *
 from qm.qua._dsl import _ResultSource
@@ -26,7 +25,8 @@ from .backend_utils import _QASM3_DUMP_LOOSE_BIT_PREFIX, validate_circuits
 
 from .parameter_table import InputType, ParameterTable
 from .qm_backend import QMBackend
-from .qm_sampler_job import QMPrimitiveJob
+
+# from .qm_sampler_job import QMPrimitiveJob
 from quam.utils.qua_types import QuaScalar
 
 
@@ -71,15 +71,17 @@ class QMSamplerV2(BaseSamplerV2):
         """Return the backend"""
         return self._backend
 
-    def run(self, pubs: Iterable[SamplerPubLike], *, shots: int | None = None) -> QMPrimitiveJob:
+    def run(
+        self, pubs: Iterable[SamplerPubLike], *, shots: int | None = None
+    ):  # -> QMPrimitiveJob:
         if shots is None:
             shots = self._options.default_shots
         coerced_pubs = [SamplerPub.coerce(pub, shots) for pub in pubs]
         coerced_pubs = self._validate_pubs(coerced_pubs)
         sampler_prog = sampler_program(self._backend, coerced_pubs, self._options.input_type)
-        job = QMPrimitiveJob(self._backend, coerced_pubs, self._options.input_type)
-        job.submit()
-        return job
+        # job = QMPrimitiveJob(self._backend, coerced_pubs, self._options.input_type)
+        # job.submit()
+        # return job
 
     def _validate_pubs(self, pubs: list[SamplerPub]):
         for i, pub in enumerate(pubs):
