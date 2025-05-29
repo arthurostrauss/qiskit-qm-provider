@@ -329,7 +329,7 @@ class ParameterTable:
             if isinstance(parameter_name, str) and parameter_name not in self.table.keys():
                 raise KeyError(f"No parameter named {parameter_name} in the parameter table.")
             if isinstance(parameter_name, str):
-                self.table[parameter_name].assign_value(parameter_value)
+                self.table[parameter_name].assign(parameter_value)
             else:
                 if not isinstance(parameter_name, Parameter):
                     raise ValueError(
@@ -338,7 +338,7 @@ class ParameterTable:
                 assert (
                     parameter_name in self.parameters
                 ), "Provided ParameterValue not in this ParameterTable."
-                parameter_name.assign_value(parameter_value)
+                parameter_name.assign(parameter_value)
 
     def print_parameters(self):
         text = ""
@@ -533,7 +533,7 @@ class ParameterTable:
         """
         if key not in self.table.keys():
             raise KeyError(f"No parameter named {key} in the parameter table.")
-        self.table[key].assign_value(value)
+        self.table[key].assign(value)
 
     def __getitem__(self, item: Union[str, int]):
         """

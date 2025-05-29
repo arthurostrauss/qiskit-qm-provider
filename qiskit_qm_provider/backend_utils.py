@@ -145,3 +145,24 @@ def binary(val: int, num_bits: int = 0) -> str:
     :return: The binary string representation of the integer.
     """
     return bin(val)[2:].zfill(num_bits)
+
+def add_basic_macros_to_machine(machine: BaseQuam):
+    """
+    Add macros to the machine.
+    :param machine: The BaseQuam instance to which macros will be added.
+    """
+    from quam_libs.components.gate_macros import ResetMacro, VirtualZMacro, MeasureMacro, CZMacro, DelayMacro
+    from quam.components.macro import PulseMacro
+    for qubit in machine.active_qubits:
+        qubit.macros["x"] = PulseMacro(pulse="x180")
+        qubit.macros["rz"] = VirtualZMacro()
+        qubit.macros["sx"] = PulseMacro(pulse="x90")
+        qubit.macros["measure"] = MeasureMacro(pulse="readout")
+        qubit.macros["reset"] = ResetMacro(pi_pulse="x180", readout_pulse="readout")
+        qubit.macros["delay"] = DelayMacro()
+
+    for qubit_pair in machine.active_qubit_pairs:
+        qubit_pair.macros["cz"] = CZMacro(
+            flux_pulse_control=qubit_pair.qubit_control.get_pulse("flux_pulse").get_reference(),
+            coupler_flux_pulse=qubit_pair.coupler.operations["cz"].get_reference(),
+        )

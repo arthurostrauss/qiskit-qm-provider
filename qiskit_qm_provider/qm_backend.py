@@ -42,7 +42,7 @@ from qm import (
 )
 from qm.qua._dsl import _ResultSource
 from qualang_tools.addons.variables import assign_variables_to_element
-from quam.components import Channel as QuAMChannel, QubitPair
+from quam.components import Channel as QuAMChannel, QubitPair, Qubit
 from quam_builder.architecture.superconducting.qpu.base_quam import BaseQuam as Quam
 from quam.utils.qua_types import QuaScalar
 
@@ -120,6 +120,10 @@ class QMBackend(Backend):
             {v: k for k, v in channel_mapping.items()} if channel_mapping is not None else {}
         )
         self._qubit_dict = {qubit.name: i for i, qubit in enumerate(machine.active_qubits)}
+        self._qubit_pair_dict = {qubit_pair.name: (self._qubit_dict[qubit_pair.qubit_control.name], 
+                                                   self._qubit_dict[qubit_pair.qubit_target.name])
+                                 for qubit_pair in machine.active_qubit_pairs}
+                                 
         self._target, self._ref_operation_mapping_QUA, self._coupling_map = self._populate_target(
             machine
         )
@@ -145,6 +149,29 @@ class QMBackend(Backend):
         Get the qubit dictionary for the backend
         """
         return self._qubit_dict
+    
+    @property
+    def qubit_pair_dict(self):
+        """
+        Get the qubit pair dictionary for the backend
+        """
+        return self._qubit_pair_dict
+    
+    def get_qubit(self, qubit: int|str) -> Qubit:
+        """
+        Get the Qubit object corresponding to the given qubit index or name
+        Args:
+            qubit: The qubit index or name
+
+        Returns:
+            The Qubit object corresponding to the given qubit index or name
+        """
+        if isinstance(qubit, int):
+            return self.machine.active_qubits[qubit]
+        elif isinstance(qubit, str):
+            return self.machine.active_qubits[self.qubit_dict[qubit]]
+        else:
+            raise ValueError("Qubit should be an integer index or a string name")
 
     @property
     def qubit_mapping(self) -> QubitsMapping:
@@ -703,7 +730,7 @@ class QMBackend(Backend):
                 for param_name, value in bound_params.arguments.items():
                     if not param_table.get_parameter(param_name).is_declared:
                         param_table.get_parameter(param_name).declare_variable()
-                    param_table.get_parameter(param_name).assign_value(value)
+                    param_table.get_parameter(param_name).assign(value)
 
             time_tracker = {channel: 0 for channel in sched.channels}
 
@@ -812,22 +839,14 @@ class QMBackend(Backend):
             else:
                 self.get_quam_channel(channel).operations[pulse.name] = QuAMQiskitPulse(pulse)
 
-    def update_target(
+    def update_compiler_from_target(
         self,
         input_type: Optional[InputType] = None,
     ):
         """
-        This method updates the QuAM with the custom calibrations of the QuantumCircuit (if any)
-        and adds the corresponding operations to the QUA operations mapping for the OQC compiler.
-        This method should be called before opening the QuantumMachine instance (i.e. before generating the
-        configuration through QuAM) as it modifies the QuAM configuration.
-        It also looks at the Target object and checks if new operations are added to the target. If
-        so, it adds them to the QUA operations mapping for the OQC compiler.
-
-        Args:
-            qc: The QuantumCircuit to update the calibrations from. If None, only the target is checked
-            input_type: The input type for the parameter table (if any). Relevant only if the parameter table is
-            not already defined and present in qc metadata
+        Update the target with the operations defined in the target object.
+        :param input_type: Input type to use for the conversion of parameterized instructions to QUA variables.
+        :return: 
         """
         # Check the target object for new operations
         for op_name, op_properties in self.target.items():
@@ -899,7 +918,15 @@ class QMBackend(Backend):
                         ] = self.schedule_to_qua_macro(sched, param_table)
 
         self._operation_mapping_QUA = self._ref_operation_mapping_QUA.copy()
-
+    
+    def update_target(self):
+        """
+        Update the target with the operations defined in the machine macros (if new macros were added)
+        """
+        self._target, self._ref_operation_mapping_QUA, self._coupling_map = self._populate_target(
+            self.machine
+        )
+        
     def update_calibrations(self, qc: QuantumCircuit, input_type: Optional[InputType] = None):
         # if qc.parameters and param_table is None:
         #     raise ValueError(
@@ -1062,6 +1089,29 @@ class QMBackend(Backend):
         The macro to be called at the beginning of the QUA program
         """
         return self._init_macro
+    
+    @init_macro.setter
+    def init_macro(self, macro: Callable):
+        """
+        Set the macro to be called at the beginning of the QUA program
+        """
+        if not callable(macro):
+            raise ValueError("Init macro must be a callable")
+        self._init_macro = macro
+        
+    @property
+    def qubits(self)-> List[Qubit]:
+        """
+        Retrieve the list of active qubits of the machine
+        """
+        return self.machine.active_qubits
+    
+    @property
+    def qubit_pairs(self) -> List[QubitPair]:
+        """
+        Retrieve the list of active qubit pairs of the machine
+        """
+        return self.machine.active_qubit_pairs
 
 
 class FluxTunableTransmonBackend(QMBackend):

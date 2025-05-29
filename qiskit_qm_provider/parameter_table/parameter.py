@@ -14,6 +14,7 @@ from itertools import chain
 import sys
 
 from qm.qua._dsl import _ResultSource
+from qm.qua._expressions import QuaArrayVariable
 
 from .parameter_pool import ParameterPool
 from .input_type import Direction, InputType
@@ -254,10 +255,9 @@ class Parameter:
         """
         return self._main_table
 
-    def assign_value(
+    def assign(
         self,
         value: Union["Parameter", ScalarOfAnyType, VectorOfAnyType],
-        is_qua_array: bool = False,
         condition=None,
         value_cond: Optional[Union["Parameter", ScalarOfAnyType, VectorOfAnyType]] = None,
     ):
@@ -315,7 +315,7 @@ class Parameter:
                 assign_with_condition(self.var, value.var, value_cond.var if value_cond else None)
         else:
             if self.is_array:
-                if is_qua_array:
+                if isinstance(value, QuaArrayVariable):
                     i = self._counter_var
                     with for_(i, 0, i < self.length, i + 1):
                         assign_with_condition(
@@ -492,22 +492,6 @@ class Parameter:
         return tables
 
     @property
-    def main_table(self) -> Optional[ParameterTable]:
-        """
-        Returns:
-            The ParameterTable object used to declare the parameter.
-            Specifically, the first table in the list of tables and the one that should be
-            used for communication if InputType is DGX.
-
-        :returns: ParameterTable object or None if not found.
-        """
-        if self.is_standalone():
-            return None
-        else:
-            stream_id = self.stream_id
-            return ParameterPool.get_obj(stream_id)
-
-    @property
     def type(self):
         """Type of the associated QUA variable."""
         return self._type
@@ -568,7 +552,7 @@ class Parameter:
         if mode not in ["save", "save_all"]:
             raise ValueError("Invalid mode. Must be 'save' or 'save_all'.")
         if buffer is None and self.is_array:
-            buffer = self.length
+            buffer = (self.length,)
         elif isinstance(buffer, int):
             buffer = (buffer,)
         if self.stream is not None:
