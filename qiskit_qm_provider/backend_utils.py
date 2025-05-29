@@ -36,7 +36,7 @@ def validate_circuits(
     :return: Modified circuits with an added reset if needed.
     """
     if not all(isinstance(qc, QuantumCircuit) for qc in circuits):
-        raise ValueError("Input should be a QuantumCircuit or a Qiskit Pulse Schedule")
+        raise ValueError("Input should be a QuantumCircuit")
     if check_for_params and not all(len(qc.parameters) == 0 for qc in circuits):
         raise ValueError("Input should not contain parameters")
 
