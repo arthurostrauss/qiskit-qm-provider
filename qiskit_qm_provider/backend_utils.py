@@ -146,13 +146,21 @@ def binary(val: int, num_bits: int = 0) -> str:
     """
     return bin(val)[2:].zfill(num_bits)
 
+
 def add_basic_macros_to_machine(machine: BaseQuam):
     """
     Add macros to the machine.
     :param machine: The BaseQuam instance to which macros will be added.
     """
-    from quam_libs.components.gate_macros import ResetMacro, VirtualZMacro, MeasureMacro, CZMacro, DelayMacro
+    from quam_libs.components.gate_macros import (
+        ResetMacro,
+        VirtualZMacro,
+        MeasureMacro,
+        CZMacro,
+        DelayMacro,
+    )
     from quam.components.macro import PulseMacro
+
     for qubit in machine.active_qubits:
         qubit.macros["x"] = PulseMacro(pulse="x180")
         qubit.macros["rz"] = VirtualZMacro()

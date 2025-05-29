@@ -120,10 +120,14 @@ class QMBackend(Backend):
             {v: k for k, v in channel_mapping.items()} if channel_mapping is not None else {}
         )
         self._qubit_dict = {qubit.name: i for i, qubit in enumerate(machine.active_qubits)}
-        self._qubit_pair_dict = {qubit_pair.name: (self._qubit_dict[qubit_pair.qubit_control.name], 
-                                                   self._qubit_dict[qubit_pair.qubit_target.name])
-                                 for qubit_pair in machine.active_qubit_pairs}
-                                 
+        self._qubit_pair_dict = {
+            qubit_pair.name: (
+                self._qubit_dict[qubit_pair.qubit_control.name],
+                self._qubit_dict[qubit_pair.qubit_target.name],
+            )
+            for qubit_pair in machine.active_qubit_pairs
+        }
+
         self._target, self._ref_operation_mapping_QUA, self._coupling_map = self._populate_target(
             machine
         )
@@ -149,15 +153,15 @@ class QMBackend(Backend):
         Get the qubit dictionary for the backend
         """
         return self._qubit_dict
-    
+
     @property
     def qubit_pair_dict(self):
         """
         Get the qubit pair dictionary for the backend
         """
         return self._qubit_pair_dict
-    
-    def get_qubit(self, qubit: int|str) -> Qubit:
+
+    def get_qubit(self, qubit: int | str) -> Qubit:
         """
         Get the Qubit object corresponding to the given qubit index or name
         Args:
@@ -846,7 +850,7 @@ class QMBackend(Backend):
         """
         Update the target with the operations defined in the target object.
         :param input_type: Input type to use for the conversion of parameterized instructions to QUA variables.
-        :return: 
+        :return:
         """
         # Check the target object for new operations
         for op_name, op_properties in self.target.items():
@@ -918,7 +922,7 @@ class QMBackend(Backend):
                         ] = self.schedule_to_qua_macro(sched, param_table)
 
         self._operation_mapping_QUA = self._ref_operation_mapping_QUA.copy()
-    
+
     def update_target(self):
         """
         Update the target with the operations defined in the machine macros (if new macros were added)
@@ -926,7 +930,7 @@ class QMBackend(Backend):
         self._target, self._ref_operation_mapping_QUA, self._coupling_map = self._populate_target(
             self.machine
         )
-        
+
     def update_calibrations(self, qc: QuantumCircuit, input_type: Optional[InputType] = None):
         # if qc.parameters and param_table is None:
         #     raise ValueError(
@@ -1089,7 +1093,7 @@ class QMBackend(Backend):
         The macro to be called at the beginning of the QUA program
         """
         return self._init_macro
-    
+
     @init_macro.setter
     def init_macro(self, macro: Callable):
         """
@@ -1098,14 +1102,14 @@ class QMBackend(Backend):
         if not callable(macro):
             raise ValueError("Init macro must be a callable")
         self._init_macro = macro
-        
+
     @property
-    def qubits(self)-> List[Qubit]:
+    def qubits(self) -> List[Qubit]:
         """
         Retrieve the list of active qubits of the machine
         """
         return self.machine.active_qubits
-    
+
     @property
     def qubit_pairs(self) -> List[QubitPair]:
         """

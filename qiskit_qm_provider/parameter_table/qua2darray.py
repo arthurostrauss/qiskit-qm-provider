@@ -4,23 +4,10 @@ from qm.qua import declare, assign as qua_assign, fixed, for_
 from quam.utils.qua_types import QuaVariableInt, Scalar, ScalarInt
 
 from .parameter import Parameter
-from typing import Tuple, Union, List, Sequence, Literal, get_args
+from typing import Tuple, Union, List, Sequence, Literal
 import numpy as np
 from qm.qua._dsl import QuaArrayVariable
 
-
-def unroll_generics(type_hint):
-    """
-    Unroll type hints
-    """
-    args = get_args(type_hint)
-    if not args: 
-        return [type_hint]
-
-    unrolled = []
-    for arg in args:
-        unrolled.extend(unroll_generics(arg)) 
-    return tuple(unrolled)
 
 class QUA2DArray(Parameter):
     """
@@ -33,7 +20,7 @@ class QUA2DArray(Parameter):
         name: str,
         n_rows: int,
         n_cols: int,
-        value: np.ndarray|List[List[Number]]= None,
+        value: np.ndarray | List[List[Number]] = None,
         qua_type: Union[str, type] = None,
         input_type=None,
         direction=None,
@@ -60,7 +47,7 @@ class QUA2DArray(Parameter):
                 raise ValueError("n_rows and n_cols must be strictly positive integers")
             if n_rows * n_cols > 1000000:
                 raise ValueError("2D array size exceeds maximum limit of 1,000,000 elements")
-            
+
             init_list = [0] * length
 
         # let Parameter.__init__ infer or take the qua_type you pass
@@ -84,14 +71,14 @@ class QUA2DArray(Parameter):
             raise IndexError(f"Row index {i} out of bounds for n_rows={self.n_rows}")
         if isinstance(j, int) and (j < 0 or j >= self.n_cols):
             raise IndexError(f"Column index {j} out of bounds for n_cols={self.n_cols}")
-    
+
         if isinstance(i, int) and i * self.n_cols == 0:
             return j
-            
+
         if isinstance(j, int) and j == 0:
             return i * self.n_cols if self.n_cols != 1 else i
-        
-        return i * self.n_cols + j if self.n_cols !=1 else i + j
+
+        return i * self.n_cols + j if self.n_cols != 1 else i + j
 
     def __getitem__(self, key: Union[ScalarInt, Tuple[ScalarInt, ScalarInt]]):
         """
@@ -102,30 +89,32 @@ class QUA2DArray(Parameter):
         if self.var is None:
             raise RuntimeError(f"{self.name} not declared yet")
         if isinstance(key, tuple):
-            i,j = key
-            return self.var[self._flat_index(i,j)]
-        
+            i, j = key
+            return self.var[self._flat_index(i, j)]
+
         else:
             # return a small proxy so you can do arr[i][j]
             return _QUA2DRow(self, key)
 
-    def assign(self,
-               row: ScalarInt,
-               col_or_vals: Union[ScalarInt, Sequence, QuaArrayVariable],
-               val: Scalar=None):
+    def assign(
+        self,
+        row: ScalarInt,
+        col_or_vals: Union[ScalarInt, Sequence, QuaArrayVariable],
+        val: Scalar = None,
+    ):
         """
         Generalized assign:
         - assign(row, col, value) → one element
         - assign(row, [v0, v1, …]) → entire row from Python list/ndarray
         - assign(row, qua_array) → entire row from a QuaArray-like
-        
+
         This allows you to assign a single value to a specific cell,
         assign an entire row from a Python list or numpy array, or
         assign an entire row from another QUA array variable.
         Note that the row index is 0-based.
         This method overrides the default assign method to handle 2D arrays and does not
         propose the same handling of conditional assignment as the original QUA assign.
-        
+
         :param row: Row index (0-based)
         :param col_or_vals: Either a column index (0-based) or a sequence of values
         :param val: Value to assign if col_or_vals is a column index
@@ -144,9 +133,7 @@ class QUA2DArray(Parameter):
         # allow numpy arrays
         if isinstance(seq, np.ndarray):
             if seq.ndim != 1:
-                raise ValueError(
-                    f"Expected a 1D array for row assignment, got {seq.ndim}D array"
-                )
+                raise ValueError(f"Expected a 1D array for row assignment, got {seq.ndim}D array")
             seq = seq.tolist()
         if isinstance(seq, List) and all(isinstance(item, (int, float, bool)) for item in seq):
             # already a list of numbers, no conversion needed
@@ -156,9 +143,7 @@ class QUA2DArray(Parameter):
                 )
             # Check type of elements in the list and match with QUA type
             if not all(isinstance(item, type(seq[0])) for item in seq):
-                raise TypeError(
-                    f"All elements in the list must be of same type: {type(seq[0])}"
-                )
+                raise TypeError(f"All elements in the list must be of same type: {type(seq[0])}")
             if self.type is fixed and not all(isinstance(item, float) for item in seq):
                 raise TypeError(
                     f"All elements must be of type float for QUA fixed type, got {type(seq[0])}"
@@ -175,7 +160,7 @@ class QUA2DArray(Parameter):
             with for_(self._counter_var, 0, self._counter_var < self.n_cols, self._counter_var + 1):
                 qua_assign(self[row, self._counter_var], seq[self._counter_var])
             return
-    
+
     def stream_processing(
         self, mode: Literal["save", "save_all"] = "save_all", buffer: Union[Tuple[int], int] = None
     ):
@@ -199,18 +184,17 @@ class QUA2DArray(Parameter):
             getattr(stream, mode)(self.name)
         else:
             raise ValueError("Output stream is not declared for this QUA2DArray")
-            
 
 
 # auxiliary class so arr[i][j] works
 class _QUA2DRow:
     def __init__(self, parent: QUA2DArray, row: int):
         self._parent = parent
-        self._row    = row
+        self._row = row
 
     def __getitem__(self, col: int):
         return self._parent[self._row, col]
 
-    def assign(self, col_or_vals: Union[ScalarInt, Sequence, QuaArrayVariable], val: Scalar=None):
+    def assign(self, col_or_vals: Union[ScalarInt, Sequence, QuaArrayVariable], val: Scalar = None):
         """Delegate to the parent’s assign."""
         self._parent.assign(self._row, col_or_vals, val)
