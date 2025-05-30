@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
-from typing import Union, Callable, Literal, Sequence, Optional, Dict, Type
+from typing import Callable, Optional, Dict, Type
 
-from qiskit.circuit import ParameterExpression
 from qiskit.pulse import (
     ShiftPhase,
     ShiftFrequency,
@@ -15,9 +14,7 @@ from qiskit.pulse import (
 from qm.qua import reset_phase, Math, amp as qua_amp
 from quam.components import Channel
 from qiskit.pulse.library.pulse import Pulse
-from qm.qua.type_hints import Scalar
 from quam.utils.qua_types import ScalarFloat, ScalarInt
-from inspect import Parameter, Signature
 
 __all__ = [
     "QuaPlayMacro",

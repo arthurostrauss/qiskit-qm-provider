@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import List
 
 from qiskit import QuantumCircuit
-from qiskit.circuit import Gate, IfElseOp, WhileLoopOp, ForLoopOp, SwitchCaseOp
+from qiskit.circuit import IfElseOp, WhileLoopOp, ForLoopOp, SwitchCaseOp
 from qiskit.circuit.library import get_standard_gate_name_mapping
 
 from quam.components import Qubit, QubitPair
-from .additional_gates import CRGate, SYGate, SYdgGate
+from ..additional_gates import CRGate, SYGate, SYdgGate
 from quam_builder.architecture.superconducting.qpu.base_quam import BaseQuam
 from oqc import OperationIdentifier
 

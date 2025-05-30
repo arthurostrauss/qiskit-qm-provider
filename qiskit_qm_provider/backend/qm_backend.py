@@ -33,7 +33,6 @@ from qm import (
     StreamingResultFetcher,
 )
 from qm.qua._dsl import _ResultSource
-from qualang_tools.addons.variables import assign_variables_to_element
 from quam.components import Channel as QuAMChannel, QubitPair, Qubit
 from quam_builder.architecture.superconducting.qpu.base_quam import BaseQuam as Quam
 from quam.utils.qua_types import QuaScalar
@@ -54,7 +53,7 @@ from quam_libs.cloud_infrastructure import (
 )
 
 # Helper modules
-from .parameter_table import ParameterTable, InputType, Parameter
+from ..parameter_table import ParameterTable, InputType, Parameter
 from .backend_utils import (
     validate_machine,
     look_for_standard_op,
@@ -68,7 +67,7 @@ from .backend_utils import (
 from .qm_instruction_properties import QMInstructionProperties
 
 if TYPE_CHECKING:
-    from .qm_job import QMJob, IQCCJob
+    from qiskit_qm_provider.job.qm_job import QMJob, IQCCJob
 __all__ = ["QMBackend", "QISKIT_PULSE_AVAILABLE"]
 
 try:  # Importing Qiskit Pulse components
@@ -85,13 +84,6 @@ try:  # Importing Qiskit Pulse components
     )
     from qiskit.pulse.channels import Channel as QiskitChannel
     from qiskit.pulse.library import Pulse as QiskitPulse
-    from .quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
-    from .pulse_support_utils import (
-        handle_parameterized_channel,
-        validate_parameters,
-        _instruction_to_qua,
-        validate_schedule,
-    )
 
     QISKIT_PULSE_AVAILABLE = True
 except ImportError:
@@ -100,9 +92,9 @@ except ImportError:
         ImportWarning,
     )
     QISKIT_PULSE_AVAILABLE = False
-    QiskitChannel = FluxChannel = DriveChannel = MeasureChannel = AcquireChannel = (
-        ControlChannel
-    ) = Schedule = ScheduleBlock = Play = Waveform = SymbolicPulse = QuAMQiskitPulse = None
+    QiskitChannel = DriveChannel = MeasureChannel = AcquireChannel = ControlChannel = Schedule = (
+        ScheduleBlock
+    ) = Play = Waveform = SymbolicPulse = None
 
 
 def requires_qiskit_pulse(func):
@@ -113,7 +105,7 @@ def requires_qiskit_pulse(func):
     def wrapper(*args, **kwargs):
         if not QISKIT_PULSE_AVAILABLE:
             raise ImportError(
-                "Qiskit version does not have Qiskit Pulse, lower it to 1.x to use this feature."
+                "Current Qiskit version does not have Qiskit Pulse, lower it to 1.x to use this feature."
             )
         return func(*args, **kwargs)
 
@@ -494,7 +486,7 @@ class QMBackend(Backend):
         Returns:
             A QMJob object that can be used to retrieve the results of the job
         """
-        from .qm_job import QMJob, IQCCJob
+        from ..job.qm_job import QMJob, IQCCJob
 
         num_shots = options.get("shots", self.options.shots)
         simulate = options.get("simulate", self.options.simulate)
@@ -748,78 +740,10 @@ class QMBackend(Backend):
         Returns:
             The QUA macro corresponding to the Qiskit Pulse Schedule
         """
-        sig = Signature()
-        if sched.is_parameterized():
-            if param_table is None:
-                param_table = ParameterTable.from_qiskit(
-                    sched, name=sched.name + "_param_table", input_type=input_type
-                )
-                param_table = handle_parameterized_channel(sched, param_table)
-            else:
-                param_table = validate_parameters(sched.parameters, param_table)
 
-            involved_parameters = [value.name for value in sched.parameters]
-            params = [
-                sigParam(param, sigParam.POSITIONAL_OR_KEYWORD) for param in involved_parameters
-            ]
-            sig = Signature(params)
+        from ..pulse import schedule_to_qua_macro
 
-        def qua_macro(*args, **kwargs):  # Define the QUA macro with parameters
-
-            # Relate passed positional arguments to parameters in ParameterTable
-            bound_params = sig.bind(*args, **kwargs)
-            bound_params.apply_defaults()
-            if param_table is not None:
-                for param_name, value in bound_params.arguments.items():
-                    if not param_table.get_parameter(param_name).is_declared:
-                        param_table.get_parameter(param_name).declare_variable()
-                    param_table.get_parameter(param_name).assign(value)
-
-            time_tracker = {channel: 0 for channel in sched.channels}
-
-            for time, instruction in sched.instructions:
-                if len(instruction.channels) > 1:
-                    raise NotImplementedError("Only single channel instructions are supported")
-                qiskit_channel = instruction.channels[0]
-
-                if qiskit_channel.is_parameterized():  # Basic support for parameterized channels
-                    # Filter dictionary of pulses based on provided ChannelType
-                    channel_dict = {
-                        channel.index: quam_channel
-                        for channel, quam_channel in self.channel_mapping.items()
-                        if isinstance(channel, type(qiskit_channel))
-                    }
-                    ch_parameter_name = list(qiskit_channel.parameters)[0].name
-                    if not param_table.get_parameter(ch_parameter_name).type == int:
-                        raise ValueError(
-                            f"Parameter {ch_parameter_name} must be of type int for switch case"
-                        )
-
-                    # QUA variable corresponding to the channel parameter
-                    with switch_(param_table[ch_parameter_name]):
-                        for i, quam_channel in channel_dict.items():
-                            with case_(i):
-                                qiskit_channel = self.get_pulse_channel(quam_channel)
-                                if time_tracker[qiskit_channel] < time:
-                                    quam_channel.wait((time - time_tracker[qiskit_channel]))
-                                    time_tracker[qiskit_channel] = time
-                                _instruction_to_qua(
-                                    instruction,
-                                    quam_channel,
-                                    param_table,
-                                )
-                                time_tracker[qiskit_channel] += instruction.duration
-                else:
-                    quam_channel = self.get_quam_channel(qiskit_channel)
-                    if time_tracker[qiskit_channel] < time:
-                        quam_channel.wait((time - time_tracker[qiskit_channel]))
-                        time_tracker[qiskit_channel] = time
-                    _instruction_to_qua(instruction, quam_channel, param_table)
-                    time_tracker[qiskit_channel] += instruction.duration
-
-        qua_macro.__name__ = sched.name if sched.name else "macro" + str(id(sched))
-        qua_macro.__signature__ = sig
-        return qua_macro
+        return schedule_to_qua_macro(self, sched, param_table, input_type)
 
     @requires_qiskit_pulse
     def add_pulse_operations(
@@ -836,6 +760,7 @@ class QMBackend(Backend):
             a Schedule or ScheduleBlock is provided, all pulse operations are named as "{name}_{i}" where i is the number
             of the pulse operation in the schedule. If a Pulse is provided, it is named as "{name}".
         """
+        from ..pulse import validate_schedule, QuAMQiskitPulse
 
         pulse_input = validate_schedule(pulse_input)
 
@@ -930,6 +855,8 @@ class QMBackend(Backend):
                     elif isinstance(properties, InstructionProperties) and hasattr(
                         properties, "calibration"
                     ):
+                        from ..pulse.pulse_support_utils import validate_schedule
+
                         sched = validate_schedule(properties.calibration)
                         num_params = len(sched.parameters)
                         if num_params > 0:
@@ -979,7 +906,7 @@ class QMBackend(Backend):
         :return:
         """
         if hasattr(qc, "calibrations") and qc.calibrations:  # Check for custom calibrations
-            from .pulse_support_utils import validate_schedule, handle_parameterized_channel
+            from ..pulse.pulse_support_utils import validate_schedule, handle_parameterized_channel
 
             if qc.parameters or qc.iter_vars():
                 param_table = qc.metadata.get(
@@ -1102,6 +1029,8 @@ class QMBackend(Backend):
         if isinstance(qc, QuantumCircuit):
             return self.quantum_circuit_to_qua(qc, parameter_table)
         elif isinstance(qc, (ScheduleBlock, Schedule)):  # Convert to Schedule first
+            from ..pulse import validate_schedule
+
             schedule = validate_schedule(qc)
             return self.schedule_to_qua_macro(schedule, parameter_table)
         else:

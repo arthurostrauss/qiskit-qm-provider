@@ -6,8 +6,10 @@ from qiskit.circuit.parametervector import ParameterVectorElement
 from quam.components import Channel as QuAMChannel
 from .sympy_to_qua import sympy_to_qua
 from qiskit.circuit.parameterexpression import ParameterExpression
-from .parameter_table import ParameterTable, Parameter as QuaParameter
-from typing import Dict, Optional, Type
+from ..parameter_table import ParameterTable, Parameter as QuaParameter, InputType
+from typing import Dict, Optional, Callable, TYPE_CHECKING
+from inspect import Signature, Parameter as sigParam
+from qm.qua import switch_, case_
 
 try:
     from qiskit.pulse import (
@@ -26,6 +28,9 @@ except ImportError:
     )
 
 from .pulse_to_qua import *
+
+if TYPE_CHECKING:
+    from ..backend.qm_backend import QMBackend
 
 # TODO: Add duration to the list of real-time parameters (need ScheduleBlock to QUA compiler)
 _real_time_parameters = {
@@ -201,3 +206,81 @@ def handle_parameterized_channel(schedule: Schedule, param_table: ParameterTable
             ch_parameter_value = QuaParameter(ch_param.name, 0, int)
             param_table.table[ch_param.name] = ch_parameter_value
     return param_table
+
+
+def schedule_to_qua_macro(
+    backend: QMBackend,
+    sched: Schedule,
+    param_table: Optional[ParameterTable] = None,
+    input_type: Optional[InputType] = None,
+) -> Callable:
+    sig = Signature()
+    if sched.is_parameterized():
+        if param_table is None:
+            param_table = ParameterTable.from_qiskit(
+                sched, name=sched.name + "_param_table", input_type=input_type
+            )
+            param_table = handle_parameterized_channel(sched, param_table)
+        else:
+            param_table = validate_parameters(sched.parameters, param_table)
+
+        involved_parameters = [value.name for value in sched.parameters]
+        params = [sigParam(param, sigParam.POSITIONAL_OR_KEYWORD) for param in involved_parameters]
+        sig = Signature(params)
+
+    def qua_macro(*args, **kwargs):  # Define the QUA macro with parameters
+
+        # Relate passed positional arguments to parameters in ParameterTable
+        bound_params = sig.bind(*args, **kwargs)
+        bound_params.apply_defaults()
+        if param_table is not None:
+            for param_name, value in bound_params.arguments.items():
+                if not param_table.get_parameter(param_name).is_declared:
+                    param_table.get_parameter(param_name).declare_variable()
+                param_table.get_parameter(param_name).assign(value)
+
+        time_tracker = {channel: 0 for channel in sched.channels}
+
+        for time, instruction in sched.instructions:
+            if len(instruction.channels) > 1:
+                raise NotImplementedError("Only single channel instructions are supported")
+            qiskit_channel = instruction.channels[0]
+
+            if qiskit_channel.is_parameterized():  # Basic support for parameterized channels
+                # Filter dictionary of pulses based on provided ChannelType
+                channel_dict = {
+                    channel.index: quam_channel
+                    for channel, quam_channel in backend.channel_mapping.items()
+                    if isinstance(channel, type(qiskit_channel))
+                }
+                ch_parameter_name = list(qiskit_channel.parameters)[0].name
+                if not param_table.get_parameter(ch_parameter_name).type == int:
+                    raise ValueError(
+                        f"Parameter {ch_parameter_name} must be of type int for switch case"
+                    )
+
+                # QUA variable corresponding to the channel parameter
+                with switch_(param_table[ch_parameter_name]):
+                    for i, quam_channel in channel_dict.items():
+                        with case_(i):
+                            qiskit_channel = backend.get_pulse_channel(quam_channel)
+                            if time_tracker[qiskit_channel] < time:
+                                quam_channel.wait((time - time_tracker[qiskit_channel]))
+                                time_tracker[qiskit_channel] = time
+                            _instruction_to_qua(
+                                instruction,
+                                quam_channel,
+                                param_table,
+                            )
+                            time_tracker[qiskit_channel] += instruction.duration
+            else:
+                quam_channel = backend.get_quam_channel(qiskit_channel)
+                if time_tracker[qiskit_channel] < time:
+                    quam_channel.wait((time - time_tracker[qiskit_channel]))
+                    time_tracker[qiskit_channel] = time
+                _instruction_to_qua(instruction, quam_channel, param_table)
+                time_tracker[qiskit_channel] += instruction.duration
+
+    qua_macro.__name__ = sched.name if sched.name else "macro" + str(id(sched))
+    qua_macro.__signature__ = sig
+    return qua_macro

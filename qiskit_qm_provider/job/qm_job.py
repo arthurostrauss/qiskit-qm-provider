@@ -1,21 +1,15 @@
 from __future__ import annotations
 
-from typing import Optional, Dict, List, Callable, Union
-from collections import Counter
+from typing import Optional, List, Callable, Union
 
 from iqcc_cloud_client import IQCC_Cloud
-from qiskit.primitives import BitArray, SamplerPubResult, DataBin
 from qiskit.providers.job import JobV1, JobStatus
-from qiskit.result.models import ExperimentResult, ExperimentResultData
-from qiskit.result import Result, Counts
+from qiskit.result import Result
 from qm import QuantumMachine, Program, SimulationConfig
-from qm.grpc.frontend import SimulatedResponsePart
 
-from .qm_backend import QMBackend
+from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qm.jobs.running_qm_job import RunningQmJob
 from qm.jobs.pending_job import QmPendingJob
-from qm.jobs.base_job import QmBaseJob
-from .backend_utils import binary
 
 
 class QMJob(JobV1):

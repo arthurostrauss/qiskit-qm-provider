@@ -7,7 +7,7 @@ import symengine as se
 from functools import partial
 
 from qm.qua.type_hints import QuaVariable
-from .parameter_table import Parameter
+from qiskit_qm_provider.parameter_table import Parameter
 
 sympy_to_qua_dict = {
     sp.Float: qua.fixed,

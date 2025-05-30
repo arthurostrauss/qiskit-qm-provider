@@ -1,106 +1,13 @@
-from __future__ import annotations
-
-import warnings
-from typing import Any, Iterable, List, Optional, Callable, Union, Dict
-
-from qiskit.primitives import (
-    BaseSamplerV2,
-    BitArray,
-    DataBin,
-    BackendSamplerV2,
-    SamplerPubLike,
-    BasePrimitiveJob,
-    PrimitiveResult,
-    SamplerPubResult,
-)
-from qiskit.circuit import QuantumCircuit
-from dataclasses import dataclass
-
-from qiskit.primitives.containers.sampler_pub import SamplerPub
+from ..backend import QMBackend
+from ..backend.backend_utils import _QASM3_DUMP_LOOSE_BIT_PREFIX, validate_circuits
+from qiskit import QuantumCircuit
+from quam.utils.qua_types import QuaScalar
 from qm import Program
 from qm.qua import *
 from qm.qua._dsl import _ResultSource
-
-from .backend_utils import _QASM3_DUMP_LOOSE_BIT_PREFIX, validate_circuits
-
-from .parameter_table import InputType, ParameterTable
-from .qm_backend import QMBackend
-
-# from .qm_sampler_job import QMPrimitiveJob
-from quam.utils.qua_types import QuaScalar
-
-
-@dataclass
-class QMSamplerOptions:
-    """Options for :class:`~.QMSamplerV2`"""
-
-    default_shots: int = 1024
-    """The default shots to use if none are specified in :meth:`~.run`.
-    Default: 1024.
-    """
-
-    input_type: InputType = InputType.INPUT_STREAM
-    """The input mechanism to load the parameter values to the OPX. Choices are:
-    - :class:`~.InputType.INPUT_STREAM`: Input stream mechanism.
-    - :class:`~.InputType.IO1`: IO1.
-    - :class:`~.InputType.IO2`: IO2.
-    - :class:`~.InputType.DGX`: Using DGX Quantum communication.
-    Default: InputType.INPUT_STREAM."""
-
-    run_options: dict[str, Any] | None = None
-    """A dictionary of options to pass to the backend's ``run()`` method.
-    Default: None (no option passed to backend's ``run`` method)
-    """
-
-
-class QMSamplerV2(BaseSamplerV2):
-    """QM Sampler class."""
-
-    def __init__(self, backend: QMBackend, options: QMSamplerOptions | None = None):
-
-        self._backend = backend
-        self._options = options or QMSamplerOptions()
-
-    @property
-    def options(self) -> QMSamplerOptions:
-        """Return the options"""
-        return self._options
-
-    @property
-    def backend(self) -> QMBackend:
-        """Return the backend"""
-        return self._backend
-
-    def run(
-        self, pubs: Iterable[SamplerPubLike], *, shots: int | None = None
-    ):  # -> QMPrimitiveJob:
-        if shots is None:
-            shots = self._options.default_shots
-        coerced_pubs = [SamplerPub.coerce(pub, shots) for pub in pubs]
-        coerced_pubs = self._validate_pubs(coerced_pubs)
-        sampler_prog = sampler_program(self._backend, coerced_pubs, self._options.input_type)
-        # job = QMPrimitiveJob(self._backend, coerced_pubs, self._options.input_type)
-        # job.submit()
-        # return job
-
-    def _validate_pubs(self, pubs: list[SamplerPub]):
-        for i, pub in enumerate(pubs):
-            if len(pub.circuit.cregs) == 0:
-                warnings.warn(
-                    f"The {i}-th pub's circuit has no output classical registers and so the result "
-                    "will be empty. Did you mean to add measurement instructions?",
-                    UserWarning,
-                )
-        new_circuits = validate_circuits(
-            [pub.circuit for pub in pubs],
-            should_reset=not self._backend.options.skip_reset,
-            check_for_params=False,
-        )
-        new_pubs = [
-            SamplerPub(circuit, shots=pub.shots, parameter_values=pub.parameter_values)
-            for circuit, pub in zip(new_circuits, pubs)
-        ]
-        return new_pubs
+from qiskit.primitives.containers.sampler_pub import SamplerPub
+from ..parameter_table import InputType, ParameterTable
+from typing import List, Optional, Any
 
 
 def _process_circuit(
@@ -188,6 +95,7 @@ def sampler_program(
     """Return the QUA program for the given PUBs."""
     circuits = [pub.circuit for pub in pubs]
     num_circuits = len(circuits)
+    # TODO: Handle DGX Quantum case where circuits share parameters (loading might not work)
     param_tables = [ParameterTable.from_qiskit(qc, input_type=input_type) for qc in circuits]
 
     with program() as sampler_prog:
@@ -200,17 +108,19 @@ def sampler_program(
             )
             for i in range(num_circuits)
         ]
-        regs_streams = [declare_stream() for _ in range(num_registers)]
+        regs_streams = [[declare_stream() for _ in range(num_cregs)] for num_cregs in num_registers]
         solo_bits_stream = [declare_stream() for _ in range(num_circuits)]
 
         for param_table in param_tables:
-            param_table.declare_variables(declare_streams=False)
+            if param_table is not None:
+                param_table.declare_variables(declare_streams=False)
 
-        if backend._init_macro:
-            backend._init_macro()
+        if backend.init_macro:
+            backend.init_macro()
         if num_circuits == 1:
             _process_pub(
                 pubs[0],
+                backend,
                 state_int,
                 shot,
                 regs_streams[0],
@@ -225,6 +135,7 @@ def sampler_program(
                         with case_(i):
                             _process_pub(
                                 pubs[i],
+                                backend,
                                 state_int,
                                 shot,
                                 regs_streams[i],
