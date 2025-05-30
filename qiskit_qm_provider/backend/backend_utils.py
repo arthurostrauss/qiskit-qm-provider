@@ -47,7 +47,8 @@ def validate_circuits(
                 raise ValueError("Only one register per clbit is supported.")
         if not has_reset_at_boundary(qc) and should_reset:
             qc_reset = qc.copy_empty_like()
-            qubits = [qc.qubits[i] for i in qc.layout.final_index_layout(filter_ancillas=True)]
+            index_layout = qc.layout.final_index_layout(filter_ancillas=True) if qc.layout else range(len(qc.qubits))
+            qubits = [qc.qubits[i] for i in index_layout]
             qc_reset.reset(qubits)
             new_circuits.append(qc.compose(qc_reset, inplace=False, front=True))
         else:

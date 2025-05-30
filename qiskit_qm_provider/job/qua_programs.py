@@ -74,8 +74,7 @@ def _process_pub(
         )
     else:
         p = declare(int)
-        num_param_values = declare(int, value=pub.parameter_values.ravel().as_array().shape[0])
-        with for_(p, 0, p < num_param_values, p + 1):
+        with for_(p, 0, p < pub.parameter_values.ravel().size, p + 1):
             param_table.load_input_values()
             _process_circuit(
                 pub.circuit,

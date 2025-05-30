@@ -380,6 +380,7 @@ class Parameter:
         if pause_program:
             pause()
         self._is_declared = True
+        self.stream_id = ParameterPool.get_id(self)
         return self._var
 
     def declare_stream(self):
@@ -448,8 +449,6 @@ class Parameter:
             Unique ID integer of the external stream.
 
         """
-        if self.is_standalone() and self._stream_id is None:  # Not in a ParameterTable
-            self._stream_id = ParameterPool.get_id(self)
 
         return self._stream_id
 

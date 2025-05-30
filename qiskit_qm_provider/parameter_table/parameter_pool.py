@@ -52,7 +52,9 @@ class ParameterPool:
         Reset the counter and the dictionary.
         """
         cls._counter = itertools.count(1)
-        cls._parameters_dict = {}
+        for value in cls._parameters_dict.values():
+            if hasattr(value, "reset"):
+                value.reset()
 
     @classmethod
     def get_all_ids(cls):
