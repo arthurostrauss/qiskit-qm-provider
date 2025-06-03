@@ -63,9 +63,6 @@ class QUA2DArray(Parameter):
         self.n_rows = n_rows
         self.n_cols = n_cols
 
-        # placeholders; will be set when we declare our QUA variable
-        self._counter_var = None
-
     def _flat_index(self, i: ScalarInt, j: ScalarInt) -> ScalarInt:
         if isinstance(i, int) and (i < 0 or i >= self.n_rows):
             raise IndexError(f"Row index {i} out of bounds for n_rows={self.n_rows}")
@@ -157,8 +154,8 @@ class QUA2DArray(Parameter):
             return
         # Case C: assign(row, qua_array) → where qua_array is a QUA‐array
         elif isinstance(seq, QuaArrayVariable):
-            with for_(self._counter_var, 0, self._counter_var < self.n_cols, self._counter_var + 1):
-                qua_assign(self[row, self._counter_var], seq[self._counter_var])
+            with for_(self._ctr, 0, self._ctr < self.n_cols, self._ctr + 1):
+                qua_assign(self[row, self._ctr], seq[self._ctr])
             return
 
     def stream_processing(

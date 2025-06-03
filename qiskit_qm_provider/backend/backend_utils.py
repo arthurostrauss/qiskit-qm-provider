@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from typing import List
 
 from qiskit import QuantumCircuit
@@ -47,7 +48,11 @@ def validate_circuits(
                 raise ValueError("Only one register per clbit is supported.")
         if not has_reset_at_boundary(qc) and should_reset:
             qc_reset = qc.copy_empty_like()
-            index_layout = qc.layout.final_index_layout(filter_ancillas=True) if qc.layout else range(len(qc.qubits))
+            index_layout = (
+                qc.layout.final_index_layout(filter_ancillas=True)
+                if qc.layout
+                else range(len(qc.qubits))
+            )
             qubits = [qc.qubits[i] for i in index_layout]
             qc_reset.reset(qubits)
             new_circuits.append(qc.compose(qc_reset, inplace=False, front=True))
@@ -159,6 +164,7 @@ def add_basic_macros_to_machine(machine: BaseQuam):
         MeasureMacro,
         CZMacro,
         DelayMacro,
+        IdMacro,
     )
     from quam.components.macro import PulseMacro
 
@@ -169,9 +175,13 @@ def add_basic_macros_to_machine(machine: BaseQuam):
         qubit.macros["measure"] = MeasureMacro(pulse="readout")
         qubit.macros["reset"] = ResetMacro(pi_pulse="x180", readout_pulse="readout")
         qubit.macros["delay"] = DelayMacro()
+        qubit.macros["id"] = IdMacro()
 
     for qubit_pair in machine.active_qubit_pairs:
-        qubit_pair.macros["cz"] = CZMacro(
-            flux_pulse_control=qubit_pair.qubit_control.get_pulse("flux_pulse").get_reference(),
-            coupler_flux_pulse=qubit_pair.coupler.operations["cz"].get_reference(),
-        )
+        try:
+            qubit_pair.macros["cz"] = CZMacro(
+                flux_pulse_control=qubit_pair.qubit_control.get_pulse("flux_pulse").get_reference(),
+                coupler_flux_pulse=qubit_pair.coupler.operations["cz"].get_reference(),
+            )
+        except ValueError as e:
+            warnings.warn("Could not add default two qubit gates. Add it manually if necessary.")

@@ -21,11 +21,10 @@ from qm import QuantumMachine
 from qm.jobs.running_qm_job import RunningQmJob
 from qm.qua import *
 from qm.qua._expressions import QuaArrayVariable
-from qualang_tools.results import fetching_tool
-from quam.utils.qua_types import QuaVariable, QuaScalar
+from quam.utils.qua_types import QuaVariable
 
 from qiskit.circuit import QuantumCircuit, Parameter as QiskitParameter
-from qiskit.circuit.parametervector import ParameterVector, ParameterVectorElement
+from qiskit.circuit.parametervector import ParameterVectorElement
 from .parameter_pool import ParameterPool
 from .parameter import Parameter
 from .input_type import InputType, Direction
@@ -227,7 +226,7 @@ class ParameterTable:
                 parameter._main_table = self
 
                 if parameter.is_array:
-                    parameter._counter_var = declare(int)
+                    parameter._ctr = declare(int)
 
                 if declare_streams:
                     parameter.declare_stream()
@@ -730,7 +729,12 @@ class ParameterTable:
             send_to_external_stream(self._qua_external_stream, self._packet)
 
     def fetch_from_opx(
-        self, job: RunningQmJob, qm: Optional[QuantumMachine] = None, verbosity: int = 1
+        self,
+        job: RunningQmJob,
+        fetching_index: int = 0,
+        fetching_size: int = 1,
+        verbosity: int = 1,
+        time_out: int = 30,
     ):
         """
         Fetch the values of the parameters from the OPX (Python side).
@@ -743,17 +747,7 @@ class ParameterTable:
         Returns: Dictionary of the form {parameter_name: parameter_value}.
         """
         param_dict = {}
-        if self.input_type == InputType.IO1 or self.input_type == InputType.IO2:
-            for parameter in self.parameters:
-                value = parameter.fetch_from_opx(job, qm, verbosity)
-                param_dict[parameter.name] = value
-        elif self.input_type == InputType.INPUT_STREAM:
-            results = fetching_tool(job, [param.name for param in self.parameters], mode="live")
-            while results.is_processing():
-                results = results.fetch_all()
-            for parameter, result in zip(self.parameters, results):
-                param_dict[parameter.name] = result
-        else:  # DGX
+        if self.input_type == InputType.DGX:
             if not self._usable_for_dgx_communication:
                 raise ValueError(
                     "Parameter table not usable for DGX communication, as it contains parameters that "
@@ -773,6 +767,12 @@ class ParameterTable:
             for parameter in self.parameters:
                 param_dict[parameter.name] = getattr(packet, parameter.name)
 
+        else:
+            for parameter in self.parameters:
+                value = parameter.fetch_from_opx(
+                    job, fetching_index, fetching_size, verbosity, time_out
+                )
+                param_dict[parameter.name] = value
         return param_dict
 
     def __repr__(self):

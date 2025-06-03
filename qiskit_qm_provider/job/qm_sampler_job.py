@@ -15,8 +15,8 @@ from .qua_programs import sampler_program
 class QMPrimitiveJob(BasePrimitiveJob):
     """QM Primitive Job class for executing QUA programs from PUBs."""
 
-    def __init__(self, backend: QMBackend, pubs: List[SamplerPub], input_type: InputType):
-        super().__init__(job_id="pending")
+    def __init__(self, backend: QMBackend, pubs: List[SamplerPub], input_type: InputType, **kwargs):
+        super().__init__(job_id="pending", **kwargs)
         self._backend = backend
         self._pubs = pubs
         self._input_type = input_type
@@ -43,8 +43,20 @@ class QMPrimitiveJob(BasePrimitiveJob):
                     data = results_handle[i].get(f"{creg.name}_{i}").fetch_all()["value"]
                 else:
                     data = results_handle.get(f"{creg.name}_{i}").fetch_all()["value"]
-                bit_array = BitArray.from_samples(data, creg.size)
-                qc_meas_data[creg.name] = bit_array
+                meas_level = self.metadata.get("meas_level")
+                if meas_level == "classified":
+                    bit_array = BitArray.from_samples(data, creg.size).reshape(pub.shape)
+                    qc_meas_data[creg.name] = bit_array
+                elif meas_level == "kerneled":
+                    # TODO: Assume that buffering was done like (2, creg.size)
+                    qc_meas_data[creg.name] = np.array(
+                        [d[0] + 1j * d[1] for d in data], dtype=complex
+                    ).reshape(pub.shape + (pub.shots, creg.size))
+                else:
+                    # TODO: Figure it out
+                    qc_meas_data[creg.name] = np.array(
+                        [d[0] + 1j * d[1] for d in data], dtype=complex
+                    ).reshape(pub.shape + (pub.shots, creg.size))
 
             sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
             all_data.append(sampler_data.join_data())
@@ -128,7 +140,10 @@ class IQCCPrimitiveJob(QMPrimitiveJob):
         sampler_prog = sampler_program(self._backend, self._pubs, self._input_type)
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
-        self._qm_job = self._backend.qmm.execute(sampler_prog, self._backend.qm_config)
+        options = {"timeout": self.metadata.get("timeout", None)}
+        self._qm_job = self._backend.qmm.execute(
+            sampler_prog, self._backend.qm_config, options=options if options["timeout"] else {}
+        )
 
     def _result_function(self, qm_job: Dict) -> PrimitiveResult[SamplerPubResult]:
         """Get the result from the IQCC QM job."""
@@ -138,7 +153,7 @@ class IQCCPrimitiveJob(QMPrimitiveJob):
             qc_meas_data = {}
             for creg in pub.circuit.cregs:
                 data = np.array(results_handle.get(f"{creg.name}_{i}")).flatten().tolist()
-                bit_array = BitArray.from_samples(data, creg.size)
+                bit_array = BitArray.from_samples(data, creg.size).reshape(pub.shape)
                 qc_meas_data[creg.name] = bit_array
 
             sampler_data = SamplerPubResult(DataBin(**qc_meas_data))

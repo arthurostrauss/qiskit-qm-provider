@@ -14,14 +14,18 @@ class FluxTunableTransmonBackend(QMBackend):
         self,
         machine: Quam,
         qmm: Optional[QuantumMachinesManager] = None,
+        name: Optional[str] = None,
+        **fields,
     ):
         """
         Initialize the QM backend for the Flux-Tunable Transmon based QuAM
 
         Args:
             machine: The QuAM instance
-            channel_mapping: Optional mapping of Qiskit Pulse Channels to QuAM Channels.
-                             This mapping enables the conversion of Qiskit schedules into parametric QUA macros.
+            qmm: A QuantumMachinesManager instance (useful if using cloud simulator or IQCC Cloud)
+            name: Name of the backend
+            fields: Optional kwargs to specify backend options
+
         """
         if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
             raise ValueError(
@@ -29,7 +33,7 @@ class FluxTunableTransmonBackend(QMBackend):
             )
         try:
             from qiskit.pulse import DriveChannel, MeasureChannel, ControlChannel
-            from quam_qiskit_pulse import FluxChannel
+            from ..pulse.quam_qiskit_pulse import FluxChannel
 
             drive_channel_mapping = {
                 DriveChannel(i): qubit.xy for i, qubit in enumerate(machine.active_qubits)
@@ -58,6 +62,8 @@ class FluxTunableTransmonBackend(QMBackend):
             channel_mapping=channel_mapping,
             init_macro=machine.apply_all_flux_to_joint_idle,
             qmm=qmm,
+            name=name if name is not None else "FluxTunableTransmonBackend",
+            **fields,
         )
 
     @property

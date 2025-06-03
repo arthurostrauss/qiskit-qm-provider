@@ -8,7 +8,6 @@ Created: 25/11/2024
 from __future__ import annotations
 
 import copy
-import time
 import warnings
 from itertools import chain
 import sys
@@ -35,17 +34,10 @@ from qm.qua import (
     IO2,
     if_,
     Util,
-    declare_struct,
-    qua_struct,
-    QuaArray,
-    declare_external_stream,
-    send_to_external_stream as external_stream_send,
-    receive_from_external_stream as external_stream_receive,
 )
 from qm.qua.type_hints import Scalar, Vector, VectorOfAnyType, ScalarOfAnyType
 from qm.jobs.running_qm_job import RunningQmJob
-from qualang_tools.results import wait_until_job_is_paused, fetching_tool
-from quam.utils.qua_types import QuaVariable
+from qualang_tools.results import wait_until_job_is_paused
 
 if TYPE_CHECKING:
     from .parameter_table import ParameterTable
@@ -170,7 +162,7 @@ class Parameter:
         self._stream_id = None
         self._type = set_type(qua_type) if qua_type is not None else infer_type(value)
         self._length = 0 if not isinstance(value, (List, np.ndarray)) else len(value)
-        self._counter_var = None
+        self._ctr = None  # Counter for QUA array variables
 
         self._external_stream_incoming = None
         self._external_stream_outgoing = None
@@ -267,10 +259,6 @@ class Parameter:
         Args:
             value: Value to be assigned to the QUA variable. If the ParameterValue corresponds to a QUA array,
                    the value should be a list or a QUA array of the same length.
-            is_qua_array: Boolean indicating if provided value is a QUA array (True) or a list of values (False).
-                          Default is False. If True, the value should be a QUA array of the same length as the parameter.
-                          When assigning a QUA array, a QUA loop is created to assign each element of the array to the
-                          corresponding element of the QUA array. If False, a Python loop is used instead.
             condition: Condition to be met for the value to be assigned to the QUA variable.
             value_cond: Optional value to be assigned to the QUA variable if provided condition is not met.
 
@@ -304,7 +292,7 @@ class Parameter:
             if value_cond is not None and not isinstance(value_cond, Parameter):
                 raise ValueError("Invalid input. value_cond should be of same type as value.")
             if self.is_array:
-                i = self._counter_var
+                i = self._ctr
                 with for_(i, 0, i < self.length, i + 1):
                     assign_with_condition(
                         self.var[i],
@@ -316,7 +304,7 @@ class Parameter:
         else:
             if self.is_array:
                 if isinstance(value, QuaArrayVariable):
-                    i = self._counter_var
+                    i = self._ctr
                     with for_(i, 0, i < self.length, i + 1):
                         assign_with_condition(
                             self.var[i],
@@ -352,6 +340,8 @@ class Parameter:
             self._var = declare_input_stream(t=self.type, name=self.name, value=self.value)
         elif self.input_type == InputType.DGX:
             if self.is_standalone():
+                from qm.qua import declare_struct, declare_external_stream
+
                 # Parameter not part of a parameter table
                 dgx_struct = self.dgx_struct
                 self._var = declare_struct(dgx_struct)
@@ -374,7 +364,7 @@ class Parameter:
         else:
             self._var = declare(t=self.type, value=self.value)
         if self.is_array:
-            self._counter_var = declare(int)
+            self._ctr = declare(int)
         if declare_stream:
             self._stream = qua_declare_stream()
         if pause_program:
@@ -417,9 +407,15 @@ class Parameter:
         Returns:
 
         """
+        if self.input_type != InputType.DGX:
+            raise ValueError(
+                "Invalid input type for calling dgx_struct property. Must be set to InputType.DGX."
+            )
         if self.is_standalone():
-            if self.input_type != InputType.DGX:
-                raise ValueError("Invalid input type for this parameter. Must be dgx.")
+            try:
+                from qm.qua import qua_struct, QuaArray
+            except ImportError:
+                raise ImportError("Need to install QUA version compatible with DGX")
             length = 1 if not self.is_array else self.length
             cls_name = f"{self.name}_struct_{self.stream_id}"
             dgxStruct = qua_struct(
@@ -530,7 +526,7 @@ class Parameter:
         """Save the QUA variable to the output stream."""
         if self.is_declared and self.stream is not None:
             if self.is_array:
-                i = self._counter_var
+                i = self._ctr
                 with for_(i, 0, i < self.length, i + 1):
                     save(self.var[i], self.stream)
             else:
@@ -593,7 +589,7 @@ class Parameter:
             return
 
         if self.is_array:
-            i = self._counter_var
+            i = self._ctr
             with for_(i, 0, i < self.length, i + 1):
                 if is_qua_array:
                     if min_val is not None:
@@ -631,8 +627,10 @@ class Parameter:
             qua_advance_input_stream(self.var)
 
         elif self.input_type == InputType.DGX:
+            from qm.qua import receive_from_external_stream
+
             if self.is_standalone():
-                external_stream_receive(self._external_stream_incoming, self._var)
+                receive_from_external_stream(self._external_stream_incoming, self._var)
             else:
                 raise RuntimeError(
                     f"This method should be called from the ParameterTable {ParameterPool.get_obj(self.stream_id).name}"
@@ -642,10 +640,13 @@ class Parameter:
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io = IO1 if self.input_type == InputType.IO1 else IO2
             if self.is_array:
-                i = self._counter_var
-                with for_(i, 0, i < self.length, i + 1):
+                if self.length == 1:
                     pause()
-                    assign(self.var[i], io)
+                    assign(self.var[0], io)
+                    return
+                with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
+                    pause()
+                    assign(self.var[self._ctr], io)
             else:
                 pause()
                 assign(self.var, io)
@@ -659,6 +660,7 @@ class Parameter:
         job: RunningQmJob,
         qm: Optional[QuantumMachine] = None,
         verbosity: int = 1,
+        time_out: int = 30,
     ):
         """
         To be outside QUA program: pass an input value to the OPX from Python
@@ -667,15 +669,12 @@ class Parameter:
             job: RunningQmJob object (required if input_type is IO1 or IO2 or input_stream).
             qm: QuantumMachine object (required if input_type is IO1 or IO2).
             verbosity: Verbosity level. Default is 1.
+            time_out: Time out for waiting for the job to be paused. Default is 90 seconds.
         """
 
         if self.is_array and len(value) != self.length:
             raise ValueError(
                 f"Invalid input. {self.name} should be a list of length {self.length}."
-            )
-        elif not self.is_array and not isinstance(value, (int, float, bool)):
-            raise ValueError(
-                f"Invalid input. {self.name} should be a single value (received {type(value)})."
             )
         param_type = self.type
         if param_type == fixed:
@@ -693,28 +692,27 @@ class Parameter:
                     f"Invalid input. {self.name} should be a single value of type {param_type}."
                 )
 
-        if self.is_array:
-            value = list(value)
-
         if self.input_type in [InputType.IO1, InputType.IO2]:
-            io = "set_io1_value" if self.input_type == InputType.IO1 else "set_io2_value"
+            io = "io1" if self.input_type == InputType.IO1 else "io2"
             if qm is None:
                 raise ValueError("QuantumMachine object must be provided.")
             if self.is_array:
                 for i in range(self.length):
-                    getattr(qm, io)(value[i])
-                    wait_until_job_is_paused(job)
+                    if verbosity > 1:
+                        print(f"Setting {self.name} to {value[i]}")
+                    wait_until_job_is_paused(job, time_out)
+                    job.set_io_values(**{io: value[i]})
                     job.resume()
             else:
-                if not isinstance(value, (int, float, bool)):
-                    raise ValueError(
-                        f"Invalid input. {self.name} should be a single value (received {type(value)})."
-                    )
-                getattr(qm, io)(value)
-                wait_until_job_is_paused(job)
+                if verbosity > 1:
+                    print(f"Setting {self.name} to {value}")
+                wait_until_job_is_paused(job, time_out)
+                job.set_io_values(**{io: value})
                 job.resume()
 
         elif self.input_type == InputType.INPUT_STREAM:
+            if verbosity > 1:
+                print(f"Pushing value {value} to stream {self.name}")
             job.push_to_input_stream(self.name, value)
 
         elif self.input_type == InputType.DGX:
@@ -759,7 +757,11 @@ class Parameter:
         if self.input_type in [InputType.IO1, InputType.IO2]:
             io = IO1 if self.input_type == InputType.IO1 else IO2
             if self.is_array:
-                i = self._counter_var
+                if self.length == 1:
+                    assign(io, self.var[0])
+                    pause()
+                    return
+                i = self._ctr
                 with for_(i, 0, i < self.length, i + 1):
                     assign(io, self.var[i])
                     pause()
@@ -769,6 +771,8 @@ class Parameter:
         elif self.input_type == InputType.INPUT_STREAM:
             self.save_to_stream()
         elif self.input_type == InputType.DGX:
+            from qm.qua import send_to_external_stream
+
             if not self.is_standalone():  # Part of a parameter table
                 raise RuntimeError(
                     f"This method should be called from the"
@@ -779,15 +783,15 @@ class Parameter:
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot send value to outgoing stream.")
 
-            external_stream_send(self._external_stream_outgoing, self._var)
+            send_to_external_stream(self._external_stream_outgoing, self._var)
 
     def fetch_from_opx(
         self,
         job: RunningQmJob,
-        qm: Optional[QuantumMachine] = None,
-        fetching_index: Optional[int] = 0,
-        fetching_size: Optional[int] = 1,
+        fetching_index: int = 0,
+        fetching_size: int = 1,
         verbosity: int = 1,
+        time_out=30,
     ):
         """
         Fetches data based on the specified input type and returns the fetched value.
@@ -801,34 +805,34 @@ class Parameter:
         :param job: The job instance of the RunningQmJob for which data is being fetched.
         :type job: RunningQmJob
         :param qm: The QuantumMachine instance utilized for fetching the data. Defaults to None.
-        :type qm: Optional[QuantumMachine]
         :param fetching_index: The starting index for fetching data when required. Defaults to 0.
-        :type fetching_index: Optional[int]
+        :type fetching_index: int
         :param fetching_size: Number of items to fetch from the source, if applicable. Defaults to 1.
-        :type fetching_size: Optional[int]
+        :type fetching_size: int
         :param verbosity: Level of output verbosity for log printing. A verbosity > 1 enables detailed logging.
         :type verbosity: int
+        :param time_out: Time in seconds to wait for the job to be paused before fetching data. Defaults to 30 seconds.
         :return: The fetched value depending upon the input type and fetching logic.
         """
         if self.input_type in [InputType.IO1, InputType.IO2]:
-            io = "get_io1_value" if self.input_type == InputType.IO1 else "get_io2_value"
-            if qm is None:
-                raise ValueError("QuantumMachine object must be provided.")
+            io = 0 if self.input_type == InputType.IO1 else 1
             value = []
             for i in range(fetching_index, fetching_index + fetching_size):
                 if not self.is_array:
-                    wait_until_job_is_paused(job)
-                    value.append(getattr(qm, io)())
+                    wait_until_job_is_paused(job, time_out)
+                    value.append(job.get_io_values(io1_type=self.type, io2_type=self.type)[io])
                     job.resume()
                 else:
                     temp_array = []
                     for i in range(self.length):
-                        wait_until_job_is_paused(job)
-                        temp_array.append(getattr(qm, io)())
+                        wait_until_job_is_paused(job, time_out)
+                        temp_array.append(
+                            job.get_io_values(io1_type=self.type, io2_type=self.type)[io]
+                        )
                         job.resume()
                     value.append(temp_array)
 
-        elif self.input_type == InputType.INPUT_STREAM:
+        elif self.input_type == InputType.INPUT_STREAM or self.input_type is None:
             result_handle = job.result_handles
             if self.name not in result_handle:
                 raise ValueError(
@@ -836,7 +840,7 @@ class Parameter:
                     "Make sure to save the parameter to the stream first."
                 )
             result = result_handle.get(self.name)
-            result.wait_for_values(fetching_index + fetching_size)
+            result.wait_for_values(fetching_index + fetching_size, time_out)
             value = result.fetch(slice(fetching_index, fetching_index + fetching_size))["value"]
 
         elif self.input_type == InputType.DGX:
@@ -873,7 +877,7 @@ class Parameter:
         self._var = None
         self._stream = None
         self._stream_id = None
-        self._counter_var = None
+        self._ctr = None
         self._dgx_struct = None
         self._external_stream_incoming = None
         self._external_stream_outgoing = None
@@ -901,7 +905,7 @@ class Parameter:
         new_param._var = None
         new_param._is_declared = False
         new_param._stream = None
-        new_param._counter_var = None
+        new_param._ctr = None
         new_param._external_stream_incoming = None
         new_param._external_stream_outgoing = None
 

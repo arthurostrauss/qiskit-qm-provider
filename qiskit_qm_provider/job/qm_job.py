@@ -10,6 +10,7 @@ from qm import QuantumMachine, Program, SimulationConfig
 from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qm.jobs.running_qm_job import RunningQmJob
 from qm.jobs.pending_job import QmPendingJob
+from tensorflow.python.ops.signal.fft_ops import ifftnd
 
 
 class QMJob(JobV1):
@@ -122,4 +123,8 @@ class IQCCJob(QMJob):
             raise ValueError("Job metadata must contain 'config' key for IQCC job submission")
 
         qm: IQCC_Cloud = self.qm
-        self._qm_job = qm.execute(self.program, config)
+        timeout = self.metadata.get("timeout", None)
+
+        self._qm_job = qm.execute(
+            self.program, config, options={"timeout": timeout} if timeout is not None else {}
+        )

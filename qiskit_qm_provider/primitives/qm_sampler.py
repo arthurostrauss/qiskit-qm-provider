@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any, Iterable, Literal
+from typing import Any, Iterable, Literal, Optional
 
 from iqcc_cloud_client import IQCC_Cloud
 from qiskit.primitives import (
@@ -17,6 +17,7 @@ from qiskit_qm_provider.backend.backend_utils import _QASM3_DUMP_LOOSE_BIT_PREFI
 
 from qiskit_qm_provider.parameter_table import InputType, ParameterTable
 from qiskit_qm_provider.backend.qm_backend import QMBackend
+from qm import CompilerOptionArguments, SimulationConfig
 
 # from .qm_sampler_job import QMPrimitiveJob
 from quam.utils.qua_types import QuaScalar
@@ -43,6 +44,12 @@ class QMSamplerOptions:
     """A dictionary of options to pass to the backend's ``run()`` method.
     Default: None (no option passed to backend's ``run`` method)
     """
+
+    meas_level: Literal["classified", "kerneled", "avg_kerneled"] = "classified"
+
+    compiler_options: Optional[CompilerOptionArguments] = None
+
+    simulate: Optional[SimulationConfig] = None
 
     def __post_init__(self):
         if isinstance(self.input_type, str):
@@ -77,7 +84,7 @@ class QMSamplerV2(BaseSamplerV2):
         coerced_pubs = [SamplerPub.coerce(pub, shots) for pub in pubs]
         coerced_pubs = self._validate_pubs(coerced_pubs)
         job_obj = IQCCPrimitiveJob if isinstance(self.backend.qmm, IQCC_Cloud) else QMPrimitiveJob
-        job = job_obj(self.backend, coerced_pubs, self._options.input_type)
+        job = job_obj(self.backend, coerced_pubs, self._options.input_type, **self.options)
         job.submit()
         return job
 

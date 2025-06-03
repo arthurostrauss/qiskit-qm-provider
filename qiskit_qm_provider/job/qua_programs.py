@@ -110,37 +110,21 @@ def sampler_program(
         regs_streams = [[declare_stream() for _ in range(num_cregs)] for num_cregs in num_registers]
         solo_bits_stream = [declare_stream() for _ in range(num_circuits)]
 
-        for param_table in param_tables:
-            if param_table is not None:
-                param_table.declare_variables(declare_streams=False)
-
         if backend.init_macro:
             backend.init_macro()
-        if num_circuits == 1:
+
+        for i in range(num_circuits):
+            if param_tables[i] is not None:
+                param_tables[i].declare_variables(declare_streams=False)
             _process_pub(
-                pubs[0],
+                pubs[i],
                 backend,
                 state_int,
                 shot,
-                regs_streams[0],
-                solo_bits_stream[0] if num_solo_bits[0] > 0 else None,
-                param_tables[0],
+                regs_streams[i],
+                solo_bits_stream[i] if num_solo_bits[i] > 0 else None,
+                param_tables[i],
             )
-        else:
-            qc_var = declare(int)
-            with for_(qc_var, 0, qc_var < num_circuits, qc_var + 1):
-                with switch_(qc_var):
-                    for i in range(num_circuits):
-                        with case_(i):
-                            _process_pub(
-                                pubs[i],
-                                backend,
-                                state_int,
-                                shot,
-                                regs_streams[i],
-                                solo_bits_stream[i] if num_solo_bits[i] > 0 else None,
-                                param_tables[i],
-                            )
 
         with stream_processing():
             for i, creg_streams in enumerate(regs_streams):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import warnings
+from copy import deepcopy
 from typing import Iterable, List, Dict, Optional, Callable, Union, Tuple, Any, TYPE_CHECKING
 from inspect import Signature, Parameter as sigParam
 
@@ -17,7 +18,7 @@ from qiskit.primitives import BitArray, SamplerPubResult, DataBin
 from qiskit.providers import BackendV2 as Backend, QubitProperties, Options
 
 from qiskit.result import Result
-from qiskit.result.models import ExperimentResult, ExperimentResultData
+from qiskit.result.models import ExperimentResult, ExperimentResultData, MeasLevel, MeasReturnType
 
 from qiskit.transpiler import Target, InstructionProperties, CouplingMap
 from qiskit.qasm3 import Exporter
@@ -119,6 +120,8 @@ class QMBackend(Backend):
         channel_mapping: Optional[Dict[QiskitChannel, QuAMChannel]] = None,
         init_macro: Optional[Callable] = None,
         qmm: Optional[QuantumMachinesManager] = None,
+        name: Optional[str] = None,
+        **fields,
     ):
         """
         Initialize the QM backend
@@ -130,14 +133,24 @@ class QMBackend(Backend):
                             Additionally, the Schedules created must have deterministic durations at this point.
             init_macro: Optional macro to be called at the beginning of the QUA program
             qmm: Optional QuantumMachinesManager instance. If not provided, inferred from the machine
+            name: Optional name of the backend
+            fields: kwargs for the values to use to override the default
+                options
+
+        Raises:
+            AttributeError: If a field is specified that's outside the backend's
+                options
+
+
 
         """
 
-        Backend.__init__(self, name="QM backend")
+        Backend.__init__(self, name="QMBackend" if name is None else name, **fields)
 
         self._custom_instructions = {}
         self.machine = validate_machine(machine)
         self._qmm: Optional[QuantumMachinesManager] = qmm
+        self._qm: Optional[QuantumMachine] = None
         self.channel_mapping: Dict[QiskitChannel, QuAMChannel] = channel_mapping
         self.reverse_channel_mapping: Dict[QuAMChannel, QiskitChannel] = (
             {v: k for k, v in channel_mapping.items()} if channel_mapping is not None else {}
@@ -243,11 +256,13 @@ class QMBackend(Backend):
         Returns the QuantumMachine instance. This is a property that reopens a QuantumMachine each time
         it is called for the underlying configuration might have changed between two calls
         """
-        return (
-            self.qmm.open_qm(self.qm_config, close_other_machines=True)
-            if isinstance(self.qmm, QuantumMachinesManager)
-            else self.qmm
-        )
+        if self._qm is None:
+            if isinstance(self.qmm, QuantumMachinesManager):
+                self._qm = self.qmm.open_qm(self.qm_config, close_other_machines=True)
+            else:
+                self._qm = self.qmm
+
+        return self._qm
 
     @property
     def qm_config(self) -> DictQuaConfig:
@@ -276,6 +291,9 @@ class QMBackend(Backend):
             simulate=None,
             memory=False,
             skip_reset=False,
+            meas_level=MeasLevel.CLASSIFIED,
+            meas_return=MeasReturnType.AVERAGE,
+            timeout=600,
         )
 
     def _populate_target(
@@ -488,11 +506,15 @@ class QMBackend(Backend):
         """
         from ..job.qm_job import QMJob, IQCCJob
 
+        options_ = deepcopy(self.options.__dict__)
+        options_.update(options)
         num_shots = options.get("shots", self.options.shots)
         simulate = options.get("simulate", self.options.simulate)
         compiler_options = options.get("compiler_options", self.options.compiler_options)
         skip_reset = options.get("skip_reset", self.options.skip_reset)
         memory = options.get("memory", self.options.memory)
+        meas_level = options.get("meas_level", self.options.meas_level)
+        meas_return = options.get("meas_return", self.options.meas_return)
         if not isinstance(run_input, list):
             run_input = [run_input]
         new_circuits = validate_circuits(
@@ -547,8 +569,16 @@ class QMBackend(Backend):
                     else:
                         data = np.array(results_handle.get(f"{creg}_{i}")).flatten().tolist()
                     # time_stamps = results_handle.get(f'{creg}_{i}').fetch_all()["timestamp"]
-                    bit_array = BitArray.from_samples(data, creg_size)
-                    qc_meas_data[creg] = bit_array
+                    if meas_level == MeasLevel.CLASSIFIED:
+                        bit_array = BitArray.from_samples(data, creg_size)
+                        qc_meas_data[creg] = bit_array
+                    elif meas_level == MeasLevel.KERNELED:
+                        if meas_return == MeasReturnType.SINGLE:
+                            qc_meas_data[creg] = np.array(
+                                [d[0] + 1j * d[1] for d in data], dtype=complex
+                            )
+                        elif meas_return == MeasReturnType.AVERAGE:
+                            qc_meas_data[creg] = np.mean([d[0] + 1j * d[1] for d in data])
 
                 sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
                 all_data.append(sampler_data.join_data())
@@ -562,6 +592,9 @@ class QMBackend(Backend):
                         data.get_counts(),
                         memory=data.get_bitstrings() if memory else None,
                     ),
+                    meas_level=meas_level,
+                    meas_return=meas_return,
+                    status=qm_job.status if isinstance(qm_job, RunningQmJob) else "done",
                 )
                 experiment_data.append(experiment_result)
 
@@ -582,10 +615,9 @@ class QMBackend(Backend):
             id,
             qm,
             run_program,
-            simulate=simulate,
-            compiler_options=compiler_options,
             result_function=result_function,
             config=self.qm_config,
+            **options_,
         )
 
         job.submit()
@@ -664,27 +696,14 @@ class QMBackend(Backend):
                 ]
                 solo_bits_stream = [declare_stream() for _ in range(num_circuits)]
 
-                if num_circuits == 1:
+                for i, qc in enumerate(circuits):
                     _process_circuit(
-                        circuits[0],
+                        qc,
                         state_int,
                         shot,
-                        regs_streams[0],
-                        solo_bits_stream[0] if num_solo_bits[0] > 0 else None,
+                        regs_streams[i],
+                        solo_bits_stream[i] if num_solo_bits[i] > 0 else None,
                     )
-                else:
-                    qc_var = declare(int)
-                    with for_(qc_var, 0, qc_var < len(circuits), qc_var + 1):
-                        with switch_(qc_var):
-                            for i, qc in enumerate(circuits):
-                                with case_(i):
-                                    _process_circuit(
-                                        qc,
-                                        state_int,
-                                        shot,
-                                        regs_streams[i],
-                                        solo_bits_stream[i] if num_solo_bits[i] > 0 else None,
-                                    )
 
                 with stream_processing():
                     for i, creg_streams in enumerate(regs_streams):
