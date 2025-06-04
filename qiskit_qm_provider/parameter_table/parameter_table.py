@@ -644,23 +644,26 @@ class ParameterTable:
         self,
         param_dict: Dict[Union[str, Parameter], Union[float, int, bool, List, np.ndarray]],
         job: RunningQmJob,
-        qm: Optional[QuantumMachine] = None,
         verbosity: int = 1,
     ):
         """
         Push the values of the parameters to the OPX (Python side).
-        Args: param_dict: Dictionary of the form {parameter_name: parameter_value}.
+        Args:
+            param_dict: Dictionary of the form {parameter_name: parameter_value}.
+            The parameter value can be either a Python value or a QuaExpressionType.
+            job: RunningQmJob object to push the values to.
+            verbosity: Verbosity level of the pushing process.
         """
         if self.input_type != InputType.DGX:
             for parameter, value in param_dict.items():
                 if isinstance(parameter, str):
                     if parameter not in self.table.keys():
                         raise KeyError(f"No parameter named {parameter} in the parameter table.")
-                    self.table[parameter].push_to_opx(value, job, qm, verbosity)
+                    self.table[parameter].push_to_opx(value, job, verbosity)
                 elif isinstance(parameter, Parameter):
                     if parameter not in self.parameters:
                         raise KeyError("Provided Parameter not in this ParameterTable.")
-                    parameter.push_to_opx(value, job, qm, verbosity)
+                    parameter.push_to_opx(value, job, verbosity)
                 else:
                     raise ValueError(
                         "Invalid parameter name. Please use a string or a Parameter object."

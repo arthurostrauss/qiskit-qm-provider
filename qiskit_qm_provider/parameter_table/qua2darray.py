@@ -1,5 +1,6 @@
 from numbers import Number
 
+from qm.jobs.running_qm_job import RunningQmJob
 from qm.qua import declare, assign as qua_assign, fixed, for_
 from quam.utils.qua_types import QuaVariableInt, Scalar, ScalarInt
 
@@ -181,6 +182,51 @@ class QUA2DArray(Parameter):
             getattr(stream, mode)(self.name)
         else:
             raise ValueError("Output stream is not declared for this QUA2DArray")
+
+    def push_to_opx(
+        self,
+        value: Union[
+            int,
+            float,
+            bool,
+            Sequence[Union[int, float, bool]],
+            Sequence[Sequence[Union[int, float, bool]]],
+            np.ndarray,
+        ],
+        job: RunningQmJob,
+        verbosity: int = 1,
+        time_out: int = 30,
+    ):
+        """
+        Push the 2D array to the OPX.
+        - value: single value or a sequence of values to push.
+        - job: RunningQmJob instance to use for pushing.
+        - verbosity: level of verbosity for the operation.
+        - time_out: time out in seconds for the operation.
+        """
+
+        if not isinstance(value, (int, float, bool, list, np.ndarray)):
+            raise TypeError("Value must be an int, float, bool, list or numpy array")
+
+        if isinstance(value, np.ndarray):
+            if value.ndim != 2 or value.shape != (self.n_rows, self.n_cols):
+                raise ValueError(
+                    f"Value must be a 2D array of shape ({self.n_rows}, {self.n_cols})"
+                )
+            value = value.flatten().tolist()
+
+        if isinstance(value, list) and all(isinstance(row, (list, tuple)) for row in value):
+            if len(value) != self.n_rows or any(len(row) != self.n_cols for row in value):
+                raise ValueError(f"Value must be a 2D list of shape ({self.n_rows}, {self.n_cols})")
+            value = [item for row in value for item in row]
+
+        # Push the flattened list to the OPX
+        super().push_to_opx(
+            value=value,
+            job=job,
+            verbosity=verbosity,
+            time_out=time_out,
+        )
 
 
 # auxiliary class so arr[i][j] works

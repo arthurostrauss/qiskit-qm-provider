@@ -522,20 +522,40 @@ class Parameter:
             raise ValueError("Output stream not declared.")
         return self._stream
 
-    def save_to_stream(self):
-        """Save the QUA variable to the output stream."""
+    def save_to_stream(self, variable: Optional[Scalar, Vector] = None):
+        """
+        Save the QUA variable to the output stream.
+
+        Args:
+            variable: Optional external QUA variable to save to the stream.
+            This is useful when the variable to be saved is not the one declared in the parameter but
+            that should be saved to the same stream (It can be used as a shortcut to assign the variable to
+            the parameter variable before saving).
+             The variable should be of the same type as the parameter's QUA variable and should be of the same length
+             if it is an array.
+        Raises:
+            ValueError: If the output stream is not declared, or if the variable is not declared.
+        """
         if self.is_declared and self.stream is not None:
             if self.is_array:
                 i = self._ctr
                 with for_(i, 0, i < self.length, i + 1):
-                    save(self.var[i], self.stream)
+                    if variable is not None:
+                        save(variable[i], self.stream)
+                    else:
+                        save(self.var[i], self.stream)
             else:
-                save(self.var, self.stream)
+                if variable is not None:
+                    save(variable, self.stream)
+                else:
+                    save(self.var, self.stream)
         else:
-            raise ValueError("Output stream not declared.")
+            raise ValueError("Output stream or variable itself not declared.")
 
     def stream_processing(
-        self, mode: Literal["save", "save_all"] = "save_all", buffer: Union[Tuple[int], int] = None
+        self,
+        mode: Literal["save", "save_all"] = "save_all",
+        buffer: Union[Tuple[int, ...], int] = None,
     ):
         """
         Process the output stream associated with the parameter.
@@ -658,7 +678,6 @@ class Parameter:
         self,
         value: Union[int, float, bool, Sequence[Union[int, float, bool]]],
         job: RunningQmJob,
-        qm: Optional[QuantumMachine] = None,
         verbosity: int = 1,
         time_out: int = 30,
     ):
@@ -694,8 +713,6 @@ class Parameter:
 
         if self.input_type in [InputType.IO1, InputType.IO2]:
             io = "io1" if self.input_type == InputType.IO1 else "io2"
-            if qm is None:
-                raise ValueError("QuantumMachine object must be provided.")
             if self.is_array:
                 for i in range(self.length):
                     if verbosity > 1:
@@ -747,29 +764,23 @@ class Parameter:
                     f"was associated with a bigger packet."
                 )
 
-    def stream_back(self):
+    def stream_back(self, variable: Optional[Scalar, Vector] = None):
         """
         QUA macro designed to send the value of the parameter to Python.
         This method uses IO variables if input type is IO1 or IO2, and
         external streams if input type is dgx. If specified as an input stream,
         the value is saved to the stream.
+
+        Args:
+            variable: Optional external QUA variable to save to the stream.
+            This is useful when the variable to be saved is not the one declared in the parameter but
+            that should be saved to the same stream (It can be used as a shortcut to assign the variable to
+            the parameter variable before saving).
+            The variable should be of the same type as the parameter's QUA variable and should be of the same length
+            if it is an array.
         """
-        if self.input_type in [InputType.IO1, InputType.IO2]:
-            io = IO1 if self.input_type == InputType.IO1 else IO2
-            if self.is_array:
-                if self.length == 1:
-                    assign(io, self.var[0])
-                    pause()
-                    return
-                i = self._ctr
-                with for_(i, 0, i < self.length, i + 1):
-                    assign(io, self.var[i])
-                    pause()
-            else:
-                assign(io, self.var)
-                pause()
-        elif self.input_type == InputType.INPUT_STREAM:
-            self.save_to_stream()
+        if self.input_type in [InputType.IO1, InputType.IO2, InputType.INPUT_STREAM]:
+            self.save_to_stream(variable)
         elif self.input_type == InputType.DGX:
             from qm.qua import send_to_external_stream
 
@@ -814,25 +825,9 @@ class Parameter:
         :param time_out: Time in seconds to wait for the job to be paused before fetching data. Defaults to 30 seconds.
         :return: The fetched value depending upon the input type and fetching logic.
         """
-        if self.input_type in [InputType.IO1, InputType.IO2]:
-            io = 0 if self.input_type == InputType.IO1 else 1
-            value = []
-            for i in range(fetching_index, fetching_index + fetching_size):
-                if not self.is_array:
-                    wait_until_job_is_paused(job, time_out)
-                    value.append(job.get_io_values(io1_type=self.type, io2_type=self.type)[io])
-                    job.resume()
-                else:
-                    temp_array = []
-                    for i in range(self.length):
-                        wait_until_job_is_paused(job, time_out)
-                        temp_array.append(
-                            job.get_io_values(io1_type=self.type, io2_type=self.type)[io]
-                        )
-                        job.resume()
-                    value.append(temp_array)
-
-        elif self.input_type == InputType.INPUT_STREAM or self.input_type is None:
+        if self.input_type != InputType.DGX:
+            if verbosity > 1:
+                print(f"Fetching value from {self.name} with input type {self.input_type}")
             result_handle = job.result_handles
             if self.name not in result_handle:
                 raise ValueError(
