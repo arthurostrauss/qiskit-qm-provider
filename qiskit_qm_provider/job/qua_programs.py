@@ -1,24 +1,27 @@
+from __future__ import annotations
+
 from ..backend import QMBackend
-from ..backend.backend_utils import _QASM3_DUMP_LOOSE_BIT_PREFIX, validate_circuits
+from ..backend.backend_utils import _QASM3_DUMP_LOOSE_BIT_PREFIX, has_conflicting_calibrations
 from qiskit import QuantumCircuit
-from quam.utils.qua_types import QuaScalar
+from quam.utils.qua_types import QuaScalarInt
 from qm import Program
 from qm.qua import *
 from qm.qua._dsl import _ResultSource
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from ..parameter_table import InputType, ParameterTable
-from typing import List, Optional, Any
+from typing import List, Optional
 
 
 def _process_circuit(
     qc: QuantumCircuit,
     backend: QMBackend,
     num_shots: int,
-    state_int: QuaScalar[int],
-    shot_var: QuaScalar[int],
+    state_int: QuaScalarInt,
+    shot_var: QuaScalarInt,
     reg_streams: List[_ResultSource],
     solo_bits_stream: Optional[_ResultSource] = None,
     param_table: Optional[ParameterTable] = None,
+    **kwargs,
 ):
     with for_(shot_var, 0, shot_var < num_shots, shot_var + 1):
         result = backend.quantum_circuit_to_qua(qc, param_table)
@@ -56,11 +59,12 @@ def _process_circuit(
 def _process_pub(
     pub: SamplerPub,
     backend: QMBackend,
-    state_int: QuaScalar[int],
-    shot: QuaScalar[int],
+    state_int: QuaScalarInt,
+    shot: QuaScalarInt,
     regs_streams: List[_ResultSource],
     solo_bits_stream: Optional[_ResultSource] = None,
     param_table: Optional[ParameterTable] = None,
+    **kwargs,
 ):
     """
     Process the given PUB with the given backend.
@@ -70,7 +74,14 @@ def _process_pub(
     """
     if param_table is None:
         _process_circuit(
-            pub.circuit, backend, pub.shots, state_int, shot, regs_streams, solo_bits_stream
+            pub.circuit,
+            backend,
+            pub.shots,
+            state_int,
+            shot,
+            regs_streams,
+            solo_bits_stream,
+            **kwargs,
         )
     else:
         p = declare(int)
@@ -85,11 +96,12 @@ def _process_pub(
                 regs_streams,
                 solo_bits_stream,
                 param_table,
+                **kwargs,
             )
 
 
 def sampler_program(
-    backend: QMBackend, pubs: List[SamplerPub], input_type: Optional[InputType] = None
+    backend: QMBackend, pubs: List[SamplerPub], input_type: Optional[InputType] = None, **kwargs
 ) -> Program:
     """Return the QUA program for the given PUBs."""
     circuits = [pub.circuit for pub in pubs]
@@ -124,6 +136,7 @@ def sampler_program(
                 regs_streams[i],
                 solo_bits_stream[i] if num_solo_bits[i] > 0 else None,
                 param_tables[i],
+                **kwargs,
             )
 
         with stream_processing():
@@ -132,3 +145,118 @@ def sampler_program(
                     creg_stream.save_all(f"{creg.name}_{i}")
 
     return sampler_prog
+
+
+def get_run_program(
+    backend: QMBackend, num_shots, circuits: List[QuantumCircuit]
+) -> Program | List[Program]:
+    num_circuits = len(circuits)
+
+    def _process_circuit(
+        qc: QuantumCircuit,
+        state_int: QuaScalarInt,
+        shot_var: QuaScalarInt,
+        reg_streams: List[_ResultSource],
+        solo_bits_stream: Optional[_ResultSource] = None,
+    ):
+        with for_(shot_var, 0, shot_var < num_shots, shot_var + 1):
+            result = backend.qiskit_to_qua_macro(qc)
+
+            clbits_dict = {
+                creg.name: [result.result_program[creg.name][i] for i in range(creg.size)]
+                for creg in qc.cregs
+            }
+            num_solo_bits = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
+            if num_solo_bits > 0:
+                if solo_bits_stream is None:
+                    raise ValueError(
+                        "Circuit contains bits without registers but no stream provided"
+                    )
+                clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX] = [
+                    result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"]
+                    for i in range(num_solo_bits)
+                ]
+            # Save integer state to each stream
+
+            for creg, stream in zip(qc.cregs, reg_streams):
+                for i in range(creg.size):
+                    assign(state_int, state_int + (1 << i) * Cast.to_int(clbits_dict[creg.name][i]))
+                save(state_int, stream)
+                assign(state_int, 0)
+            if num_solo_bits > 0:
+                for i in range(num_solo_bits):
+                    assign(
+                        state_int,
+                        state_int
+                        + (1 << i) * Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i]),
+                    )
+                save(state_int, solo_bits_stream)
+                assign(state_int, 0)
+
+    if not has_conflicting_calibrations(circuits):
+        with program() as prog:
+            if backend.init_macro:
+                backend.init_macro()
+
+            shot = declare(int)
+            state_int = declare(int, value=0)
+            num_registers = [len(circuits[i].cregs) for i in range(num_circuits)]
+
+            num_solo_bits = [
+                len(
+                    [
+                        bit
+                        for bit in circuits[0].clbits
+                        if len(circuits[i].find_bit(bit).registers) == 0
+                    ]
+                )
+                for i in range(num_circuits)
+            ]
+            regs_streams = [
+                [declare_stream() for _ in range(num_cregs)] for num_cregs in num_registers
+            ]
+            solo_bits_stream = [declare_stream() for _ in range(num_circuits)]
+
+            for i, qc in enumerate(circuits):
+                _process_circuit(
+                    qc,
+                    state_int,
+                    shot,
+                    regs_streams[i],
+                    solo_bits_stream[i] if num_solo_bits[i] > 0 else None,
+                )
+
+            with stream_processing():
+                for i, creg_streams in enumerate(regs_streams):
+                    for creg, creg_stream in zip(circuits[i].cregs, creg_streams):
+                        creg_stream.save_all(f"{creg.name}_{i}")
+
+        return prog
+    else:
+        progs = []
+        for j, qc in enumerate(circuits):
+            with program() as prog:
+                if backend.init_macro:
+                    backend.init_macro()
+                shot = declare(int)
+                state_int = declare(int, value=0)
+                num_registers = len(qc.cregs)
+                num_solo_bits = len(
+                    [bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0]
+                )
+                regs_streams = [declare_stream() for _ in range(num_registers)]
+                solo_bits_stream = declare_stream() if num_solo_bits > 0 else None
+                _process_circuit(
+                    qc,
+                    state_int,
+                    shot,
+                    regs_streams,
+                    solo_bits_stream,
+                )
+
+            with stream_processing():
+                for i, creg_stream in enumerate(regs_streams):
+                    creg_stream.save_all(f"{qc.cregs[i].name}_{j}")
+
+            progs.append(prog)
+        return progs

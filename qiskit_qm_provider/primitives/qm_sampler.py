@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any, Iterable, Literal, Optional
+from copy import deepcopy
+from typing import Any, Iterable, Literal
 
 from iqcc_cloud_client import IQCC_Cloud
 from qiskit.primitives import (
@@ -13,14 +14,17 @@ from dataclasses import dataclass
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit_qm_provider.job.qm_sampler_job import QMPrimitiveJob, IQCCPrimitiveJob
 
-from qiskit_qm_provider.backend.backend_utils import _QASM3_DUMP_LOOSE_BIT_PREFIX, validate_circuits
-
-from qiskit_qm_provider.parameter_table import InputType, ParameterTable
+from qiskit_qm_provider.backend.backend_utils import validate_circuits
+from qiskit_qm_provider.parameter_table import InputType
 from qiskit_qm_provider.backend.qm_backend import QMBackend
-from qm import CompilerOptionArguments, SimulationConfig
+from qiskit.result.models import MeasLevel, MeasReturnType
 
-# from .qm_sampler_job import QMPrimitiveJob
-from quam.utils.qua_types import QuaScalar
+meas_level_dict = {
+    "classified": MeasLevel.CLASSIFIED,
+    "kerneled": MeasLevel.KERNELED,
+    "avg_kerneled": MeasLevel.KERNELED,
+}
+meas_return_type_dict = {"kerneled": MeasReturnType.SINGLE, "avg_kerneled": MeasReturnType.AVERAGE}
 
 
 @dataclass
@@ -44,12 +48,7 @@ class QMSamplerOptions:
     """A dictionary of options to pass to the backend's ``run()`` method.
     Default: None (no option passed to backend's ``run`` method)
     """
-
     meas_level: Literal["classified", "kerneled", "avg_kerneled"] = "classified"
-
-    compiler_options: Optional[CompilerOptionArguments] = None
-
-    simulate: Optional[SimulationConfig] = None
 
     def __post_init__(self):
         if isinstance(self.input_type, str):
@@ -84,7 +83,16 @@ class QMSamplerV2(BaseSamplerV2):
         coerced_pubs = [SamplerPub.coerce(pub, shots) for pub in pubs]
         coerced_pubs = self._validate_pubs(coerced_pubs)
         job_obj = IQCCPrimitiveJob if isinstance(self.backend.qmm, IQCC_Cloud) else QMPrimitiveJob
-        job = job_obj(self.backend, coerced_pubs, self._options.input_type, **self.options)
+        backend_options = deepcopy(self.backend.options.__dict__)
+
+        backend_options["meas_level"] = meas_level_dict[self._options.meas_level]
+        backend_options["meas_return_type"] = meas_return_type_dict.get(
+            self._options.meas_level, MeasReturnType.SINGLE
+        )
+        backend_options["shots"] = shots
+        backend_options.update(self._options.run_options or {})
+
+        job = job_obj(self.backend, coerced_pubs, self.options.input_type, **backend_options)
         job.submit()
         return job
 

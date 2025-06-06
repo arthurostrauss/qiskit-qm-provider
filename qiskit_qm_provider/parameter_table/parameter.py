@@ -19,7 +19,6 @@ from .parameter_pool import ParameterPool
 from .input_type import Direction, InputType
 from typing import Optional, List, Union, Tuple, Literal, Sequence, TYPE_CHECKING, Dict
 import numpy as np
-from qm import QuantumMachine
 from qm.qua import (
     fixed,
     assign,
@@ -35,12 +34,12 @@ from qm.qua import (
     if_,
     Util,
 )
-from qm.qua.type_hints import Scalar, Vector, VectorOfAnyType, ScalarOfAnyType
 from qm.jobs.running_qm_job import RunningQmJob
 from qualang_tools.results import wait_until_job_is_paused
 
 if TYPE_CHECKING:
     from .parameter_table import ParameterTable
+    from qm.qua.type_hints import Scalar, Vector, VectorOfAnyType, ScalarOfAnyType
 
 
 def set_type(qua_type: Union[str, type]):

@@ -105,6 +105,9 @@ def look_for_standard_op(op: str):
         "yy": "ryy",
         "xx": "rxx",
     }
+    for key in mapping.keys():
+        if key in op:
+            return mapping[key]
     return mapping.get(op, op)
 
 

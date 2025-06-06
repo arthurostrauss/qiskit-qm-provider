@@ -17,7 +17,6 @@ from typing import Optional, List, Dict, Union, Tuple, Literal, Callable, Type
 import numpy as np
 from qiskit.circuit.classical.expr import Var
 from qiskit.circuit.classical.types import Uint, Bool
-from qm import QuantumMachine
 from qm.jobs.running_qm_job import RunningQmJob
 from qm.qua import *
 from qm.qua._expressions import QuaArrayVariable

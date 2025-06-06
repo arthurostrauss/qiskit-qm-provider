@@ -33,10 +33,7 @@ from qm import (
     QuantumMachine,
     StreamingResultFetcher,
 )
-from qm.qua._dsl import _ResultSource
 from quam.components import Channel as QuAMChannel, QubitPair, Qubit
-from quam_builder.architecture.superconducting.qpu.base_quam import BaseQuam as Quam
-from quam.utils.qua_types import QuaScalar
 
 # OpenQASM3 to QUA compiler
 from oqc import (
@@ -46,12 +43,14 @@ from oqc import (
     QubitsMapping,
     CompilationResult,
 )
-from quam_libs.cloud_infrastructure import (
-    CloudQuantumMachine,
-    CloudQuantumMachinesManager,
-    CloudJob,
-    CloudResultHandles,
-)
+
+if TYPE_CHECKING:
+    from quam_libs.cloud_infrastructure import (
+        CloudQuantumMachine,
+        CloudQuantumMachinesManager,
+        CloudJob,
+        CloudResultHandles,
+    )
 
 # Helper modules
 from ..parameter_table import ParameterTable, InputType, Parameter
@@ -62,13 +61,13 @@ from .backend_utils import (
     control_flow_name_mapping,
     _QASM3_DUMP_LOOSE_BIT_PREFIX,
     oq3_keyword_instructions,
-    validate_circuits,
-    has_conflicting_calibrations,
+    validate_circuits
 )
 from .qm_instruction_properties import QMInstructionProperties
 
 if TYPE_CHECKING:
     from qiskit_qm_provider.job.qm_job import QMJob, IQCCJob
+    from quam_builder.architecture.superconducting.qpu.base_quam import BaseQuam as Quam
 __all__ = ["QMBackend", "QISKIT_PULSE_AVAILABLE"]
 
 try:  # Importing Qiskit Pulse components
@@ -256,8 +255,12 @@ class QMBackend(Backend):
         Returns the QuantumMachine instance. This is a property that reopens a QuantumMachine each time
         it is called for the underlying configuration might have changed between two calls
         """
+        try:
+            from quam_libs.cloud_infrastructure import CloudQuantumMachinesManager
+        except ImportError:
+            CloudQuantumMachinesManager = None
         if self._qm is None:
-            if isinstance(self.qmm, QuantumMachinesManager):
+            if isinstance(self.qmm, (QuantumMachinesManager, CloudQuantumMachinesManager)):
                 self._qm = self.qmm.open_qm(self.qm_config, close_other_machines=True)
             else:
                 self._qm = self.qmm
@@ -293,7 +296,7 @@ class QMBackend(Backend):
             skip_reset=False,
             meas_level=MeasLevel.CLASSIFIED,
             meas_return=MeasReturnType.AVERAGE,
-            timeout=600,
+            timeout=60,
         )
 
     def _populate_target(
@@ -505,12 +508,11 @@ class QMBackend(Backend):
             A QMJob object that can be used to retrieve the results of the job
         """
         from ..job.qm_job import QMJob, IQCCJob
+        from ..job.qua_programs import get_run_program
 
         options_ = deepcopy(self.options.__dict__)
         options_.update(options)
         num_shots = options.get("shots", self.options.shots)
-        simulate = options.get("simulate", self.options.simulate)
-        compiler_options = options.get("compiler_options", self.options.compiler_options)
         skip_reset = options.get("skip_reset", self.options.skip_reset)
         memory = options.get("memory", self.options.memory)
         meas_level = options.get("meas_level", self.options.meas_level)
@@ -526,7 +528,7 @@ class QMBackend(Backend):
             for qc in new_circuits:
                 self.update_calibrations(qc)
 
-        run_program = self.get_run_program(num_shots, new_circuits)
+        run_program = get_run_program(self, num_shots, new_circuits)
         qm = self.qm
 
         id = "pending"
@@ -623,122 +625,6 @@ class QMBackend(Backend):
         job.submit()
         self._operation_mapping_QUA = self._ref_operation_mapping_QUA.copy()
         return job
-
-    def get_run_program(self, num_shots, circuits: List[QuantumCircuit]) -> Program | List[Program]:
-        num_circuits = len(circuits)
-
-        def _process_circuit(
-            qc: QuantumCircuit,
-            state_int: QuaScalar[int],
-            shot_var: QuaScalar[int],
-            reg_streams: List[_ResultSource],
-            solo_bits_stream: Optional[_ResultSource] = None,
-        ):
-            with for_(shot_var, 0, shot_var < num_shots, shot_var + 1):
-                result = self.qiskit_to_qua_macro(qc)
-
-                clbits_dict = {
-                    creg.name: [result.result_program[creg.name][i] for i in range(creg.size)]
-                    for creg in qc.cregs
-                }
-                num_solo_bits = len(
-                    [bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0]
-                )
-                if num_solo_bits > 0:
-                    if solo_bits_stream is None:
-                        raise ValueError(
-                            "Circuit contains bits without registers but no stream provided"
-                        )
-                    clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX] = [
-                        result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"]
-                        for i in range(num_solo_bits)
-                    ]
-                # Save integer state to each stream
-
-                for creg, stream in zip(qc.cregs, reg_streams):
-                    for i in range(creg.size):
-                        assign(
-                            state_int, state_int + (1 << i) * Cast.to_int(clbits_dict[creg.name][i])
-                        )
-                    save(state_int, stream)
-                    assign(state_int, 0)
-                if num_solo_bits > 0:
-                    for i in range(num_solo_bits):
-                        assign(
-                            state_int,
-                            state_int
-                            + (1 << i) * Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i]),
-                        )
-                    save(state_int, solo_bits_stream)
-                    assign(state_int, 0)
-
-        if not has_conflicting_calibrations(circuits):
-            with program() as prog:
-                if self._init_macro:
-                    self._init_macro()
-
-                shot = declare(int)
-                state_int = declare(int, value=0)
-                num_registers = [len(circuits[i].cregs) for i in range(num_circuits)]
-
-                num_solo_bits = [
-                    len(
-                        [
-                            bit
-                            for bit in circuits[0].clbits
-                            if len(circuits[i].find_bit(bit).registers) == 0
-                        ]
-                    )
-                    for i in range(num_circuits)
-                ]
-                regs_streams = [
-                    [declare_stream() for _ in range(num_cregs)] for num_cregs in num_registers
-                ]
-                solo_bits_stream = [declare_stream() for _ in range(num_circuits)]
-
-                for i, qc in enumerate(circuits):
-                    _process_circuit(
-                        qc,
-                        state_int,
-                        shot,
-                        regs_streams[i],
-                        solo_bits_stream[i] if num_solo_bits[i] > 0 else None,
-                    )
-
-                with stream_processing():
-                    for i, creg_streams in enumerate(regs_streams):
-                        for creg, creg_stream in zip(circuits[i].cregs, creg_streams):
-                            creg_stream.save_all(f"{creg.name}_{i}")
-
-            return prog
-        else:
-            progs = []
-            for j, qc in enumerate(circuits):
-                with program() as prog:
-                    if self._init_macro:
-                        self._init_macro()
-                    shot = declare(int)
-                    state_int = declare(int, value=0)
-                    num_registers = len(qc.cregs)
-                    num_solo_bits = len(
-                        [bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0]
-                    )
-                    regs_streams = [declare_stream() for _ in range(num_registers)]
-                    solo_bits_stream = declare_stream() if num_solo_bits > 0 else None
-                    _process_circuit(
-                        qc,
-                        state_int,
-                        shot,
-                        regs_streams,
-                        solo_bits_stream,
-                    )
-
-                with stream_processing():
-                    for i, creg_stream in enumerate(regs_streams):
-                        creg_stream.save_all(f"{qc.cregs[i].name}_{j}")
-
-                progs.append(prog)
-            return progs
 
     @requires_qiskit_pulse
     def schedule_to_qua_macro(
@@ -987,10 +873,7 @@ class QMBackend(Backend):
             Compilation result of the QuantumCircuit to QUA
         """
 
-        basis_gates = list(
-            set(self._oq3_custom_gates + list(self.target.operation_names))
-            - set(oq3_keyword_instructions)
-        )
+        basis_gates = self.oqc_basis_gates
         # Check if all custom calibrations are in the oq3 basis gates
         if hasattr(qc, "calibrations") and qc.calibrations:
             for gate_name in qc.calibrations.keys():
@@ -1108,3 +991,25 @@ class QMBackend(Backend):
         Retrieve the list of active qubit pairs of the machine
         """
         return self.machine.active_qubit_pairs
+
+    @property
+    def oqc_basis_gates(self) -> List[str]:
+        """
+        Retrieve the list of OpenQASM 3 basis gates supported by the backend
+        """
+        basis_gates = list(
+            set(self._oq3_custom_gates + list(self.target.operation_names))
+            - set(oq3_keyword_instructions)
+        )
+        return basis_gates
+
+    @property
+    def oq3_exporter(self) -> Exporter:
+        """
+        Retrieve the OpenQASM 3 exporter for the backend
+        """
+        return Exporter(
+            includes=(),
+            basis_gates=self.oqc_basis_gates,
+            disable_constants=True,
+        )
