@@ -17,8 +17,10 @@ from typing import Optional, List, Dict, Union, Tuple, Literal, Callable, Type
 import numpy as np
 from qiskit.circuit.classical.expr import Var
 from qiskit.circuit.classical.types import Uint, Bool
+from qm import QuantumMachine
+from qm.api.v2.job_api import JobApi
 from qm.jobs.running_qm_job import RunningQmJob
-from qm.qua import *
+from qm.qua import assign, pause, declare, fixed
 from qm.qua._expressions import QuaArrayVariable
 from quam.utils.qua_types import QuaVariable
 
@@ -173,6 +175,8 @@ class ParameterTable:
                         )
 
         if self.input_type == InputType.DGX:
+            from qm.qua import qua_struct, QuaArray
+
             attributes = {
                 parameter.name: QuaArray[
                     parameter.type, parameter.length if parameter.is_array else 1
@@ -196,6 +200,11 @@ class ParameterTable:
 
         """
         if self.input_type == InputType.DGX:
+            from qm.qua import (
+                declare_struct,
+                declare_external_stream,
+                QuaStreamDirection,
+            )
 
             qua_direction = (
                 QuaStreamDirection.INCOMING
@@ -265,6 +274,8 @@ class ParameterTable:
         Args: filter_func: Optional function to filter the parameters to be loaded.
         """
         if self.input_type == InputType.DGX:
+            from qm.qua import receive_from_external_stream
+
             if not self._usable_for_dgx_communication:
                 raise ValueError(
                     "Parameter table not usable for DGX communication, as it contains parameters that "
@@ -642,7 +653,8 @@ class ParameterTable:
     def push_to_opx(
         self,
         param_dict: Dict[Union[str, Parameter], Union[float, int, bool, List, np.ndarray]],
-        job: RunningQmJob,
+        job: RunningQmJob | JobApi,
+        qm: Optional[QuantumMachine] = None,
         verbosity: int = 1,
     ):
         """
@@ -651,22 +663,13 @@ class ParameterTable:
             param_dict: Dictionary of the form {parameter_name: parameter_value}.
             The parameter value can be either a Python value or a QuaExpressionType.
             job: RunningQmJob object to push the values to.
+            qm: QuantumMachine object to push the values to (IO variables). Relevant only for OPX+ with IO variables.
             verbosity: Verbosity level of the pushing process.
         """
         if self.input_type != InputType.DGX:
             for parameter, value in param_dict.items():
-                if isinstance(parameter, str):
-                    if parameter not in self.table.keys():
-                        raise KeyError(f"No parameter named {parameter} in the parameter table.")
-                    self.table[parameter].push_to_opx(value, job, verbosity)
-                elif isinstance(parameter, Parameter):
-                    if parameter not in self.parameters:
-                        raise KeyError("Provided Parameter not in this ParameterTable.")
-                    parameter.push_to_opx(value, job, verbosity)
-                else:
-                    raise ValueError(
-                        "Invalid parameter name. Please use a string or a Parameter object."
-                    )
+                self.get_parameter(parameter).push_to_opx(value, job, qm, verbosity)
+
         else:
             if not self._usable_for_dgx_communication:
                 raise ValueError(
@@ -728,6 +731,8 @@ class ParameterTable:
                 )
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot send values to outgoing DGX parameter tables.")
+            from qm.qua import send_to_external_stream
+
             send_to_external_stream(self._qua_external_stream, self._packet)
 
     def fetch_from_opx(

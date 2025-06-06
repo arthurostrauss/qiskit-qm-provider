@@ -12,6 +12,8 @@ import warnings
 from itertools import chain
 import sys
 
+from qm import QuantumMachine
+from qm.api.v2.job_api import JobApi
 from qm.qua._dsl import _ResultSource
 from qm.qua._expressions import QuaArrayVariable
 
@@ -521,7 +523,7 @@ class Parameter:
             raise ValueError("Output stream not declared.")
         return self._stream
 
-    def save_to_stream(self, variable: Optional[Scalar, Vector] = None):
+    def save_to_stream(self):
         """
         Save the QUA variable to the output stream.
 
@@ -538,16 +540,11 @@ class Parameter:
         if self.is_declared and self.stream is not None:
             if self.is_array:
                 i = self._ctr
-                with for_(i, 0, i < self.length, i + 1):
-                    if variable is not None:
-                        save(variable[i], self.stream)
-                    else:
-                        save(self.var[i], self.stream)
+                # with for_(i, 0, i < self.length, i + 1):
+                for i in range(self.length):
+                    save(self.var[i], self.stream)
             else:
-                if variable is not None:
-                    save(variable, self.stream)
-                else:
-                    save(self.var, self.stream)
+                save(self.var, self.stream)
         else:
             raise ValueError("Output stream or variable itself not declared.")
 
@@ -676,7 +673,8 @@ class Parameter:
     def push_to_opx(
         self,
         value: Union[int, float, bool, Sequence[Union[int, float, bool]]],
-        job: RunningQmJob,
+        job: RunningQmJob | JobApi,
+        qm: Optional[QuantumMachine] = None,
         verbosity: int = 1,
         time_out: int = 30,
     ):
@@ -690,13 +688,14 @@ class Parameter:
             time_out: Time out for waiting for the job to be paused. Default is 90 seconds.
         """
 
-        if self.is_array and len(value) != self.length:
-            raise ValueError(
-                f"Invalid input. {self.name} should be a list of length {self.length}."
-            )
-        param_type = self.type
-        if param_type == fixed:
-            param_type = float
+        if self.is_array:
+            if not isinstance(value, (List, np.ndarray)):
+                raise ValueError(f"Invalid input. {self.name} should be a list of {self.type}.")
+            if len(value) != self.length:
+                raise ValueError(
+                    f"Invalid input. {self.name} should be a list of length {self.length}."
+                )
+        param_type = self.type if self.type != fixed else float
         if self.is_array and not all(isinstance(x, param_type) for x in value):
             try:
                 value = [param_type(x) for x in value]
@@ -715,20 +714,24 @@ class Parameter:
             if self.is_array:
                 for i in range(self.length):
                     if verbosity > 1:
-                        print(f"Setting {self.name} to {value[i]}")
+                        print(f"Setting {self.name} to {value[i]} through {io}")
                     wait_until_job_is_paused(job, time_out)
                     job.set_io_values(**{io: value[i]})
                     job.resume()
             else:
                 if verbosity > 1:
-                    print(f"Setting {self.name} to {value}")
+                    print(f"Setting {self.name} to {value} through {io}")
                 wait_until_job_is_paused(job, time_out)
-                job.set_io_values(**{io: value})
+                if isinstance(job, JobApi):
+                    # For JobApi, we need to use the set_io_values method
+                    job.set_io_values(**{io: value})
+                else:
+                    qm.set_io_values(**{io: value})
                 job.resume()
 
         elif self.input_type == InputType.INPUT_STREAM:
             if verbosity > 1:
-                print(f"Pushing value {value} to stream {self.name}")
+                print(f"Pushing value {value} to {self.name} through input stream.")
             job.push_to_input_stream(self.name, value)
 
         elif self.input_type == InputType.DGX:
@@ -763,23 +766,15 @@ class Parameter:
                     f"was associated with a bigger packet."
                 )
 
-    def stream_back(self, variable: Optional[Scalar, Vector] = None):
+    def stream_back(self):
         """
         QUA macro designed to send the value of the parameter to Python.
         This method uses IO variables if input type is IO1 or IO2, and
         external streams if input type is dgx. If specified as an input stream,
         the value is saved to the stream.
-
-        Args:
-            variable: Optional external QUA variable to save to the stream.
-            This is useful when the variable to be saved is not the one declared in the parameter but
-            that should be saved to the same stream (It can be used as a shortcut to assign the variable to
-            the parameter variable before saving).
-            The variable should be of the same type as the parameter's QUA variable and should be of the same length
-            if it is an array.
         """
         if self.input_type in [InputType.IO1, InputType.IO2, InputType.INPUT_STREAM]:
-            self.save_to_stream(variable)
+            self.save_to_stream()
         elif self.input_type == InputType.DGX:
             from qm.qua import send_to_external_stream
 

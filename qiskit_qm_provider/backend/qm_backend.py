@@ -25,7 +25,6 @@ from qiskit.qasm3 import Exporter
 from qm.jobs.running_qm_job import RunningQmJob
 
 # QUA and Quam imports
-from qm.qua import *
 from qm import (
     QuantumMachinesManager,
     Program,
@@ -61,7 +60,7 @@ from .backend_utils import (
     control_flow_name_mapping,
     _QASM3_DUMP_LOOSE_BIT_PREFIX,
     oq3_keyword_instructions,
-    validate_circuits
+    validate_circuits,
 )
 from .qm_instruction_properties import QMInstructionProperties
 

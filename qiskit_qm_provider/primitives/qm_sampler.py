@@ -4,7 +4,6 @@ import warnings
 from copy import deepcopy
 from typing import Any, Iterable, Literal
 
-from iqcc_cloud_client import IQCC_Cloud
 from qiskit.primitives import (
     BaseSamplerV2,
     SamplerPubLike,
@@ -18,6 +17,7 @@ from qiskit_qm_provider.backend.backend_utils import validate_circuits
 from qiskit_qm_provider.parameter_table import InputType
 from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qiskit.result.models import MeasLevel, MeasReturnType
+from qm import QuantumMachinesManager
 
 meas_level_dict = {
     "classified": MeasLevel.CLASSIFIED,
@@ -82,7 +82,11 @@ class QMSamplerV2(BaseSamplerV2):
             shots = self._options.default_shots
         coerced_pubs = [SamplerPub.coerce(pub, shots) for pub in pubs]
         coerced_pubs = self._validate_pubs(coerced_pubs)
-        job_obj = IQCCPrimitiveJob if isinstance(self.backend.qmm, IQCC_Cloud) else QMPrimitiveJob
+        job_obj = (
+            QMPrimitiveJob
+            if isinstance(self.backend.qmm, QuantumMachinesManager)
+            else IQCCPrimitiveJob
+        )
         backend_options = deepcopy(self.backend.options.__dict__)
 
         backend_options["meas_level"] = meas_level_dict[self._options.meas_level]

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional, List, Callable, Union
+from typing import Optional, List, Callable, Union, TYPE_CHECKING
 
-from iqcc_cloud_client import IQCC_Cloud
 from qiskit.providers.job import JobV1, JobStatus
 from qiskit.result import Result
 from qm import QuantumMachine, Program, SimulationConfig
@@ -10,7 +9,9 @@ from qm import QuantumMachine, Program, SimulationConfig
 from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qm.jobs.running_qm_job import RunningQmJob
 from qm.jobs.pending_job import QmPendingJob
-from tensorflow.python.ops.signal.fft_ops import ifftnd
+
+if TYPE_CHECKING:
+    from iqcc_cloud_client import IQCC_Cloud
 
 
 class QMJob(JobV1):
