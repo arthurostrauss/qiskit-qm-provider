@@ -189,7 +189,7 @@ class ParameterTable:
             )
 
     def declare_variables(
-        self, pause_program=False, declare_streams=True
+        self, pause_program=False
     ) -> QuaVariable | List[QuaVariable | QuaArrayVariable]:
         """
         QUA Macro to declare all QUA variables associated with the parameter table.
@@ -236,9 +236,6 @@ class ParameterTable:
                 if parameter.is_array:
                     parameter._ctr = declare(int)
 
-                if declare_streams:
-                    parameter.declare_stream()
-
             if self._direction == Direction.INCOMING:  # OPX -> DGX (Initialize the packet)
                 for parameter in self.parameters:
                     if parameter.is_array:
@@ -258,13 +255,27 @@ class ParameterTable:
                 if parameter.is_declared:
                     warnings.warn(f"Variable {parameter.name} already declared.")
                     continue
-                parameter.declare_variable(declare_stream=declare_streams)
+                parameter.declare_variable()
             if pause_program:
                 pause()
             if len(self.variables) == 1:
                 return self.variables[0]
             else:
                 return self.variables
+
+    def declare_streams(self):
+        """
+        QUA Macro to declare all the output streams associated with the parameters in the parameter table.
+        This macro is expected to be called at the beginning of the QUA program.
+        """
+        for parameter in self.parameters:
+            if parameter.stream is None:
+                parameter.declare_stream()
+            else:
+                warnings.warn(
+                    f"Stream for parameter {parameter.name} already declared. "
+                    "Skipping stream declaration."
+                )
 
     def load_input_values(self, filter_function: Optional[Callable[[Parameter], bool]] = None):
         """
@@ -309,17 +320,20 @@ class ParameterTable:
     def stream_processing(
         self,
         mode: Literal["save", "save_all"] = "save_all",
-        buffering: Optional[Dict[str, Tuple[int]]] = None,
+        buffering: Optional[Union[Dict[Union[str, Parameter], Union[Tuple[int, ...],
+        int, Literal["default"]]], Literal["default"]]] = "default",
     ):
         """
         Process all the streams in the parameter table.
         """
         for parameter in self.parameters:
             if parameter.stream is not None:
-                if buffering is not None and parameter.name in buffering:
+                if buffering is None:
+                    buffer = None
+                elif buffering != "default"  and (parameter.name in buffering or parameter in buffering):
                     buffer = buffering[parameter.name]
                 else:
-                    buffer = None
+                    buffer = "default"
                 parameter.stream_processing(mode, buffer)
 
     def assign_parameters(

@@ -15,7 +15,6 @@ import sys
 from qm import QuantumMachine
 from qm.api.v2.job_api import JobApi
 from qm.qua._dsl import _ResultSource
-from qm.qua._expressions import QuaArrayVariable
 
 from .parameter_pool import ParameterPool
 from .input_type import Direction, InputType
@@ -36,12 +35,13 @@ from qm.qua import (
     if_,
     Util,
 )
+from qm.qua._expressions import QuaArrayVariable
 from qm.jobs.running_qm_job import RunningQmJob
 from qualang_tools.results import wait_until_job_is_paused
 
 if TYPE_CHECKING:
     from .parameter_table import ParameterTable
-    from qm.qua.type_hints import Scalar, Vector, VectorOfAnyType, ScalarOfAnyType
+    from qm.qua.type_hints import Scalar, Vector, VectorOfAnyType, ScalarOfAnyType, QuaScalar
 
 
 def set_type(qua_type: Union[str, type]):
@@ -328,7 +328,7 @@ class Parameter:
                     )
                 assign_with_condition(self.var, value, value_cond)
 
-    def declare_variable(self, pause_program=False, declare_stream=True):
+    def declare_variable(self, pause_program=False):
         """
         Declare the QUA variable associated with the parameter.
         Args: pause_program: Boolean indicating if the program should be paused after declaring the variable.
@@ -366,8 +366,6 @@ class Parameter:
             self._var = declare(t=self.type, value=self.value)
         if self.is_array:
             self._ctr = declare(int)
-        if declare_stream:
-            self._stream = qua_declare_stream()
         if pause_program:
             pause()
         self._is_declared = True
@@ -457,7 +455,7 @@ class Parameter:
             raise ValueError("Stream ID already set. Cannot change it.")
 
     @property
-    def var(self):
+    def var(self) -> QuaArrayVariable | QuaScalar:
         """
         Returns:
             QUA variable associated with the parameter.
@@ -519,8 +517,6 @@ class Parameter:
     @property
     def stream(self) -> _ResultSource:
         """Output stream associated with the parameter."""
-        if self._stream is None or not self.is_declared:
-            raise ValueError("Output stream not declared.")
         return self._stream
 
     def save_to_stream(self):
@@ -539,7 +535,7 @@ class Parameter:
         """
         if self.is_declared and self.stream is not None:
             if self.is_array:
-                i = self._ctr
+                # i = self._ctr
                 # with for_(i, 0, i < self.length, i + 1):
                 for i in range(self.length):
                     save(self.var[i], self.stream)
@@ -551,18 +547,18 @@ class Parameter:
     def stream_processing(
         self,
         mode: Literal["save", "save_all"] = "save_all",
-        buffer: Union[Tuple[int, ...], int] = None,
+        buffer: Optional[Union[Tuple[int, ...], int, Literal["default"]]] = "default",
     ):
         """
         Process the output stream associated with the parameter.
         Args:
             mode: Mode of processing the stream. Can be "save" or "save_all". Default is "save_all".
-            buffer: Buffer size for the stream. If None, the default buffer size is used (no buffer for a single variable
-                and buffer of array size for an array).
+            buffer: Buffer size for the stream. If "default", the default buffer size is used (no buffer for a single variable
+                and buffer of array size for an array). Can also be set to None for no buffer.
         """
         if mode not in ["save", "save_all"]:
             raise ValueError("Invalid mode. Must be 'save' or 'save_all'.")
-        if buffer is None and self.is_array:
+        if buffer == "default" and self.is_array:
             buffer = (self.length,)
         elif isinstance(buffer, int):
             buffer = (buffer,)
@@ -871,6 +867,8 @@ class Parameter:
         self._external_stream_incoming = None
         self._external_stream_outgoing = None
         self._index = -1
+        self._main_table = None
+        self._table_indices = {}
 
     def __deepcopy__(self, memodict=None):
         if memodict is None:
