@@ -1,4 +1,5 @@
 import numpy as np
+from qiskit.circuit import Parameter
 from qiskit.primitives import PrimitiveResult
 from qiskit.primitives.base.base_primitive_job import BasePrimitiveJob
 from qiskit.primitives.containers import SamplerPubResult, DataBin, BitArray
@@ -9,7 +10,7 @@ from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
 from typing import Optional, Union, List, Dict
 from ..backend import QMBackend
-from ..parameter_table import InputType
+from ..parameter_table import InputType, ParameterTable
 from .qua_programs import sampler_program
 
 
@@ -84,6 +85,13 @@ class QMPrimitiveJob(BasePrimitiveJob):
         else:
             self._qm_job = self._backend.qm.execute(sampler_prog, compiler_options=compiler_options)
             self._job_id = self._qm_job.id
+            for pub in self._pubs:
+                for parameters in pub.parameter_values.ravel().as_array():
+                    if parameters:
+                        param_table = ParameterTable.from_qiskit(pub.circuit, input_type=self._input_type,
+                                                                 filter_function=lambda x: isinstance(x, Parameter))
+                        param_dict = {param.name: value for param, value in zip(param_table.parameters, parameters)}
+                        param_table.push_to_opx(param_dict, self.qm_job, self._backend.qm)
 
     def result(self) -> PrimitiveResult[SamplerPubResult]:
         """Get the job result."""
