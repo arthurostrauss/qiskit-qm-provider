@@ -11,11 +11,11 @@ from qiskit.primitives import (
 from dataclasses import dataclass
 
 from qiskit.primitives.containers.sampler_pub import SamplerPub
-from qiskit_qm_provider.job.qm_sampler_job import QMPrimitiveJob, IQCCPrimitiveJob
+from ..job.qm_sampler_job import QMPrimitiveJob, IQCCPrimitiveJob
 
-from qiskit_qm_provider.backend.backend_utils import validate_circuits
-from qiskit_qm_provider.parameter_table import InputType
-from qiskit_qm_provider.backend.qm_backend import QMBackend
+from ..backend.backend_utils import validate_circuits
+from ..parameter_table import InputType
+from ..backend.qm_backend import QMBackend
 from qiskit.result.models import MeasLevel, MeasReturnType
 from qm import QuantumMachinesManager
 

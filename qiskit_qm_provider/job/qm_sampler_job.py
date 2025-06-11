@@ -88,9 +88,15 @@ class QMPrimitiveJob(BasePrimitiveJob):
             for pub in self._pubs:
                 for parameters in pub.parameter_values.ravel().as_array():
                     if parameters:
-                        param_table = ParameterTable.from_qiskit(pub.circuit, input_type=self._input_type,
-                                                                 filter_function=lambda x: isinstance(x, Parameter))
-                        param_dict = {param.name: value for param, value in zip(param_table.parameters, parameters)}
+                        param_table = ParameterTable.from_qiskit(
+                            pub.circuit,
+                            input_type=self._input_type,
+                            filter_function=lambda x: isinstance(x, Parameter),
+                        )
+                        param_dict = {
+                            param.name: value
+                            for param, value in zip(param_table.parameters, parameters)
+                        }
                         param_table.push_to_opx(param_dict, self.qm_job, self._backend.qm)
 
     def result(self) -> PrimitiveResult[SamplerPubResult]:

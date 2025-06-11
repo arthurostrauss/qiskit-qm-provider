@@ -320,8 +320,12 @@ class ParameterTable:
     def stream_processing(
         self,
         mode: Literal["save", "save_all"] = "save_all",
-        buffering: Optional[Union[Dict[Union[str, Parameter], Union[Tuple[int, ...],
-        int, Literal["default"]]], Literal["default"]]] = "default",
+        buffering: Optional[
+            Union[
+                Dict[Union[str, Parameter], Union[Tuple[int, ...], int, Literal["default"]]],
+                Literal["default"],
+            ]
+        ] = "default",
     ):
         """
         Process all the streams in the parameter table.
@@ -330,7 +334,9 @@ class ParameterTable:
             if parameter.stream is not None:
                 if buffering is None:
                     buffer = None
-                elif buffering != "default"  and (parameter.name in buffering or parameter in buffering):
+                elif buffering != "default" and (
+                    parameter.name in buffering or parameter in buffering
+                ):
                     buffer = buffering[parameter.name]
                 else:
                     buffer = "default"
