@@ -818,7 +818,7 @@ class ParameterTable:
     def from_qiskit(
         cls,
         qc: QuantumCircuit,
-        input_type: Literal["INPUT_STREAM", "DGX", "IO1", "IO2"] | InputType = None,
+        input_type: Optional[Literal["INPUT_STREAM", "DGX", "IO1", "IO2"] | InputType] = None,
         filter_function: Optional[Callable[[Parameter | Var], bool]] = None,
         name: Optional[str] = None,
     ) -> Optional["ParameterTable"]:
