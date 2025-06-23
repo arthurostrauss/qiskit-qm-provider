@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import warnings
-from typing import List, TYPE_CHECKING
+from typing import List, TYPE_CHECKING, Dict
 
 from qiskit import QuantumCircuit
-from qiskit.circuit import IfElseOp, WhileLoopOp, ForLoopOp, SwitchCaseOp
+from qiskit.circuit.controlflow import ControlFlowOp, IfElseOp, WhileLoopOp, ForLoopOp, SwitchCaseOp
 from qiskit.circuit.library import get_standard_gate_name_mapping
 
 from quam.components import Qubit, QubitPair
@@ -139,13 +139,31 @@ def has_reset_at_boundary(circuit: QuantumCircuit) -> bool:
     return first or last
 
 
-control_flow_name_mapping = {
+control_flow_name_mapping: Dict[str, ControlFlowOp] = {
     "if_else": IfElseOp,
     "while_loop": WhileLoopOp,
     "for_loop": ForLoopOp,
     "switch_case": SwitchCaseOp,
 }
-oq3_keyword_instructions = ("measure", "reset", "delay", "nop")
+try:
+    from qiskit.circuit.controlflow import BoxOp
+
+    control_flow_name_mapping["box"] = BoxOp
+except ImportError:
+    warnings.warn(
+        "BoxOp is not available in this version of Qiskit, skipping it from control flow mapping."
+    )
+oq3_keyword_instructions = (
+    "measure",
+    "reset",
+    "delay",
+    "nop",
+    "box",
+    "for_loop",
+    "while_loop",
+    "if_else",
+    "switch_case",
+)
 _QASM3_DUMP_LOOSE_BIT_PREFIX = "_bit"
 
 

@@ -7,7 +7,6 @@ from typing import Iterable, List, Dict, Optional, Callable, Union, Tuple, Any, 
 from inspect import Signature, Parameter as sigParam
 
 import numpy as np
-from iqcc_cloud_client import IQCC_Cloud
 from qiskit.circuit import (
     QuantumCircuit,
     Parameter as QiskitParameter,
@@ -50,6 +49,7 @@ if TYPE_CHECKING:
         CloudJob,
         CloudResultHandles,
     )
+    from iqcc_cloud_client import IQCC_Cloud
 
 # Helper modules
 from ..parameter_table import ParameterTable, InputType, Parameter
@@ -610,7 +610,7 @@ class QMBackend(Backend):
             )
             return result
 
-        job_obj = IQCCJob if isinstance(self.qmm, IQCC_Cloud) else QMJob
+        job_obj = QMJob if isinstance(self.qmm, QuantumMachinesManager) else IQCCJob
         job = job_obj(
             self,
             id,

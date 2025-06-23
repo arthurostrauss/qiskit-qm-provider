@@ -1,5 +1,5 @@
 """
-Parameter Table: Class enabling the mapping of parameters to be updated to their corresponding 
+Parameter Table: Class enabling the mapping of parameters to be updated to their corresponding
 "to-be-declared" QUA variables.
 
 Author: Arthur Strauss - Quantum Machines
