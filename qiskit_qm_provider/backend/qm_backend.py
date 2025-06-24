@@ -211,6 +211,53 @@ class QMBackend(Backend):
         else:
             raise ValueError("Qubit should be an integer index or a string name")
 
+    def get_qubit_pair(self, qubits: Tuple[int | str | Qubit, int | str | Qubit]) -> QubitPair:
+        """
+        Get the QubitPair object corresponding to the given qubit indices or names
+        Args:
+            qubits: The qubit indices or names
+
+        Returns:
+            The QubitPair object corresponding to the given qubit indices or names
+        """
+        if isinstance(qubits, tuple) and len(qubits) == 2:
+            qubit1, qubit2 = qubits
+            if isinstance(qubit1, int):
+                q1 = self.machine.active_qubits[qubit1]
+            elif isinstance(qubit1, str):
+                q1 = self.machine.active_qubits[self.qubit_dict[qubit1]]
+            elif isinstance(qubit1, Qubit):
+                q1 = qubit1
+            else:
+                raise ValueError(
+                    "First qubit should be an integer index, a string name or a Qubit object"
+                )
+
+            if isinstance(qubit2, int):
+                q2 = self.machine.active_qubits[qubit2]
+            elif isinstance(qubit2, str):
+                q2 = self.machine.active_qubits[self.qubit_dict[qubit2]]
+            elif isinstance(qubit2, Qubit):
+                q2 = qubit2
+            else:
+                raise ValueError(
+                    "Second qubit should be an integer index, a string name or a Qubit object"
+                )
+
+            try:
+                qubit_pair = q1 @ q2  # Using the @ operator to get the QubitPair
+                if qubit_pair.name not in self._qubit_pair_dict:
+                    raise ValueError(
+                        f"Qubit pair {qubits} not found in the machine's active qubit pairs"
+                    )
+                return qubit_pair  # Using the @ operator to get the QubitPair
+            except TypeError:
+                raise ValueError(
+                    f"Qubit pair {qubits} not found in the machine's active qubit pairs"
+                )
+        else:
+            raise ValueError("Qubit pair should be a tuple of two qubits")
+
     @property
     def qubit_mapping(self) -> QubitsMapping:
         """
@@ -265,6 +312,19 @@ class QMBackend(Backend):
                 self._qm = self.qmm
 
         return self._qm
+
+    def close_all_qms(self):
+        """
+        Close all QuantumMachines managed by the QuantumMachinesManager
+        """
+        if isinstance(self.qmm, QuantumMachinesManager):
+            self.qmm.close_all_qms()
+            self._qm = None
+        else:
+            warnings.warn(
+                "Closing all QuantumMachines is not supported for the current QuantumMachinesManager type",
+                UserWarning,
+            )
 
     @property
     def qm_config(self) -> DictQuaConfig:
@@ -326,12 +386,15 @@ class QMBackend(Backend):
         for q, qubit in enumerate(machine.active_qubits):
             for op, func in qubit.macros.items():
                 op_ = look_for_standard_op(op)
-
+                prop = QMInstructionProperties(
+                    duration=func.duration,
+                    error=1.0 - func.fidelity if func.fidelity is not None else None,
+                    qua_pulse_macro=func.apply,
+                )
                 if op_ in gate_map:
                     gate_op = gate_map[op_]
                     num_params = len(gate_op.params)
-
-                    operations_dict.setdefault(op_, {})[(q,)] = None
+                    operations_dict.setdefault(op_, {})[(q,)] = prop
                     operations_qua_dict[OperationIdentifier(op_, num_params, (q,))] = func.apply
                     name_to_op_dict[op_] = gate_op
                 else:
@@ -351,7 +414,7 @@ class QMBackend(Backend):
                             f"Return type {return_type} not yet supported for custom gate {op_}"
                         )
                     gate_op = Instruction(op_, 1, 0, params)
-                    operations_dict.setdefault(op_, {})[(q,)] = None
+                    operations_dict.setdefault(op_, {})[(q,)] = prop
                     operations_qua_dict[OperationIdentifier(op_, len(params), (q,))] = func.apply
                     name_to_op_dict[op_] = gate_op
                     self._custom_instructions[op_] = gate_op
