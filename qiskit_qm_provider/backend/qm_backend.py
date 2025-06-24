@@ -386,11 +386,7 @@ class QMBackend(Backend):
         for q, qubit in enumerate(machine.active_qubits):
             for op, func in qubit.macros.items():
                 op_ = look_for_standard_op(op)
-                prop = QMInstructionProperties(
-                    duration=func.duration,
-                    error=1.0 - func.fidelity if func.fidelity is not None else None,
-                    qua_pulse_macro=func.apply,
-                )
+                prop = QMInstructionProperties(qua_pulse_macro=func)
                 if op_ in gate_map:
                     gate_op = gate_map[op_]
                     num_params = len(gate_op.params)

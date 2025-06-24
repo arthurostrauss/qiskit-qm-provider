@@ -193,11 +193,14 @@ def add_basic_macros_to_machine(machine: BaseQuam):
     from quam.components.macro import PulseMacro
 
     for qubit in machine.active_qubits:
-        qubit.macros["x"] = PulseMacro(pulse="x180")
+        x180_pulse = qubit.get_pulse("x180").get_reference()
+        readout_pulse = qubit.get_pulse("readout").get_reference()
+        x90_pulse = qubit.get_pulse("x90").get_reference()
+        qubit.macros["x"] = PulseMacro(pulse=x180_pulse)
         qubit.macros["rz"] = VirtualZMacro()
-        qubit.macros["sx"] = PulseMacro(pulse="x90")
-        qubit.macros["measure"] = MeasureMacro(pulse="readout")
-        qubit.macros["reset"] = ResetMacro(pi_pulse="x180", readout_pulse="readout")
+        qubit.macros["sx"] = PulseMacro(pulse=x90_pulse)
+        qubit.macros["measure"] = MeasureMacro(pulse=readout_pulse)
+        qubit.macros["reset"] = ResetMacro(pi_pulse=x180_pulse, readout_pulse=readout_pulse)
         qubit.macros["delay"] = DelayMacro()
         qubit.macros["id"] = IdMacro()
 
