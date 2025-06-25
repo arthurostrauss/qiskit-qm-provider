@@ -15,7 +15,7 @@ class QMInstructionProperties(InstructionProperties):
                 **kwargs):
         if duration is None and hasattr(qua_pulse_macro, "duration"):
             duration = qua_pulse_macro.duration
-            if duration is None and isinstance(qua_pulse_macro, PulseMacro):
+            if duration is None and hasattr(qua_pulse_macro, "pulse"):
                 if isinstance(qua_pulse_macro.pulse, str):
                     pulse = qua_pulse_macro.qubit.get_pulse(qua_pulse_macro.pulse)
                 else:

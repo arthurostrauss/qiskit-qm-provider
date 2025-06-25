@@ -73,3 +73,9 @@ class CRGate(Gate):
 
     def __array__(self, dtype=None, copy=None):
         return gate_map()["rzx"](np.pi / 2).__array__(dtype=dtype, copy=copy)
+
+# Do monkey patching to QuantumCircuit to add the custom gates
+# Add a method to QuantumCircuit to add the custom gates (qc.sy(q) == qc.append(SYGate(), [q]))
+QuantumCircuit.sy = lambda self, q: self.append(SYGate(), [q])
+QuantumCircuit.sydg = lambda self, q: self.append(SYdgGate(), [q])
+QuantumCircuit.cr = lambda self, q1, q2: self.append(CRGate(), [q1, q2])
