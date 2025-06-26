@@ -1,14 +1,13 @@
 from __future__ import annotations
 import warnings
 
-from quam.components import Qubit
-from quam_libs.components import QuAM as Quam, Transmon
 from .qm_backend import QMBackend
 from typing import Optional, List, Union, TYPE_CHECKING
 from qm import QuantumMachinesManager
 
 if TYPE_CHECKING:
     from oqc import QubitsMapping
+    from quam_libs.components import QuAM as Quam, Transmon
 
 
 class FluxTunableTransmonBackend(QMBackend):
