@@ -34,13 +34,6 @@ from qm import (
 from quam.components import Channel as QuAMChannel, QubitPair, Qubit
 
 # OpenQASM3 to QUA compiler
-from oqc import (
-    Compiler,
-    HardwareConfig,
-    OperationIdentifier,
-    QubitsMapping,
-    CompilationResult,
-)
 
 if TYPE_CHECKING:
     from quam_libs.cloud_infrastructure import (
@@ -50,6 +43,7 @@ if TYPE_CHECKING:
         CloudResultHandles,
     )
     from iqcc_cloud_client import IQCC_Cloud
+    from oqc import QubitsMapping, Compiler, CompilationResult, OperationIdentifier
 
 # Helper modules
 from ..parameter_table import ParameterTable, InputType, Parameter
@@ -364,6 +358,8 @@ class QMBackend(Backend):
         """
         Populate the target instructions with the QOP configuration
         """
+        from oqc import OperationIdentifier
+
         gate_map = get_extended_gate_name_mapping()
         target = Target(
             "Transmon based QuAM",
@@ -779,6 +775,8 @@ class QMBackend(Backend):
         :return:
         """
         # Check the target object for new operations
+        from oqc import OperationIdentifier
+
         for op_name, op_properties in self.target.items():
             gate_set = list(set(key.name for key in self._ref_operation_mapping_QUA.keys())) + list(
                 CONTROL_FLOW_OP_NAMES
@@ -868,6 +866,8 @@ class QMBackend(Backend):
         :param input_type: Input type to use for the conversion of parameterized instructions to QUA variables.
         :return:
         """
+        from oqc import OperationIdentifier
+
         if hasattr(qc, "calibrations") and qc.calibrations:  # Check for custom calibrations
             from ..pulse.pulse_support_utils import validate_schedule, handle_parameterized_channel
 
@@ -1001,6 +1001,8 @@ class QMBackend(Backend):
         """
         The OpenQASM to QUA compiler.
         """
+        from oqc import Compiler, HardwareConfig
+
         return Compiler(
             hardware_config=HardwareConfig(
                 quantum_operations_db=self._operation_mapping_QUA,

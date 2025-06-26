@@ -10,8 +10,6 @@ from qiskit.circuit.library import get_standard_gate_name_mapping
 from quam.components import Qubit, QubitPair
 from ..additional_gates import CRGate, SYGate, SYdgGate
 
-from oqc import OperationIdentifier
-
 if TYPE_CHECKING:
     from quam_builder.architecture.superconducting.qpu.base_quam import BaseQuam
 
@@ -71,6 +69,8 @@ def has_conflicting_calibrations(circuits: List[QuantumCircuit]) -> bool:
     :param circuits: List of QuantumCircuits to be checked.
     :return: True if there are conflicting calibrations, False otherwise.
     """
+    from oqc import OperationIdentifier
+
     custom_gates = []
     for qc in circuits:
         if hasattr(qc, "calibrations") and qc.calibrations:

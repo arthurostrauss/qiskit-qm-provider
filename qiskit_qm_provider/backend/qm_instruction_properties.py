@@ -4,15 +4,11 @@ from typing import Callable
 
 from qiskit.transpiler import InstructionProperties
 from quam.core.macro import QuamMacro
-from quam.components.macro import PulseMacro
+
 
 class QMInstructionProperties(InstructionProperties):
 
-    def __new__(cls, duration=None,
-                     error=None,
-                     qua_pulse_macro=None,
-                *args,
-                **kwargs):
+    def __new__(cls, duration=None, error=None, qua_pulse_macro=None, *args, **kwargs):
         if duration is None and hasattr(qua_pulse_macro, "duration"):
             duration = qua_pulse_macro.duration
             if duration is None and hasattr(qua_pulse_macro, "pulse"):
@@ -21,24 +17,34 @@ class QMInstructionProperties(InstructionProperties):
                 else:
                     pulse = qua_pulse_macro.pulse
                 duration = pulse.length * 1e-9  # Convert to seconds
-        if error is None and hasattr(qua_pulse_macro, "fidelity") and qua_pulse_macro.fidelity is not None:
+        if (
+            error is None
+            and hasattr(qua_pulse_macro, "fidelity")
+            and qua_pulse_macro.fidelity is not None
+        ):
             error = 1 - qua_pulse_macro.fidelity
         self = super().__new__(cls, duration=duration, error=error, *args, **kwargs)
         self._qua_pulse_macro = qua_pulse_macro
         return self
-    
-    def __init__(self, duration: float | None =None,
-                    error: float | None =None,
-                    qua_pulse_macro: Callable | QuamMacro | None = None,
-                 ):
+
+    def __init__(
+        self,
+        duration: float | None = None,
+        error: float | None = None,
+        qua_pulse_macro: Callable | QuamMacro | None = None,
+    ):
         super().__init__()
 
     @property
     def qua_pulse_macro(self) -> Callable | None:
-        return self._qua_pulse_macro.apply if isinstance(self._qua_pulse_macro, QuamMacro) else self._qua_pulse_macro
+        return (
+            self._qua_pulse_macro.apply
+            if isinstance(self._qua_pulse_macro, QuamMacro)
+            else self._qua_pulse_macro
+        )
 
     @qua_pulse_macro.setter
-    def qua_pulse_macro(self, value: Callable | QuamMacro| None):
+    def qua_pulse_macro(self, value: Callable | QuamMacro | None):
         self._qua_pulse_macro = value
 
     def __repr__(self):
