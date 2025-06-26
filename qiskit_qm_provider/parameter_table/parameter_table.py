@@ -13,10 +13,8 @@ import warnings
 import sys
 from itertools import chain
 from numbers import Number
-from typing import Optional, List, Dict, Union, Tuple, Literal, Callable, Type
+from typing import Optional, List, Dict, Union, Tuple, Literal, Callable, Type, TYPE_CHECKING
 import numpy as np
-from qiskit.circuit.classical.expr import Var
-from qiskit.circuit.classical.types import Uint, Bool
 from qm import QuantumMachine
 from qm.api.v2.job_api import JobApi
 from qm.jobs.running_qm_job import RunningQmJob
@@ -24,11 +22,13 @@ from qm.qua import assign, pause, declare, fixed
 from qm.qua._expressions import QuaArrayVariable
 from quam.utils.qua_types import QuaVariable
 
-from qiskit.circuit import QuantumCircuit, Parameter as QiskitParameter
-from qiskit.circuit.parametervector import ParameterVectorElement
 from .parameter_pool import ParameterPool
 from .parameter import Parameter
 from .input_type import InputType, Direction
+
+if TYPE_CHECKING:
+    from qiskit.circuit.classical.expr import Var
+    from qiskit.circuit import QuantumCircuit, Parameter as QiskitParameter
 
 
 class ParameterTable:
@@ -819,7 +819,7 @@ class ParameterTable:
         cls,
         qc: QuantumCircuit,
         input_type: Optional[Literal["INPUT_STREAM", "DGX", "IO1", "IO2"] | InputType] = None,
-        filter_function: Optional[Callable[[Parameter | Var], bool]] = None,
+        filter_function: Optional[Callable[[QiskitParameter | Var], bool]] = None,
         name: Optional[str] = None,
     ) -> Optional["ParameterTable"]:
         """
@@ -831,8 +831,18 @@ class ParameterTable:
             filter_function: Optional function to filter the parameters to be included in the table.
             name: Optional name for the parameter table.
         """
+        from qiskit.circuit import QuantumCircuit, Parameter as QiskitParameter
+        from qiskit.circuit.parametervector import ParameterVectorElement
+        from qiskit.circuit.classical import types
         param_list = []
         for parameter in qc.parameters:
+            if isinstance(parameter, ParameterVectorElement):
+                raise ValueError(
+                    "ParameterVectors are not yet supported "
+                    "(Reason: Qiskit exporter to OpenQASM3 does not "
+                    "support array of parameters specification."
+                    " Please use individual parameters instead."
+                )
             if isinstance(parameter, QiskitParameter):
                 if filter_function is not None and not filter_function(parameter):
                     continue
@@ -844,17 +854,11 @@ class ParameterTable:
                         direction=Direction.OUTGOING,
                     )
                 )
-            elif isinstance(parameter, ParameterVectorElement):
-                raise ValueError(
-                    "ParameterVectors are not yet supported "
-                    "(Reason: Qiskit exporter to OpenQASM3 does not "
-                    "support it. Please use individual parameters instead."
-                )
         if isinstance(qc, QuantumCircuit):
             for var in qc.iter_input_vars():
                 if filter_function is not None and not filter_function(var):
                     continue
-                if var.type.kind == Uint:
+                if var.type.kind == types.Uint:
                     param_list.append(
                         Parameter(
                             var.name,
@@ -863,7 +867,7 @@ class ParameterTable:
                             direction=Direction.OUTGOING,
                         )
                     )
-                elif var.type.kind == Bool:
+                elif var.type.kind == types.Bool:
                     param_list.append(
                         Parameter(
                             var.name,
