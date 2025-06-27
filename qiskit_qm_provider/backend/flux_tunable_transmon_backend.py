@@ -2,12 +2,12 @@ from __future__ import annotations
 import warnings
 
 from .qm_backend import QMBackend
-from typing import Optional, List, Union, TYPE_CHECKING
-from qm import QuantumMachinesManager
+from typing import Optional, List, Union, TYPE_CHECKING, Tuple
 
 if TYPE_CHECKING:
     from oqc import QubitsMapping
-    from quam_libs.components import QuAM as Quam, Transmon
+    from quam_libs.components import QuAM as Quam, Transmon, TransmonPair
+    from qm import QuantumMachinesManager
 
 
 class FluxTunableTransmonBackend(QMBackend):
@@ -113,3 +113,14 @@ class FluxTunableTransmonBackend(QMBackend):
             Transmon: The Transmon qubit object.
         """
         return super().get_qubit(qubit)
+
+    def get_qubit_pair(self, qubits: Tuple[int|str|Transmon, int|str|Transmon]) -> TransmonPair:
+        """
+        Retrieve a Transmon pair by its indices or names.
+
+        Args:
+            qubits: A tuple containing the indices or names of the qubits in the pair.
+        Returns:
+            QubitPair: The Transmon pair object.
+        """
+        return super().get_qubit_pair(qubits)
