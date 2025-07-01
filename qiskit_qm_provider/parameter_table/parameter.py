@@ -769,9 +769,9 @@ class Parameter:
         external streams if input type is dgx. If specified as an input stream,
         the value is saved to the stream.
         """
-        if self.input_type in [InputType.IO1, InputType.IO2, InputType.INPUT_STREAM]:
+        if self.input_type != InputType.DGX:
             self.save_to_stream()
-        elif self.input_type == InputType.DGX:
+        else:
             from qm.qua import send_to_external_stream
 
             if not self.is_standalone():  # Part of a parameter table

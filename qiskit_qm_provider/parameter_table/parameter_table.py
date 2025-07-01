@@ -19,6 +19,7 @@ from qm import QuantumMachine
 from qm.api.v2.job_api import JobApi
 from qm.jobs.running_qm_job import RunningQmJob
 from qm.qua import assign, pause, declare, fixed
+from qm.qua._dsl import _ResultSource
 from qm.qua._expressions import QuaArrayVariable
 from quam.utils.qua_types import QuaVariable
 
@@ -263,19 +264,23 @@ class ParameterTable:
             else:
                 return self.variables
 
-    def declare_streams(self):
+    def declare_streams(self)-> List[_ResultSource]:
         """
         QUA Macro to declare all the output streams associated with the parameters in the parameter table.
         This macro is expected to be called at the beginning of the QUA program.
         """
+        streams = []
         for parameter in self.parameters:
             if parameter.stream is None:
-                parameter.declare_stream()
+                stream = parameter.declare_stream()
+                streams.append(stream)
             else:
                 warnings.warn(
                     f"Stream for parameter {parameter.name} already declared. "
                     "Skipping stream declaration."
                 )
+
+        return streams
 
     def load_input_values(self, filter_function: Optional[Callable[[Parameter], bool]] = None):
         """
