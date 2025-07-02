@@ -1,7 +1,6 @@
 import numpy as np
 from qiskit.circuit import Parameter
 from qiskit.primitives import PrimitiveResult
-from qiskit.primitives.base.base_primitive_job import BasePrimitiveJob
 from qiskit.primitives.containers import SamplerPubResult, DataBin, BitArray
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit.providers import JobStatus
@@ -12,17 +11,14 @@ from typing import Optional, Union, List, Dict
 from ..backend import QMBackend
 from ..parameter_table import InputType, ParameterTable
 from .qua_programs import sampler_program
+from .qm_primitive_job import QMPrimitiveJob
 
 
-class QMPrimitiveJob(BasePrimitiveJob):
+class QMSamplerJob(QMPrimitiveJob):
     """QM Primitive Job class for executing QUA programs from PUBs."""
 
     def __init__(self, backend: QMBackend, pubs: List[SamplerPub], input_type: InputType, **kwargs):
-        super().__init__(job_id="pending", **kwargs)
-        self._backend = backend
-        self._pubs = pubs
-        self._input_type = input_type
-        self._qm_job: Optional[Union[RunningQmJob, QmPendingJob, List[QmPendingJob]]] = None
+        super().__init__(backend, pubs, input_type, **kwargs)
 
     def _result_function(
         self, qm_job: Union[RunningQmJob, List[QmPendingJob]]
@@ -105,65 +101,8 @@ class QMPrimitiveJob(BasePrimitiveJob):
             raise RuntimeError("QM job has not submitted yet")
         return self._result_function(self._qm_job)
 
-    def status(self) -> JobStatus:
-        """Return the job status."""
-        if self._qm_job is None:
-            raise RuntimeError("QM job has not submitted yet")
-        status = self._qm_job.status
-        mapping = {
-            "unknown": JobStatus.ERROR,
-            "pending": JobStatus.QUEUED,
-            "running": JobStatus.RUNNING,
-            "completed": JobStatus.DONE,
-            "canceled": JobStatus.CANCELLED,
-            "loading": JobStatus.VALIDATING,
-            "error": JobStatus.ERROR,
-        }
-        return mapping.get(status, JobStatus.ERROR)
 
-    def done(self) -> bool:
-        """Return whether the job has successfully run."""
-        return self.status() == JobStatus.DONE
-
-    def running(self) -> bool:
-        """Return whether the job is actively running."""
-        return self.status() == JobStatus.RUNNING
-
-    def cancelled(self) -> bool:
-        """Return whether the job has been cancelled."""
-        return self.status() == JobStatus.CANCELLED
-
-    def in_final_state(self) -> bool:
-        """Return whether the job is in a final job state such as ``DONE`` or ``ERROR``."""
-        return self.status() in [JobStatus.DONE, JobStatus.ERROR]
-
-    def cancel(self):
-        """Attempt to cancel the job."""
-        if self._qm_job is None:
-            raise RuntimeError("QM job is not running")
-        return self._qm_job.cancel()
-
-    @property
-    def qm_job(self) -> Optional[Union[RunningQmJob, List[QmPendingJob]]]:
-        """Return the QM job."""
-        return self._qm_job
-
-    @property
-    def inputs(self) -> Dict:
-        """Job input parameters.
-
-        Returns:
-            Input parameters used in this job.
-        """
-
-        return {
-            "pubs": [(pub.circuit, pub.parameter_values, pub.shots) for pub in self._pubs],
-            "input_type": self._input_type,
-            "metadata": self.metadata,
-        }
-
-
-class IQCCPrimitiveJob(QMPrimitiveJob):
+class IQCCSamplerJob(QMSamplerJob):
     """IQCC Primitive Job class for executing QUA programs from PUBs."""
 
     def submit(self):

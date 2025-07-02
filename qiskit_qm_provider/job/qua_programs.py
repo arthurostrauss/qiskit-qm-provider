@@ -56,7 +56,7 @@ def _process_circuit(
             assign(state_int, 0)
 
 
-def _process_pub(
+def _process_sampler_pub(
     pub: SamplerPub,
     backend: QMBackend,
     state_int: QuaScalarInt,
@@ -128,7 +128,7 @@ def sampler_program(
         for i in range(num_circuits):
             if param_tables[i] is not None:
                 param_tables[i].declare_variables(declare_streams=False)
-            _process_pub(
+            _process_sampler_pub(
                 pubs[i],
                 backend,
                 state_int,

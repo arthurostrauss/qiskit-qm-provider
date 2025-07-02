@@ -11,7 +11,7 @@ from qiskit.primitives import (
 from dataclasses import dataclass
 
 from qiskit.primitives.containers.sampler_pub import SamplerPub
-from ..job.qm_sampler_job import QMPrimitiveJob, IQCCPrimitiveJob
+from ..job.qm_sampler_job import QMSamplerJob, IQCCSamplerJob
 
 from ..backend.backend_utils import validate_circuits
 from ..parameter_table import InputType
@@ -77,15 +77,15 @@ class QMSamplerV2(BaseSamplerV2):
         """Return the backend"""
         return self._backend
 
-    def run(self, pubs: Iterable[SamplerPubLike], *, shots: int | None = None) -> QMPrimitiveJob:
+    def run(self, pubs: Iterable[SamplerPubLike], *, shots: int | None = None) -> QMSamplerJob:
         if shots is None:
             shots = self._options.default_shots
         coerced_pubs = [SamplerPub.coerce(pub, shots) for pub in pubs]
         coerced_pubs = self._validate_pubs(coerced_pubs)
         job_obj = (
-            QMPrimitiveJob
+            QMSamplerJob
             if isinstance(self.backend.qmm, QuantumMachinesManager)
-            else IQCCPrimitiveJob
+            else IQCCSamplerJob
         )
         backend_options = deepcopy(self.backend.options.__dict__)
 

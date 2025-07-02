@@ -122,3 +122,11 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+qiskit_qm_provider/.DS_Store
+
+.idea/
+
+.DS_Store
+
+.vscode/settings.json

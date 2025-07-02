@@ -27,7 +27,7 @@ class SYGate(Gate):
         return isinstance(other, SYGate)
 
     def __array__(self, dtype=None, copy=None):
-        return gate_map()["ry"](np.pi / 2).__array__(dtype=dtype, copy=copy)
+        return type(gate_map()["ry"])(np.pi / 2).__array__(dtype=dtype, copy=copy)
 
 
 class SYdgGate(Gate):
@@ -48,7 +48,7 @@ class SYdgGate(Gate):
         return isinstance(other, SYdgGate)
 
     def __array__(self, dtype=None, copy=None):
-        return gate_map()["ry"](-np.pi / 2).__array__(dtype=dtype, copy=copy)
+        return type(gate_map()["ry"])(-np.pi / 2).__array__(dtype=dtype, copy=copy)
 
 
 class CRGate(Gate):
@@ -72,7 +72,7 @@ class CRGate(Gate):
         return isinstance(other, CRGate)
 
     def __array__(self, dtype=None, copy=None):
-        return gate_map()["rzx"](np.pi / 2).__array__(dtype=dtype, copy=copy)
+        return type(gate_map()["rzx"])(np.pi / 2).__array__(dtype=dtype, copy=copy)
 
 
 # Do monkey patching to QuantumCircuit to add the custom gates
