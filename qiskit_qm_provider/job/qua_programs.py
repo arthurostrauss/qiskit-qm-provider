@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import numpy as np
+from qiskit.circuit import Parameter
+from qiskit.primitives.containers.estimator_pub import EstimatorPub
+
 from ..backend import QMBackend
 from ..backend.backend_utils import _QASM3_DUMP_LOOSE_BIT_PREFIX, has_conflicting_calibrations
 from qiskit import QuantumCircuit
@@ -127,7 +131,7 @@ def sampler_program(
 
         for i in range(num_circuits):
             if param_tables[i] is not None:
-                param_tables[i].declare_variables(declare_streams=False)
+                param_tables[i].declare_variables()
             _process_sampler_pub(
                 pubs[i],
                 backend,
@@ -145,6 +149,55 @@ def sampler_program(
                     creg_stream.save_all(f"{creg.name}_{i}")
 
     return sampler_prog
+
+def estimator_program(backend: QMBackend, pubs: List[EstimatorPub], input_type: InputType, **kwargs) -> Program:
+    """
+    Return the QUA program for the estimator primitive.
+    :param backend: QMBackend instance to use for the program.
+    :param pubs: List of EstimatorPub instances to process.
+    :param input_type: Input type to pass parameters and observable data.
+    :param kwargs: Other keyword arguments to pass to the program.
+    :return: QUA Program instance that processes the estimator PUBs.
+    """
+    circuits = [pub.circuit for pub in pubs]
+    num_circuits = len(circuits)
+    param_tables = [ParameterTable.from_qiskit(qc, input_type=input_type,
+                                               filter_function=lambda x: isinstance(x, Parameter))
+                    for qc in circuits]
+    observables_vars = [ParameterTable.from_qiskit(qc, input_type=input_type,
+                                                   filter_function= lambda x: "obs" in x.name and qc.has_var(x.name))
+                        for qc in circuits]
+    results_streams = [declare_stream() for _ in range(num_circuits)]
+    pauli_to_int = {"I": 0, "X": 1, "Y": 2, "Z": 0}
+    with program() as estimator_prog:
+        shot = declare(int)
+        state_int = declare(int, value=0)
+        o = declare(int)
+        if backend.init_macro:
+            backend.init_macro()
+        for i in range(num_circuits):
+            if param_tables[i] is not None:
+                param_tables[i].declare_variables()
+            observables_vars[i].declare_variables()
+
+            with for_(o, 0, o < pubs[i].observables.ravel().size, o + 1):
+                observables_vars[i].load_input_values()
+
+                if param_tables[i] is not None:
+                    p = declare(int)
+                    with for_(p, 0, p < pubs[i].parameter_values.ravel().size, p + 1):
+                        param_tables[i].load_input_values()
+                        _process_circuit(circuits[i],
+                                         backend,
+                                         int(1/ pubs[i].precision**2),
+                                         state_int,
+                                         shot,
+                                         [results_streams[i]],
+                                         param_table=param_tables[i])
+
+        with stream_processing():
+            for i, stream in enumerate(results_streams):
+                stream.save_all(f"counts_{i}")
 
 
 def get_run_program(

@@ -59,6 +59,15 @@ class QMEstimatorOptions:
 class QMEstimatorV2(BaseEstimatorV2):
     """QM Estimator V2 class for Qiskit Quantum Machine backend."""
 
+    def __init__(self, backend: QMBackend, options: QMEstimatorOptions | None = None):
+        self._backend = backend
+        self._options = options or QMEstimatorOptions()
+
+        basis = PassManagerConfig.from_backend(backend).basis_gates
+        opt1q = Optimize1qGatesDecomposition(basis=basis, target=backend.target)
+
+        self._passmanager = PassManager([opt1q])
+
     def run(self, pubs: Iterable[EstimatorPubLike], *, precision: float | None = None):
         """Run the estimator on the given PUBs."""
         if precision is None:
@@ -79,19 +88,8 @@ class QMEstimatorV2(BaseEstimatorV2):
                     with case(2):
                         qc.sdg(qubit)
                         qc.h(qubit)
-        
+                qc.measure_all()
 
-
-
-
-    def __init__(self, backend: QMBackend, options: QMEstimatorOptions | None = None):
-        self._backend = backend
-        self._options = options or QMEstimatorOptions()
-
-        basis = PassManagerConfig.from_backend(backend).basis_gates
-        opt1q = Optimize1qGatesDecomposition(basis=basis, target=backend.target)
-
-        self._passmanager = PassManager([opt1q])
 
     @property
     def backend(self) -> QMBackend:
