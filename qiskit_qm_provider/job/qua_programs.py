@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import defaultdict
+
 import numpy as np
 from qiskit.circuit import Parameter
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
@@ -24,7 +26,7 @@ def _process_circuit(
     shot_var: QuaScalarInt,
     reg_streams: List[_ResultSource],
     solo_bits_stream: Optional[_ResultSource] = None,
-    param_table: Optional[ParameterTable] = None,
+    param_table: Optional[ParameterTable | List[ParameterTable]] = None,
     **kwargs,
 ):
     with for_(shot_var, 0, shot_var < num_shots, shot_var + 1):
@@ -150,54 +152,79 @@ def sampler_program(
 
     return sampler_prog
 
-def estimator_program(backend: QMBackend, pubs: List[EstimatorPub], input_type: InputType, **kwargs) -> Program:
+def estimator_program(
+        backend: QMBackend,
+        pubs: List[EstimatorPub],
+        input_type: InputType,
+        **kwargs
+) -> Program:
     """
-    Return the QUA program for the estimator primitive.
-    :param backend: QMBackend instance to use for the program.
-    :param pubs: List of EstimatorPub instances to process.
-    :param input_type: Input type to pass parameters and observable data.
-    :param kwargs: Other keyword arguments to pass to the program.
-    :return: QUA Program instance that processes the estimator PUBs.
+    Return the QUA program for the estimator primitive based on pre-computed plans.
     """
+    from .qm_estimator_job import _ExecutionPlan
+    # The execution plans are generated in the 'submit' method and passed here.
+    execution_plans: List[_ExecutionPlan] = kwargs["execution_plans"]
+
     circuits = [pub.circuit for pub in pubs]
-    num_circuits = len(circuits)
-    param_tables = [ParameterTable.from_qiskit(qc, input_type=input_type,
-                                               filter_function=lambda x: isinstance(x, Parameter))
-                    for qc in circuits]
-    observables_vars = [ParameterTable.from_qiskit(qc, input_type=input_type,
-                                                   filter_function= lambda x: "obs" in x.name and qc.has_var(x.name))
-                        for qc in circuits]
-    results_streams = [declare_stream() for _ in range(num_circuits)]
-    pauli_to_int = {"I": 0, "X": 1, "Y": 2, "Z": 0}
+
+    # Define the ParameterTables once per circuit.
+    param_tables = [
+        ParameterTable.from_qiskit(
+            qc, input_type=input_type, filter_function=lambda p: isinstance(p, Parameter)
+        )
+        for qc in circuits
+    ]
+    observables_vars = [
+        ParameterTable.from_qiskit(
+            qc,
+            input_type=input_type,
+            filter_function=lambda p: "obs" in p.name and qc.has_var(p.name),
+        )
+        for qc in circuits
+    ]
+
+    results_streams = [declare_stream() for _ in pubs]
+
     with program() as estimator_prog:
         shot = declare(int)
         state_int = declare(int, value=0)
-        o = declare(int)
+
+        # This is the main loop counter for the flattened tasks in the plan.
+        task_idx = declare(int)
+
         if backend.init_macro:
             backend.init_macro()
-        for i in range(num_circuits):
-            if param_tables[i] is not None:
-                param_tables[i].declare_variables()
-            observables_vars[i].declare_variables()
 
-            with for_(o, 0, o < pubs[i].observables.ravel().size, o + 1):
+        # Loop over each PUB/circuit
+        for i, pub in enumerate(pubs):
+            plan = execution_plans[i]
+
+            # This is the single, powerful QUA loop that will run through all tasks.
+            # The 'submit' method will push the correct data for each 'task_idx'.
+            with for_(task_idx, 0, task_idx < plan.total_tasks, task_idx + 1):
+                # These methods now implicitly wait for the 'push_to_opx' call
+                # in the submit method for the current 'task_idx'.
+                if param_tables[i] is not None:
+                    param_tables[i].load_input_values()
                 observables_vars[i].load_input_values()
 
-                if param_tables[i] is not None:
-                    p = declare(int)
-                    with for_(p, 0, p < pubs[i].parameter_values.ravel().size, p + 1):
-                        param_tables[i].load_input_values()
-                        _process_circuit(circuits[i],
-                                         backend,
-                                         int(1/ pubs[i].precision**2),
-                                         state_int,
-                                         shot,
-                                         [results_streams[i]],
-                                         param_table=param_tables[i])
+                # The _process_circuit function remains the same.
+                _process_circuit(
+                    circuits[i],
+                    backend,
+                    plan.shots_per_task,
+                    state_int,
+                    shot,
+                    [results_streams[i]],
+                    param_table=[param_tables[i], observables_vars[i]],
+                )
 
         with stream_processing():
             for i, stream in enumerate(results_streams):
-                stream.save_all(f"counts_{i}")
+                # The name now reflects that it contains all counts for that pub
+                stream.save_all(f"counts_pub_{i}")
+
+    return estimator_prog
 
 
 def get_run_program(
