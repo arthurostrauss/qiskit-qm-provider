@@ -60,7 +60,7 @@ def set_type(qua_type: Union[str, type]):
         raise ValueError("Invalid QUA type. Please use 'fixed', 'int' or 'bool'.")
 
 
-def infer_type(value: Union[int, float, List, np.ndarray] = None):
+def infer_type(value: Optional[Union[int, float, List, np.ndarray]]=None):
     """
     Infer automatically the type of the QUA variable to be declared from the type of the initial parameter value.
     """
@@ -140,7 +140,7 @@ class Parameter:
         Args:
             name: Name of the parameter.
             value: Initial value of the parameter.
-            qua_type: Type of the QUA variable to be declared (int, fixed, bool). Default is None.
+            qua_type: Type of the QUA variable to be declared (int, fixed, bool). If none is provided, the type is inferred from initial value.
             input_type: Input type of the parameter (dgx, input_stream, IO1, IO2). Default is None.
             direction: Direction of the parameter stream (INCOMING, OUTGOING).
                 The direction describes in this case the relationship between DGX and OPX in the following manner:
