@@ -378,6 +378,8 @@ class Parameter:
         """
         if self._stream is None:
             self._stream = qua_declare_stream()
+        else:
+            warnings.warn(f"Stream {self.name} already declared, skipping declaration.")
         return self._stream
 
     @property
@@ -558,8 +560,11 @@ class Parameter:
         """
         if mode not in ["save", "save_all"]:
             raise ValueError("Invalid mode. Must be 'save' or 'save_all'.")
-        if buffer == "default" and self.is_array:
-            buffer = (self.length,)
+        if buffer == "default":
+            if self.is_array:
+                buffer = (self.length,)
+            else:
+                buffer = None
         elif isinstance(buffer, int):
             buffer = (buffer,)
         if self.stream is not None:
