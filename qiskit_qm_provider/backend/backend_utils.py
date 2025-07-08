@@ -1,20 +1,43 @@
 from __future__ import annotations
 
 import warnings
-from typing import List, TYPE_CHECKING, Dict
+from typing import List, TYPE_CHECKING, Dict, Literal, Type
 
 from qiskit import QuantumCircuit
 from qiskit.circuit.controlflow import ControlFlowOp, IfElseOp, WhileLoopOp, ForLoopOp, SwitchCaseOp
 from qiskit.circuit.library import get_standard_gate_name_mapping
 
-from quam.components import Qubit, QubitPair
+from quam.components import Qubit, QubitPair, BasicQuam
 from ..additional_gates import CRGate, SYGate, SYdgGate
 
-if TYPE_CHECKING:
-    from quam_builder.architecture.superconducting.qpu.base_quam import BaseQuam
+try:
+    from qiskit.circuit.controlflow import get_control_flow_name_mapping
+    control_flow_name_mapping = get_control_flow_name_mapping()
+except ImportError:
+    warnings.warn(
+        "get_control_flow_name_mapping is not available in this version of Qiskit, skipping it from control flow mapping."
+    )
+    control_flow_name_mapping: Dict[str, Type[ControlFlowOp]] = {
+        "if_else": IfElseOp,
+        "while_loop": WhileLoopOp,
+        "for_loop": ForLoopOp,
+        "switch_case": SwitchCaseOp,
+    }
 
+oq3_keyword_instructions = (
+    "measure",
+    "reset",
+    "delay",
+    "nop",
+    "box",
+    "for_loop",
+    "while_loop",
+    "if_else",
+    "switch_case",
+)
+_QASM3_DUMP_LOOSE_BIT_PREFIX = "_bit"
 
-def validate_machine(machine) -> BaseQuam:
+def validate_machine(machine) -> BasicQuam:
     if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
         raise ValueError(
             "Invalid QuAM instance provided, should have qubits and qubit_pairs attributes"
@@ -139,34 +162,6 @@ def has_reset_at_boundary(circuit: QuantumCircuit) -> bool:
     return first or last
 
 
-control_flow_name_mapping: Dict[str, ControlFlowOp] = {
-    "if_else": IfElseOp,
-    "while_loop": WhileLoopOp,
-    "for_loop": ForLoopOp,
-    "switch_case": SwitchCaseOp,
-}
-try:
-    from qiskit.circuit.controlflow import BoxOp
-
-    control_flow_name_mapping["box"] = BoxOp
-except ImportError:
-    warnings.warn(
-        "BoxOp is not available in this version of Qiskit, skipping it from control flow mapping."
-    )
-oq3_keyword_instructions = (
-    "measure",
-    "reset",
-    "delay",
-    "nop",
-    "box",
-    "for_loop",
-    "while_loop",
-    "if_else",
-    "switch_case",
-)
-_QASM3_DUMP_LOOSE_BIT_PREFIX = "_bit"
-
-
 def binary(val: int, num_bits: int = 0) -> str:
     """
     Convert an integer to a binary string with leading zeros.
@@ -177,10 +172,11 @@ def binary(val: int, num_bits: int = 0) -> str:
     return bin(val)[2:].zfill(num_bits)
 
 
-def add_basic_macros_to_machine(machine: BaseQuam):
+def add_basic_macros_to_machine(machine: BasicQuam, reset_type: Literal['active', 'thermalize'] = 'thermalize'):
     """
     Add macros to the machine.
     :param machine: The BaseQuam instance to which macros will be added.
+    :param reset_type: The type of reset to use. Can be 'active' or 'thermalize'.
     """
     from quam_libs.components.gate_macros import (
         ResetMacro,
@@ -204,7 +200,8 @@ def add_basic_macros_to_machine(machine: BaseQuam):
         qubit.macros["sy"] = PulseMacro(pulse=y90_pulse)
         qubit.macros["sydg"] = PulseMacro(pulse=my90_pulse)
         qubit.macros["measure"] = MeasureMacro(pulse=readout_pulse)
-        qubit.macros["reset"] = ResetMacro(pi_pulse=x180_pulse, readout_pulse=readout_pulse)
+        qubit.macros["reset"] = ResetMacro(reset_type=reset_type,pi_pulse=x180_pulse, readout_pulse=readout_pulse,
+                                           thermalize_time=qubit.thermalization_time)
         qubit.macros["delay"] = DelayMacro()
         qubit.macros["id"] = IdMacro()
 
