@@ -305,14 +305,9 @@ class ParameterTable:
                 receive_from_external_stream(self._qua_external_stream, self._packet)
 
         else:
-            if filter_function is not None:
-                for parameter in self.parameters:
-                    if filter_function(parameter):
-                        parameter.load_input_value()
-            else:
-                for i, parameter in enumerate(self.parameters):
-                    if parameter.input_type is not None:
-                        parameter.load_input_value()
+            for parameter in self.parameters:
+                if filter_function is None or filter_function(parameter):
+                    parameter.load_input_value()
 
     def save_to_stream(self):
         """

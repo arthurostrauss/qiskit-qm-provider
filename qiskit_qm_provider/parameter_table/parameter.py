@@ -67,35 +67,38 @@ def infer_type(value: Optional[Union[int, float, List, np.ndarray]]=None):
     if value is None:
         raise ValueError("Initial value must be provided to infer type.")
 
-    elif isinstance(value, float):
-        if value.is_integer() and value > 8:
-            return int
-        else:
-            return fixed
-
-    elif isinstance(value, bool):
+    # Handle scalar values
+    if isinstance(value, bool):
         return bool
+    if isinstance(value, int):
+        return int 
+    if isinstance(value, float):
+        return fixed if not value.is_integer() or value <= 8 else int
 
-    elif isinstance(value, int):
-        return int
-
-    elif isinstance(value, (List, np.ndarray)):
+    # Handle array values
+    if isinstance(value, (List, np.ndarray)):
         if isinstance(value, np.ndarray):
-            assert value.ndim == 1, "Invalid parameter type, array must be 1D."
+            if value.ndim != 1:
+                raise ValueError("Array must be 1D")
             value = value.tolist()
-        assert all(
-            isinstance(x, type(value[0])) for x in value
-        ), "Invalid parameter type, all elements must be of same type."
-        if isinstance(value[0], bool):
+            
+        if not value:
+            raise ValueError("Array cannot be empty")
+            
+        first_type = type(value[0])
+        if not all(isinstance(x, first_type) for x in value):
+            raise ValueError("All array elements must be of same type")
+            
+        if first_type == bool:
             return bool
-        elif isinstance(value[0], int):
+        if first_type == int:
             return int
-        elif isinstance(value[0], float):
+        if first_type == float:
             return fixed
-        else:
-            raise ValueError("Invalid parameter type. Please use float, int or bool or list.")
-    else:
-        raise ValueError("Invalid parameter type. Please use float, int or bool or list.")
+            
+        raise ValueError("Array elements must be bool, int or float")
+        
+    raise ValueError("Value must be bool, int, float or array")
 
 
 class Parameter:
@@ -163,7 +166,7 @@ class Parameter:
         self._stream_id = None
         self._type = set_type(qua_type) if qua_type is not None else infer_type(value)
         self._length = 0 if not isinstance(value, (List, np.ndarray)) else len(value)
-        self._ctr = None  # Counter for QUA array variables
+        self._ctr: Optional[QuaScalar[int]] = None  # Counter for QUA array variables
 
         self._external_stream_incoming = None
         self._external_stream_outgoing = None
@@ -364,7 +367,7 @@ class Parameter:
 
         else:
             self._var = declare(t=self.type, value=self.value)
-        if self.is_array:
+        if self.is_array and self.length > 1:
             self._ctr = declare(int)
         if pause_program:
             pause()
@@ -717,7 +720,12 @@ class Parameter:
                     if verbosity > 1:
                         print(f"Setting {self.name} to {value[i]} through {io}")
                     wait_until_job_is_paused(job, time_out)
-                    job.set_io_values(**{io: value[i]})
+                    if isinstance(job, JobApi):
+                        job.set_io_values(**{io: value[i]})
+                    else:
+                        if qm is None:
+                            raise ValueError("QuantumMachine object is required to set IO values.")
+                        qm.set_io_values(**{io: value[i]})
                     job.resume()
             else:
                 if verbosity > 1:
@@ -727,6 +735,8 @@ class Parameter:
                     # For JobApi, we need to use the set_io_values method
                     job.set_io_values(**{io: value})
                 else:
+                    if qm is None:
+                        raise ValueError("QuantumMachine object is required to set IO values.")
                     qm.set_io_values(**{io: value})
                 job.resume()
 
