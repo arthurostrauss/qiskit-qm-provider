@@ -200,8 +200,8 @@ def add_basic_macros_to_machine(machine: BasicQuam, reset_type: Literal['active'
         qubit.macros["sy"] = PulseMacro(pulse=y90_pulse)
         qubit.macros["sydg"] = PulseMacro(pulse=my90_pulse)
         qubit.macros["measure"] = MeasureMacro(pulse=readout_pulse)
-        qubit.macros["reset"] = ResetMacro(reset_type=reset_type,pi_pulse=x180_pulse, readout_pulse=readout_pulse,
-                                           thermalize_time=qubit.thermalization_time)
+        qubit.macros["reset"] = ResetMacro(reset_type=reset_type,pi_pulse=x180_pulse, 
+                                           readout_pulse=readout_pulse)
         qubit.macros["delay"] = DelayMacro()
         qubit.macros["id"] = IdMacro()
 
