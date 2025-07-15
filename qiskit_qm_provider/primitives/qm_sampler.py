@@ -62,10 +62,10 @@ class QMSamplerOptions:
 class QMSamplerV2(BaseSamplerV2):
     """QM Sampler class."""
 
-    def __init__(self, backend: QMBackend, options: QMSamplerOptions | None = None):
+    def __init__(self, backend: QMBackend, options: QMSamplerOptions | dict | None = None):
 
         self._backend = backend
-        self._options = options or QMSamplerOptions()
+        self._options = QMSamplerOptions(**options) if isinstance(options, dict) else options or QMSamplerOptions()
 
     @property
     def options(self) -> QMSamplerOptions:

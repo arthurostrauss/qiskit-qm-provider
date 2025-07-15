@@ -59,9 +59,9 @@ class QMEstimatorOptions:
 class QMEstimatorV2(BaseEstimatorV2):
     """QM Estimator V2 class for Qiskit Quantum Machine backend."""
 
-    def __init__(self, backend: QMBackend, options: QMEstimatorOptions | None = None):
+    def __init__(self, backend: QMBackend, options: QMEstimatorOptions | dict | None = None):
         self._backend = backend
-        self._options = options or QMEstimatorOptions()
+        self._options = QMEstimatorOptions(**options) if isinstance(options, dict) else options or QMEstimatorOptions()
 
         basis = PassManagerConfig.from_backend(backend).basis_gates
         opt1q = Optimize1qGatesDecomposition(basis=basis, target=backend.target)
