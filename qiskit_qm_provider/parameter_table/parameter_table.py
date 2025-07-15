@@ -334,10 +334,14 @@ class ParameterTable:
             if parameter.stream is not None:
                 if buffering is None:
                     buffer = None
-                elif buffering != "default" and (
-                    parameter.name in buffering or parameter in buffering
-                ):
-                    buffer = buffering[parameter.name]
+                elif buffering != "default":
+                    if parameter.name in buffering:
+                        key = parameter.name
+                    elif parameter in buffering:
+                        key = parameter
+                    else:
+                        raise ValueError(f"Parameter {parameter.name} not found in buffering dictionary.")
+                    buffer = buffering[key]
                 else:
                     buffer = "default"
                 parameter.stream_processing(mode, buffer)
