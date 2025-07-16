@@ -16,12 +16,15 @@ class SYGate(Gate):
     def _define(self):
         qc = QuantumCircuit(1)
         qc.ry(np.pi / 2, 0)
-        self.definition = qc
+        self._definition = qc
 
     def inverse(self, annotated: bool = False):
         qc = QuantumCircuit(1)
         qc.ry(-np.pi / 2, 0)
         return qc.to_gate()
+    
+    def power(self, exponent: float, annotated: bool = False):
+        return gate_map()["ry"](np.pi / 2 * exponent)
 
     def __eq__(self, other):
         return isinstance(other, SYGate)
@@ -37,12 +40,15 @@ class SYdgGate(Gate):
     def _define(self):
         qc = QuantumCircuit(1)
         qc.ry(-np.pi / 2, 0)
-        self.definition = qc
+        self._definition = qc
 
     def inverse(self, annotated: bool = False):
         qc = QuantumCircuit(1)
         qc.ry(np.pi / 2, 0)
         return qc.to_gate()
+
+    def power(self, exponent: float, annotated: bool = False):
+        return gate_map()["ry"](-np.pi / 2 * exponent)
 
     def __eq__(self, other):
         return isinstance(other, SYdgGate)
@@ -60,13 +66,16 @@ class CRGate(Gate):
 
         qc = QuantumCircuit(2, name=self.name)
         qc.append(RZXGate(np.pi / 2), [0, 1])
-        self.definition = qc
+        self._definition = qc
 
     def inverse(self, annotated: bool = False):
         from qiskit.circuit.library.standard_gates import RZXGate
 
         # Equivalent to RZX(-pi/2)
         return RZXGate(-np.pi / 2)
+
+    def power(self, exponent: float, annotated: bool = False):
+        return gate_map()["rzx"](np.pi / 2 * exponent)
 
     def __eq__(self, other):
         return isinstance(other, CRGate)
