@@ -143,13 +143,9 @@ class QUA2DArray(Parameter):
             if not all(isinstance(item, type(seq[0])) for item in seq):
                 raise TypeError(f"All elements in the list must be of same type: {type(seq[0])}")
             if self.type is fixed and not all(isinstance(item, float) for item in seq):
-                raise TypeError(
-                    f"All elements must be of type float for QUA fixed type, got {type(seq[0])}"
-                )
+                raise TypeError(f"All elements must be of type float for QUA fixed type, got {type(seq[0])}")
             elif not all(isinstance(item, self.type) for item in seq):
-                raise TypeError(
-                    f"All elements must be of type {self.type} for QUA type, got {type(seq[0])}"
-                )
+                raise TypeError(f"All elements must be of type {self.type} for QUA type, got {type(seq[0])}")
             for j in range(self.n_cols):
                 qua_assign(self[row, j], seq[j])
             return
@@ -159,9 +155,7 @@ class QUA2DArray(Parameter):
                 qua_assign(self[row, self._ctr], seq[self._ctr])
             return
 
-    def stream_processing(
-        self, mode: Literal["save", "save_all"] = "save_all", buffer: Union[Tuple[int], int] = None
-    ):
+    def stream_processing(self, mode: Literal["save", "save_all"] = "save_all", buffer: Union[Tuple[int], int] = None):
         """
         Stream processing for the 2D array.
         - mode: "save" to save only the last row, "save_all" to save all rows.
@@ -210,9 +204,7 @@ class QUA2DArray(Parameter):
 
         if isinstance(value, np.ndarray):
             if value.ndim != 2 or value.shape != (self.n_rows, self.n_cols):
-                raise ValueError(
-                    f"Value must be a 2D array of shape ({self.n_rows}, {self.n_cols})"
-                )
+                raise ValueError(f"Value must be a 2D array of shape ({self.n_rows}, {self.n_cols})")
             value = value.flatten().tolist()
 
         if isinstance(value, list) and all(isinstance(row, (list, tuple)) for row in value):

@@ -11,7 +11,6 @@ if TYPE_CHECKING:
 
 
 class FluxTunableTransmonBackend(QMBackend):
-
     def __init__(
         self,
         machine: Quam,
@@ -30,25 +29,18 @@ class FluxTunableTransmonBackend(QMBackend):
 
         """
         if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
-            raise ValueError(
-                "Invalid QuAM instance provided, should have qubits and qubit_pairs attributes"
-            )
+            raise ValueError("Invalid QuAM instance provided, should have qubits and qubit_pairs attributes")
         try:
             from qiskit.pulse import DriveChannel, MeasureChannel, ControlChannel
             from ..pulse.quam_qiskit_pulse import FluxChannel
 
-            drive_channel_mapping = {
-                DriveChannel(i): qubit.xy for i, qubit in enumerate(machine.active_qubits)
-            }
-            flux_channel_mapping = {
-                FluxChannel(i): qubit.z for i, qubit in enumerate(machine.active_qubits)
-            }
+            drive_channel_mapping = {DriveChannel(i): qubit.xy for i, qubit in enumerate(machine.active_qubits)}
+            flux_channel_mapping = {FluxChannel(i): qubit.z for i, qubit in enumerate(machine.active_qubits)}
             readout_channel_mapping = {
                 MeasureChannel(i): qubit.resonator for i, qubit in enumerate(machine.active_qubits)
             }
             control_channel_mapping = {
-                ControlChannel(i): qubit_pair.coupler
-                for i, qubit_pair in enumerate(machine.active_qubit_pairs)
+                ControlChannel(i): qubit_pair.coupler for i, qubit_pair in enumerate(machine.active_qubit_pairs)
             }
             channel_mapping = {
                 **drive_channel_mapping,
@@ -74,8 +66,7 @@ class FluxTunableTransmonBackend(QMBackend):
         Retrieve the qubit to quantum elements mapping for the backend.
         """
         return {
-            i: (qubit.xy.name, qubit.z.name, qubit.resonator.name)
-            for i, qubit in enumerate(self.machine.active_qubits)
+            i: (qubit.xy.name, qubit.z.name, qubit.resonator.name) for i, qubit in enumerate(self.machine.active_qubits)
         }
 
     @property
@@ -114,7 +105,7 @@ class FluxTunableTransmonBackend(QMBackend):
         """
         return super().get_qubit(qubit)
 
-    def get_qubit_pair(self, qubits: Tuple[int|str|Transmon, int|str|Transmon]) -> TransmonPair:
+    def get_qubit_pair(self, qubits: Tuple[int | str | Transmon, int | str | Transmon]) -> TransmonPair:
         """
         Retrieve a Transmon pair by its indices or names.
 

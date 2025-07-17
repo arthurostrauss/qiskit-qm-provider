@@ -19,9 +19,7 @@ def register_pulse_features(pulse: SymbolicPulse):
     stored_parameter_expressions = {}
     for param_name, param_value in pulse.parameters.items():
         if param_name in _real_time_parameters and isinstance(param_value, ParameterExpression):
-            stored_parameter_expressions[param_name] = lambda val: sympy_to_qua(
-                param_value.sympify(), val
-            )
+            stored_parameter_expressions[param_name] = lambda val: sympy_to_qua(param_value.sympify(), val)
     return stored_parameter_expressions
 
 
@@ -30,9 +28,7 @@ def return_samples_output(pulse: SymbolicPulse):
     Return the samples of a SymbolicPulse to be used in the QUA compiler
     """
     if np.abs(pulse.angle) < 1e-10:
-        return (
-            pulse.amp if isinstance(pulse, Constant) else pulse.get_waveform().samples.real.tolist()
-        )
+        return pulse.amp if isinstance(pulse, Constant) else pulse.get_waveform().samples.real.tolist()
     else:
         return (
             pulse.amp * np.exp(1j * pulse.angle)
@@ -62,11 +58,7 @@ class QuAMQiskitPulse(QuAMPulse):
         self._stored_parameter_expressions = register_pulse_features(pulse)
 
         super().__init__(
-            length=(
-                self.pulse.duration
-                if not isinstance(self.pulse.duration, ParameterExpression)
-                else 0
-            ),
+            length=(self.pulse.duration if not isinstance(self.pulse.duration, ParameterExpression) else 0),
             id=pulse.name,
         )
 
@@ -80,14 +72,7 @@ class QuAMQiskitPulse(QuAMPulse):
 
     def waveform_function(
         self,
-    ) -> Union[
-        float,
-        complex,
-        List[float],
-        List[complex],
-        Tuple[float, float],
-        Tuple[List[float], List[float]],
-    ]:
+    ) -> Union[float, complex, List[float], List[complex], Tuple[float, float], Tuple[List[float], List[float]],]:
         if isinstance(self.pulse, Waveform):
             return self.pulse.samples.tolist()
 
@@ -95,19 +80,14 @@ class QuAMQiskitPulse(QuAMPulse):
             new_pulse_parameters = {
                 param_name: (
                     real_time_parameters_dict[param_name]
-                    if param_name in real_time_parameters_dict
-                    and isinstance(param_value, ParameterExpression)
+                    if param_name in real_time_parameters_dict and isinstance(param_value, ParameterExpression)
                     else param_value
                 )
                 for param_name, param_value in self.pulse.parameters.items()
             }
 
-            if "duration" in new_pulse_parameters and isinstance(
-                new_pulse_parameters["duration"], ParameterExpression
-            ):
-                raise NotImplementedError(
-                    "Duration parameter cannot be parametrized (currently not supported)"
-                )
+            if "duration" in new_pulse_parameters and isinstance(new_pulse_parameters["duration"], ParameterExpression):
+                raise NotImplementedError("Duration parameter cannot be parametrized (currently not supported)")
 
             pulse = deepcopy(self.pulse)
             pulse._params.update(new_pulse_parameters)
@@ -128,8 +108,7 @@ class QuAMQiskitPulse(QuAMPulse):
         """
         return any(
             [
-                isinstance(self.pulse.parameters[param], ParameterExpression)
-                and param not in _real_time_parameters
+                isinstance(self.pulse.parameters[param], ParameterExpression) and param not in _real_time_parameters
                 for param in self.pulse.parameters
             ]
         )
@@ -138,10 +117,7 @@ class QuAMQiskitPulse(QuAMPulse):
         """
         Check if the pulse is parametrized with real-time parameters
         """
-        return any(
-            isinstance(self.pulse.parameters[param], ParameterExpression)
-            for param in _real_time_parameters
-        )
+        return any(isinstance(self.pulse.parameters[param], ParameterExpression) for param in _real_time_parameters)
 
     @property
     def parameters(self):

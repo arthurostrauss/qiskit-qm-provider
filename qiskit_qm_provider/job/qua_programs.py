@@ -32,17 +32,13 @@ def _process_circuit(
     with for_(shot_var, 0, shot_var < num_shots, shot_var + 1):
         result = backend.quantum_circuit_to_qua(qc, param_table)
 
-        clbits_dict = {
-            creg.name: [result.result_program[creg.name][i] for i in range(creg.size)]
-            for creg in qc.cregs
-        }
+        clbits_dict = {creg.name: [result.result_program[creg.name][i] for i in range(creg.size)] for creg in qc.cregs}
         num_solo_bits = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
         if num_solo_bits > 0:
             if solo_bits_stream is None:
                 raise ValueError("Circuit contains bits without registers but no stream provided")
             clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX] = [
-                result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"]
-                for i in range(num_solo_bits)
+                result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"] for i in range(num_solo_bits)
             ]
         # Save integer state to each stream
 
@@ -55,8 +51,7 @@ def _process_circuit(
             for i in range(num_solo_bits):
                 assign(
                     state_int,
-                    state_int
-                    + (1 << i) * Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i]),
+                    state_int + (1 << i) * Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i]),
                 )
             save(state_int, solo_bits_stream)
             assign(state_int, 0)
@@ -120,9 +115,7 @@ def sampler_program(
         state_int = declare(int, value=0)
         num_registers = [len(circuits[i].cregs) for i in range(num_circuits)]
         num_solo_bits = [
-            len(
-                [bit for bit in circuits[0].clbits if len(circuits[i].find_bit(bit).registers) == 0]
-            )
+            len([bit for bit in circuits[0].clbits if len(circuits[i].find_bit(bit).registers) == 0])
             for i in range(num_circuits)
         ]
         regs_streams = [[declare_stream() for _ in range(num_cregs)] for num_cregs in num_registers]
@@ -152,16 +145,13 @@ def sampler_program(
 
     return sampler_prog
 
-def estimator_program(
-        backend: QMBackend,
-        pubs: List[EstimatorPub],
-        input_type: InputType,
-        **kwargs
-) -> Program:
+
+def estimator_program(backend: QMBackend, pubs: List[EstimatorPub], input_type: InputType, **kwargs) -> Program:
     """
     Return the QUA program for the estimator primitive based on pre-computed plans.
     """
     from .qm_estimator_job import _ExecutionPlan
+
     # The execution plans are generated in the 'submit' method and passed here.
     execution_plans: List[_ExecutionPlan] = kwargs["execution_plans"]
 
@@ -169,9 +159,7 @@ def estimator_program(
 
     # Define the ParameterTables once per circuit.
     param_tables = [
-        ParameterTable.from_qiskit(
-            qc, input_type=input_type, filter_function=lambda p: isinstance(p, Parameter)
-        )
+        ParameterTable.from_qiskit(qc, input_type=input_type, filter_function=lambda p: isinstance(p, Parameter))
         for qc in circuits
     ]
     observables_vars = [
@@ -227,9 +215,7 @@ def estimator_program(
     return estimator_prog
 
 
-def get_run_program(
-    backend: QMBackend, num_shots, circuits: List[QuantumCircuit]
-) -> Program | List[Program]:
+def get_run_program(backend: QMBackend, num_shots, circuits: List[QuantumCircuit]) -> Program | List[Program]:
     num_circuits = len(circuits)
 
     def _process_circuit(
@@ -243,18 +229,14 @@ def get_run_program(
             result = backend.qiskit_to_qua_macro(qc)
 
             clbits_dict = {
-                creg.name: [result.result_program[creg.name][i] for i in range(creg.size)]
-                for creg in qc.cregs
+                creg.name: [result.result_program[creg.name][i] for i in range(creg.size)] for creg in qc.cregs
             }
             num_solo_bits = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
             if num_solo_bits > 0:
                 if solo_bits_stream is None:
-                    raise ValueError(
-                        "Circuit contains bits without registers but no stream provided"
-                    )
+                    raise ValueError("Circuit contains bits without registers but no stream provided")
                 clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX] = [
-                    result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"]
-                    for i in range(num_solo_bits)
+                    result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"] for i in range(num_solo_bits)
                 ]
             # Save integer state to each stream
 
@@ -267,8 +249,7 @@ def get_run_program(
                 for i in range(num_solo_bits):
                     assign(
                         state_int,
-                        state_int
-                        + (1 << i) * Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i]),
+                        state_int + (1 << i) * Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i]),
                     )
                 save(state_int, solo_bits_stream)
                 assign(state_int, 0)
@@ -283,18 +264,10 @@ def get_run_program(
             num_registers = [len(circuits[i].cregs) for i in range(num_circuits)]
 
             num_solo_bits = [
-                len(
-                    [
-                        bit
-                        for bit in circuits[0].clbits
-                        if len(circuits[i].find_bit(bit).registers) == 0
-                    ]
-                )
+                len([bit for bit in circuits[0].clbits if len(circuits[i].find_bit(bit).registers) == 0])
                 for i in range(num_circuits)
             ]
-            regs_streams = [
-                [declare_stream() for _ in range(num_cregs)] for num_cregs in num_registers
-            ]
+            regs_streams = [[declare_stream() for _ in range(num_cregs)] for num_cregs in num_registers]
             solo_bits_stream = [declare_stream() for _ in range(num_circuits)]
 
             for i, qc in enumerate(circuits):
@@ -321,9 +294,7 @@ def get_run_program(
                 shot = declare(int)
                 state_int = declare(int, value=0)
                 num_registers = len(qc.cregs)
-                num_solo_bits = len(
-                    [bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0]
-                )
+                num_solo_bits = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
                 regs_streams = [declare_stream() for _ in range(num_registers)]
                 solo_bits_stream = declare_stream() if num_solo_bits > 0 else None
                 _process_circuit(

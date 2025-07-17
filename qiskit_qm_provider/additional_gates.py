@@ -22,7 +22,7 @@ class SYGate(Gate):
         qc = QuantumCircuit(1)
         qc.ry(-np.pi / 2, 0)
         return qc.to_gate()
-    
+
     def power(self, exponent: float, annotated: bool = False):
         return gate_map()["ry"](np.pi / 2 * exponent)
 

@@ -20,6 +20,7 @@ from ..parameter_table import InputType
 
 from ..backend.qm_backend import QMBackend
 
+
 @dataclass
 class QMEstimatorOptions:
     """Options for :class:`~.QMEstimatorV2`."""
@@ -89,7 +90,6 @@ class QMEstimatorV2(BaseEstimatorV2):
                         qc.sdg(qubit)
                         qc.h(qubit)
                 qc.measure_all()
-
 
     @property
     def backend(self) -> QMBackend:

@@ -60,7 +60,7 @@ def set_type(qua_type: Union[str, type]):
         raise ValueError("Invalid QUA type. Please use 'fixed', 'int' or 'bool'.")
 
 
-def infer_type(value: Optional[Union[int, float, List, np.ndarray]]=None):
+def infer_type(value: Optional[Union[int, float, List, np.ndarray]] = None):
     """
     Infer automatically the type of the QUA variable to be declared from the type of the initial parameter value.
     """
@@ -71,7 +71,7 @@ def infer_type(value: Optional[Union[int, float, List, np.ndarray]]=None):
     if isinstance(value, bool):
         return bool
     if isinstance(value, int):
-        return int 
+        return int
     if isinstance(value, float):
         return fixed if not value.is_integer() or value <= 8 else int
 
@@ -81,23 +81,23 @@ def infer_type(value: Optional[Union[int, float, List, np.ndarray]]=None):
             if value.ndim != 1:
                 raise ValueError("Array must be 1D")
             value = value.tolist()
-            
+
         if not value:
             raise ValueError("Array cannot be empty")
-            
+
         first_type = type(value[0])
         if not all(isinstance(x, first_type) for x in value):
             raise ValueError("All array elements must be of same type")
-            
+
         if first_type == bool:
             return bool
         if first_type == int:
             return int
         if first_type == float:
             return fixed
-            
+
         raise ValueError("Array elements must be bool, int or float")
-        
+
     raise ValueError("Value must be bool, int, float or array")
 
 
@@ -115,15 +115,11 @@ class Parameter:
             if hasattr(obj, "parameters"):
                 for param in obj.parameters:
                     if param.name == name:
-                        warnings.warn(
-                            f"Parameter with name {name} already exists in parameter table {obj.name}."
-                        )
+                        warnings.warn(f"Parameter with name {name} already exists in parameter table {obj.name}.")
                         return param
             else:
                 if obj.name == name:
-                    warnings.warn(
-                        f"Parameter with name {name} already exists in the parameter pool."
-                    )
+                    warnings.warn(f"Parameter with name {name} already exists in the parameter pool.")
                     return obj
         # TODO: Handle the case where the parameter is part of a parameter table with indexing
         obj = super().__new__(cls)
@@ -210,9 +206,7 @@ class Parameter:
                 "Please use this method through the parameter table instead."
             )
         if param_table.name not in self._table_indices:
-            raise ValueError(
-                f"Parameter {self.name} is not part of the parameter table {param_table.name}."
-            )
+            raise ValueError(f"Parameter {self.name} is not part of the parameter table {param_table.name}.")
         return self._table_indices[param_table.name]
 
     def set_index(self, param_table: ParameterTable, index: int):
@@ -228,9 +222,7 @@ class Parameter:
         if param_table.name not in self._table_indices:
             self._table_indices[param_table.name] = index
         else:
-            raise ValueError(
-                f"Parameter {self.name} is already part of the parameter table {param_table.name}."
-            )
+            raise ValueError(f"Parameter {self.name} is already part of the parameter table {param_table.name}.")
 
     def is_standalone(self) -> bool:
         """
@@ -272,9 +264,7 @@ class Parameter:
                         the parameter length, or if the input is invalid.
         """
         if not self.is_declared:
-            raise ValueError(
-                "Variable not declared. Declare the variable first through declare_variable method."
-            )
+            raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
         if (condition is not None) != (value_cond is not None):
             raise ValueError("Both condition and value_cond must be provided together.")
 
@@ -286,13 +276,9 @@ class Parameter:
 
         if isinstance(value, Parameter):
             if not value.is_declared:
-                raise ValueError(
-                    "Variable not declared. Declare the variable first through declare_variable method."
-                )
+                raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
             if value.length != self.length:
-                raise ValueError(
-                    f"Invalid input. {self.name} should be a list of length {self.length}."
-                )
+                raise ValueError(f"Invalid input. {self.name} should be a list of length {self.length}.")
             if value_cond is not None and not isinstance(value_cond, Parameter):
                 raise ValueError("Invalid input. value_cond should be of same type as value.")
             if self.is_array:
@@ -317,18 +303,12 @@ class Parameter:
                         )
                 else:
                     if len(value) != self.length:
-                        raise ValueError(
-                            f"Invalid input. {self.name} should be a list of length {self.length}."
-                        )
+                        raise ValueError(f"Invalid input. {self.name} should be a list of length {self.length}.")
                     for i in range(self.length):
-                        assign_with_condition(
-                            self.var[i], value[i], value_cond[i] if value_cond else None
-                        )
+                        assign_with_condition(self.var[i], value[i], value_cond[i] if value_cond else None)
             else:
                 if isinstance(value, List):
-                    raise ValueError(
-                        f"Invalid input. {self.name} should be a single value, not a list."
-                    )
+                    raise ValueError(f"Invalid input. {self.name} should be a single value, not a list.")
                 assign_with_condition(self.var, value, value_cond)
 
     def declare_variable(self, pause_program=False):
@@ -351,13 +331,9 @@ class Parameter:
                 self._var = declare_struct(dgx_struct)
 
                 if self.direction == Direction.INCOMING:
-                    self._external_stream_outgoing = declare_external_stream(
-                        dgx_struct, self.stream_id, "OUTGOING"
-                    )
+                    self._external_stream_outgoing = declare_external_stream(dgx_struct, self.stream_id, "OUTGOING")
                 else:
-                    self._external_stream_incoming = declare_external_stream(
-                        dgx_struct, self.stream_id, "INCOMING"
-                    )
+                    self._external_stream_incoming = declare_external_stream(dgx_struct, self.stream_id, "INCOMING")
             else:
                 raise ValueError(
                     f"This parameter is part of a parameter table. "
@@ -412,9 +388,7 @@ class Parameter:
 
         """
         if self.input_type != InputType.DGX:
-            raise ValueError(
-                "Invalid input type for calling dgx_struct property. Must be set to InputType.DGX."
-            )
+            raise ValueError("Invalid input type for calling dgx_struct property. Must be set to InputType.DGX.")
         if self.is_standalone():
             try:
                 from qm.qua import qua_struct, QuaArray
@@ -466,9 +440,7 @@ class Parameter:
             QUA variable associated with the parameter.
         """
         if not self.is_declared:
-            raise ValueError(
-                "Variable not declared. Declare the variable first through declare_variable method."
-            )
+            raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
         if self.input_type == InputType.DGX:
             var = getattr(self._var, self.name)
             return var if self.is_array else var[0]
@@ -592,16 +564,10 @@ class Parameter:
             is_array: Boolean indicating if the bounds are QUA arrays.
         """
         if not self.is_declared:
-            raise ValueError(
-                "Variable not declared. Declare the variable first through declare_variable method."
-            )
+            raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
         if not self.is_array and is_qua_array:
             raise ValueError("Invalid input. Single value cannot be clipped with array bounds.")
-        elif (
-            isinstance(min_val, (int, float))
-            and isinstance(max_val, (int, float))
-            and min_val > max_val
-        ):
+        elif isinstance(min_val, (int, float)) and isinstance(max_val, (int, float)) and min_val > max_val:
             raise ValueError("Invalid range. Minimum value must be less than maximum value.")
 
         elif min_val is None and max_val is None:
@@ -696,9 +662,7 @@ class Parameter:
             if not isinstance(value, (List, np.ndarray)):
                 raise ValueError(f"Invalid input. {self.name} should be a list of {self.type}.")
             if len(value) != self.length:
-                raise ValueError(
-                    f"Invalid input. {self.name} should be a list of length {self.length}."
-                )
+                raise ValueError(f"Invalid input. {self.name} should be a list of length {self.length}.")
         param_type = self.type if self.type != fixed else float
         if self.is_array and not all(isinstance(x, param_type) for x in value):
             try:
@@ -709,9 +673,7 @@ class Parameter:
             try:
                 value = param_type(value)
             except ValueError:
-                raise ValueError(
-                    f"Invalid input. {self.name} should be a single value of type {param_type}."
-                )
+                raise ValueError(f"Invalid input. {self.name} should be a single value of type {param_type}.")
 
         if self.input_type in [InputType.IO1, InputType.IO2]:
             io = "io1" if self.input_type == InputType.IO1 else "io2"
@@ -749,17 +711,12 @@ class Parameter:
             if self.is_standalone():
                 if self.direction == Direction.INCOMING:
                     raise ValueError("Cannot push value to Incoming stream.")
-                if not ParameterPool.configured or not ParameterPool.patched:
+                if not ParameterPool.configured() or not ParameterPool.patched():
                     raise ValueError("OPNIC not configured or patched.")
                 # Prepare the packet to be sent
                 param_dict = {self.name: [value] if not self.is_array else value}
-                param_dict = {
-                    k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in param_dict.items()
-                }
+                param_dict = {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in param_dict.items()}
 
-                # from opnic_python.opnic_wrapper import OutgoingPacket, send_packet
-                if "opnic_wrapper" not in sys.path:
-                    sys.path.append("/home/dpoulos/aps_demo/python-wrapper/wrapper/build/python")
                 from opnic_wrapper import OutgoingPacket, send_packet
 
                 flattened_values = list(chain(*param_dict.values()))
@@ -853,15 +810,17 @@ class Parameter:
 
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot fetch value from outgoing stream.")
-            elif not ParameterPool.configured or not ParameterPool.patched:
+            elif not ParameterPool.configured() or not ParameterPool.patched():
                 raise ValueError("OPNIC not configured or patched.")
-            if "opnic_wrapper" not in sys.modules:
-                sys.path.append("/home/dpoulos/aps_demo/python-wrapper/wrapper/build/python")
+
             from opnic_wrapper import wait_for_packets, read_packet
 
-            wait_for_packets(self.stream_id, 1)
-            packet = read_packet(self.stream_id, 0)
-            value = getattr(packet, self.name)
+            wait_for_packets(self.stream_id, fetching_size)
+            packets = []
+            for i in range(fetching_size):
+                packet = read_packet(self.stream_id, fetching_index + i)
+                packets.append(packet)
+            value = np.array([getattr(packet, self.name) for packet in packets])
 
         else:
             raise ValueError("Invalid input type.")

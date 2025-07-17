@@ -108,38 +108,24 @@ class ParameterTable:
                     ), "Invalid format for parameter value. Please use (initial_value, qua_type) or initial_value."
                     if len(parameter) >= 2:
                         assert (
-                            isinstance(parameter[1], (str, type))
-                            or parameter[1] is None
-                            or parameter[1] == fixed
+                            isinstance(parameter[1], (str, type)) or parameter[1] is None or parameter[1] == fixed
                         ), "Invalid format for parameter value. Please use (initial_value, qua_type) or initial_value."
 
                     if len(parameter) >= 3:
-                        input_type = (
-                            InputType(parameter[2])
-                            if isinstance(parameter[2], str)
-                            else parameter[2]
-                        )
+                        input_type = InputType(parameter[2]) if isinstance(parameter[2], str) else parameter[2]
                         if self._input_type is None:
                             self._input_type = input_type
                         elif self._input_type != input_type:
-                            raise ValueError(
-                                "All parameters in the table must have the same input type."
-                            )
+                            raise ValueError("All parameters in the table must have the same input type.")
                         if input_type == InputType.DGX:
                             assert (
                                 len(parameter) == 4
                             ), "Direction of the parameter is missing (required for DGX input)."
-                            direction = (
-                                Direction(parameter[3])
-                                if isinstance(parameter[3], str)
-                                else parameter[3]
-                            )
+                            direction = Direction(parameter[3]) if isinstance(parameter[3], str) else parameter[3]
                             if self._direction is None:
                                 self._direction = direction
                             elif self._direction != direction:
-                                raise ValueError(
-                                    "All parameters in the table must have the same direction."
-                                )
+                                raise ValueError("All parameters in the table must have the same direction.")
 
                     self.table[parameter_name] = Parameter(
                         parameter_name,
@@ -171,27 +157,19 @@ class ParameterTable:
                     if self._direction is None:
                         self._direction = parameter.direction
                     elif self._direction != parameter.direction:
-                        raise ValueError(
-                            "All parameters in the table must have the same direction."
-                        )
+                        raise ValueError("All parameters in the table must have the same direction.")
 
         if self.input_type == InputType.DGX:
             from qm.qua import qua_struct, QuaArray
 
             attributes = {
-                parameter.name: QuaArray[
-                    parameter.type, parameter.length if parameter.is_array else 1
-                ]
+                parameter.name: QuaArray[parameter.type, parameter.length if parameter.is_array else 1]
                 for parameter in self.parameters
             }
             struct_name = f"Packet_{self.name}_{self._id}"
-            self._packet_type = qua_struct(
-                type(struct_name, (object,), {"__annotations__": attributes})
-            )
+            self._packet_type = qua_struct(type(struct_name, (object,), {"__annotations__": attributes}))
 
-    def declare_variables(
-        self, pause_program=False
-    ) -> QuaVariable | List[QuaVariable | QuaArrayVariable]:
+    def declare_variables(self, pause_program=False) -> QuaVariable | List[QuaVariable | QuaArrayVariable]:
         """
         QUA Macro to declare all QUA variables associated with the parameter table.
         Should be called at the beginning of the QUA program.
@@ -208,14 +186,10 @@ class ParameterTable:
             )
 
             qua_direction = (
-                QuaStreamDirection.INCOMING
-                if self.direction == Direction.OUTGOING
-                else QuaStreamDirection.OUTGOING
+                QuaStreamDirection.INCOMING if self.direction == Direction.OUTGOING else QuaStreamDirection.OUTGOING
             )
             self._packet = declare_struct(self._packet_type)
-            self._qua_external_stream = declare_external_stream(
-                self._packet, self._id, qua_direction
-            )
+            self._qua_external_stream = declare_external_stream(self._packet, self._id, qua_direction)
 
             for parameter in self.parameters:
                 # In ParameterTable.declare_variables(), DGX path:
@@ -264,7 +238,7 @@ class ParameterTable:
             else:
                 return self.variables
 
-    def declare_streams(self)-> List[_ResultSource]:
+    def declare_streams(self) -> List[_ResultSource]:
         """
         QUA Macro to declare all the output streams associated with the parameters in the parameter table.
         This macro is expected to be called at the beginning of the QUA program.
@@ -276,8 +250,7 @@ class ParameterTable:
                 streams.append(stream)
             else:
                 warnings.warn(
-                    f"Stream for parameter {parameter.name} already declared. "
-                    "Skipping stream declaration."
+                    f"Stream for parameter {parameter.name} already declared. " "Skipping stream declaration."
                 )
 
         return streams
@@ -365,12 +338,8 @@ class ParameterTable:
                 self.table[parameter_name].assign(parameter_value)
             else:
                 if not isinstance(parameter_name, Parameter):
-                    raise ValueError(
-                        "Invalid parameter name. Please use a string or a ParameterValue object."
-                    )
-                assert (
-                    parameter_name in self.parameters
-                ), "Provided ParameterValue not in this ParameterTable."
+                    raise ValueError("Invalid parameter name. Please use a string or a ParameterValue object.")
+                assert parameter_name in self.parameters, "Provided ParameterValue not in this ParameterTable."
                 parameter_name.assign(parameter_value)
 
     def print_parameters(self):
@@ -515,9 +484,7 @@ class ParameterTable:
         Args: parameter_value: Name of the parameter to be removed or ParameterValue object to be removed.
         """
         if self.is_declared:
-            raise ValueError(
-                "Cannot remove parameters from a parameter table that has already been declared."
-            )
+            raise ValueError("Cannot remove parameters from a parameter table that has already been declared.")
         if isinstance(parameter_value, str):
             if parameter_value not in self.table.keys():
                 raise KeyError(f"No parameter named {parameter_value} in the parameter table.")
@@ -527,9 +494,7 @@ class ParameterTable:
                 raise KeyError("Provided ParameterValue not in this ParameterTable.")
             del self.table[parameter_value.name]
         else:
-            raise ValueError(
-                "Invalid parameter name. Please use a string or a ParameterValue object."
-            )
+            raise ValueError("Invalid parameter name. Please use a string or a ParameterValue object.")
 
     def add_table(self, parameter_table: Union[List["ParameterTable"], "ParameterTable"]) -> None:
         """
@@ -544,8 +509,7 @@ class ParameterTable:
 
         else:
             raise ValueError(
-                "Invalid parameter table. Please use a ParameterTable object "
-                "or a list of ParameterTable objects."
+                "Invalid parameter table. Please use a ParameterTable object " "or a list of ParameterTable objects."
             )
 
     def __contains__(self, item: str | Parameter):
@@ -618,9 +582,7 @@ class ParameterTable:
     def variables_dict(self) -> Dict[str, QuaVariable | QuaArrayVariable]:
         """Dictionary of the QUA variables corresponding to the parameters in the parameter table."""
         if not self.is_declared:
-            raise ValueError(
-                "Not all parameters have been declared. Please declare all parameters first."
-            )
+            raise ValueError("Not all parameters have been declared. Please declare all parameters first.")
         return {parameter_name: parameter.var for parameter_name, parameter in self.table.items()}
 
     @property
@@ -717,15 +679,11 @@ class ParameterTable:
                     )
                 processed_value = value.tolist() if isinstance(value, np.ndarray) else value
                 processed_value = (
-                    [processed_value]
-                    if not p_obj.is_array and isinstance(processed_value, Number)
-                    else processed_value
+                    [processed_value] if not p_obj.is_array and isinstance(processed_value, Number) else processed_value
                 )
                 values_for_packet[p_obj.name] = processed_value
 
-            if ParameterPool.configured and ParameterPool.patched:
-                if "opnic_wrapper" not in sys.modules:
-                    sys.path.append("/home/dpoulos/aps_demo/python-wrapper/wrapper/build/python")
+            if ParameterPool.configured() and ParameterPool.patched():
                 from opnic_wrapper import OutgoingPacket, send_packet
 
                 flattened_values = list(chain(*values_for_packet.values()))
@@ -786,23 +744,22 @@ class ParameterTable:
                 )
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot fetch values from outgoing DGX parameter tables.")
-            elif not ParameterPool.configured or not ParameterPool.patched:
+            elif not ParameterPool.configured() or not ParameterPool.patched():
                 raise ValueError("OPNIC wrapper not configured or patched. ")
 
-            if "opnic_wrapper" not in sys.modules:
-                sys.path.append("/home/dpoulos/aps_demo/python-wrapper/wrapper/build/python")
             from opnic_wrapper import read_packet, wait_for_packets
 
-            wait_for_packets(self.stream_id, 1)
-            packet = read_packet(self.stream_id, 0)
+            wait_for_packets(self.stream_id, fetching_size)
+            packets = []
+            for i in range(fetching_size):
+                packet = read_packet(self.stream_id, fetching_index + i)
+                packets.append(packet)
             for parameter in self.parameters:
-                param_dict[parameter.name] = getattr(packet, parameter.name)
+                param_dict[parameter.name] = np.array([getattr(packet, parameter.name) for packet in packets])
 
         else:
             for parameter in self.parameters:
-                value = parameter.fetch_from_opx(
-                    job, fetching_index, fetching_size, verbosity, time_out
-                )
+                value = parameter.fetch_from_opx(job, fetching_index, fetching_size, verbosity, time_out)
                 param_dict[parameter.name] = value
         return param_dict
 
@@ -838,6 +795,7 @@ class ParameterTable:
         from qiskit.circuit import QuantumCircuit, Parameter as QiskitParameter
         from qiskit.circuit.parametervector import ParameterVectorElement
         from qiskit.circuit.classical import types
+
         param_list = []
         for parameter in qc.parameters:
             if isinstance(parameter, ParameterVectorElement):
@@ -936,7 +894,6 @@ class ParameterTable:
             parameter.reset()
 
     def __deepcopy__(self, memo=None):
-
         if memo is None:
             memo = {}
         # Prevent infinite recursion

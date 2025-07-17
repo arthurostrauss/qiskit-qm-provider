@@ -23,9 +23,7 @@ try:
     from qiskit.pulse.library.pulse import Pulse as QiskitPulse
 
 except ImportError:
-    raise ImportError(
-        "Failed to import Qiskit Pulse. Please ensure your Qiskit version is below 2.0.0."
-    )
+    raise ImportError("Failed to import Qiskit Pulse. Please ensure your Qiskit version is below 2.0.0.")
 
 from .pulse_to_qua import *
 
@@ -74,9 +72,7 @@ def _handle_parameterized_instruction(
     for attribute in qua_pulse_macro.params:
         attribute_value = getattr(instruction, attribute)
         if isinstance(attribute_value, ParameterExpression):
-            value_dict[attribute] = sympy_to_qua(
-                getattr(instruction, attribute).sympify(), involved_parameters
-            )
+            value_dict[attribute] = sympy_to_qua(getattr(instruction, attribute).sympify(), involved_parameters)
         elif attribute == "pulse":
             pulse = getattr(instruction, attribute)
             for pulse_param_name, pulse_param in get_real_time_pulse_parameters(pulse).items():
@@ -119,9 +115,7 @@ def validate_instruction(instruction: Instruction, quam_channel: QuAMChannel) ->
         raise ValueError(f"Instruction {instruction} not supported on QM backend")
 
 
-def validate_parameters(
-    params: ParameterView, param_table: ParameterTable, param_mapping=None
-) -> ParameterTable:
+def validate_parameters(params: ParameterView, param_table: ParameterTable, param_mapping=None) -> ParameterTable:
     """
     Validate the parameters of the instruction by checking them against the parameter table
     and a possible parameter mapping
@@ -179,9 +173,7 @@ def _instruction_to_qua(
 def validate_schedule(schedule: Schedule | ScheduleBlock) -> Schedule:
     if isinstance(schedule, ScheduleBlock):
         if not schedule.is_schedulable():
-            raise NotImplementedError(
-                "ScheduleBlock with parameterized durations are not yet supported"
-            )
+            raise NotImplementedError("ScheduleBlock with parameterized durations are not yet supported")
 
         schedule = block_to_schedule(schedule)
     if not isinstance(schedule, Schedule):
@@ -217,9 +209,7 @@ def schedule_to_qua_macro(
     sig = Signature()
     if sched.is_parameterized():
         if param_table is None:
-            param_table = ParameterTable.from_qiskit(
-                sched, name=sched.name + "_param_table", input_type=input_type
-            )
+            param_table = ParameterTable.from_qiskit(sched, name=sched.name + "_param_table", input_type=input_type)
             param_table = handle_parameterized_channel(sched, param_table)
         else:
             param_table = validate_parameters(sched.parameters, param_table)
@@ -229,7 +219,6 @@ def schedule_to_qua_macro(
         sig = Signature(params)
 
     def qua_macro(*args, **kwargs):  # Define the QUA macro with parameters
-
         # Relate passed positional arguments to parameters in ParameterTable
         bound_params = sig.bind(*args, **kwargs)
         bound_params.apply_defaults()
@@ -255,9 +244,7 @@ def schedule_to_qua_macro(
                 }
                 ch_parameter_name = list(qiskit_channel.parameters)[0].name
                 if not param_table.get_parameter(ch_parameter_name).type == int:
-                    raise ValueError(
-                        f"Parameter {ch_parameter_name} must be of type int for switch case"
-                    )
+                    raise ValueError(f"Parameter {ch_parameter_name} must be of type int for switch case")
 
                 # QUA variable corresponding to the channel parameter
                 with switch_(param_table[ch_parameter_name]):

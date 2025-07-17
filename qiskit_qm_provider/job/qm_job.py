@@ -26,7 +26,6 @@ class QMJob(JobV1):
         result_function: Callable[[RunningQmJob], Result],
         **kwargs,
     ):
-
         JobV1.__init__(self, backend, job_id, **kwargs)
         self.qm = qm
         self._qm_job: Optional[RunningQmJob | QmPendingJob | List[QmPendingJob]] = None
@@ -55,9 +54,7 @@ class QMJob(JobV1):
         simulate = self.metadata.get("simulate", None)
 
         if isinstance(simulate, SimulationConfig):
-            self._qm_job = self.qm.simulate(
-                self.program, simulate=simulate, compiler_options=compiler_options
-            )
+            self._qm_job = self.qm.simulate(self.program, simulate=simulate, compiler_options=compiler_options)
         else:
             if isinstance(self.program, list):
                 self._job_id = ""
@@ -110,9 +107,7 @@ class IQCCJob(QMJob):
         self._qm_job = None
 
     def status(self) -> JobStatus:
-        raise NotImplementedError(
-            "IQCCJob does not support status method. Use IQCC_Cloud methods to check job status."
-        )
+        raise NotImplementedError("IQCCJob does not support status method. Use IQCC_Cloud methods to check job status.")
 
     def submit(self):
         """Submit the job to the IQCC backend."""
@@ -126,6 +121,4 @@ class IQCCJob(QMJob):
         qm: IQCC_Cloud = self.qm
         timeout = self.metadata.get("timeout", None)
 
-        self._qm_job = qm.execute(
-            self.program, config, options={"timeout": timeout} if timeout is not None else {}
-        )
+        self._qm_job = qm.execute(self.program, config, options={"timeout": timeout} if timeout is not None else {})

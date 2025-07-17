@@ -7,7 +7,6 @@ from quam.core.macro import QuamMacro
 
 
 class QMInstructionProperties(InstructionProperties):
-
     def __new__(cls, duration=None, error=None, qua_pulse_macro=None, *args, **kwargs):
         if duration is None and hasattr(qua_pulse_macro, "duration"):
             duration = qua_pulse_macro.duration
@@ -17,11 +16,7 @@ class QMInstructionProperties(InstructionProperties):
                 else:
                     pulse = qua_pulse_macro.pulse
                 duration = pulse.length * 1e-9  # Convert to seconds
-        if (
-            error is None
-            and hasattr(qua_pulse_macro, "fidelity")
-            and qua_pulse_macro.fidelity is not None
-        ):
+        if error is None and hasattr(qua_pulse_macro, "fidelity") and qua_pulse_macro.fidelity is not None:
             error = 1 - qua_pulse_macro.fidelity
         self = super().__new__(cls, duration=duration, error=error, *args, **kwargs)
         self._qua_pulse_macro = qua_pulse_macro
@@ -37,11 +32,7 @@ class QMInstructionProperties(InstructionProperties):
 
     @property
     def qua_pulse_macro(self) -> Callable | None:
-        return (
-            self._qua_pulse_macro.apply
-            if isinstance(self._qua_pulse_macro, QuamMacro)
-            else self._qua_pulse_macro
-        )
+        return self._qua_pulse_macro.apply if isinstance(self._qua_pulse_macro, QuamMacro) else self._qua_pulse_macro
 
     @qua_pulse_macro.setter
     def qua_pulse_macro(self, value: Callable | QuamMacro | None):

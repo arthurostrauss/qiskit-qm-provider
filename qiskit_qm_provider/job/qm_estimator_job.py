@@ -17,9 +17,11 @@ from .qm_primitive_job import QMPrimitiveJob
 from dataclasses import dataclass, field
 from collections import defaultdict
 
+
 @dataclass
 class _ExecutionPlan:
     """Holds the pre-computed execution plan for a single EstimatorPub."""
+
     # The tasks to be executed sequentially by the QUA program
     total_tasks: int
 
@@ -71,7 +73,7 @@ class _ExecutionPlan:
 
         task_param_indices = []
         task_obs_indices = []
-        result_map = defaultdict(list) # Metadata for post-processing
+        result_map = defaultdict(list)  # Metadata for post-processing
 
         for p_idx_tuple, observables in param_obs_map.items():
             # Get the index for the unique parameter set.
@@ -95,11 +97,12 @@ class _ExecutionPlan:
             task_obs_indices=task_obs_indices,
             unique_params=unique_params_values,
             result_map=result_map,
-            shots_per_task=int(1 / pub.precision**2)
+            shots_per_task=int(1 / pub.precision**2),
         )
 
+
 def observables_to_indices(
-        observables: List[SparsePauliOp, Pauli, str] | SparsePauliOp | PauliList | Pauli | str,
+    observables: List[SparsePauliOp, Pauli, str] | SparsePauliOp | PauliList | Pauli | str,
 ):
     """
     Get single qubit indices of Pauli observables for the reward computation.
@@ -109,12 +112,8 @@ def observables_to_indices(
     """
     if isinstance(observables, (str, Pauli)):
         observables = PauliList(Pauli(observables) if isinstance(observables, str) else observables)
-    elif isinstance(observables, List) and all(
-            isinstance(obs, (str, Pauli)) for obs in observables
-    ):
-        observables = PauliList(
-            [Pauli(obs) if isinstance(obs, str) else obs for obs in observables]
-        )
+    elif isinstance(observables, List) and all(isinstance(obs, (str, Pauli)) for obs in observables):
+        observables = PauliList([Pauli(obs) if isinstance(obs, str) else obs for obs in observables])
     observable_indices = []
     observables_grouping = (
         observables.group_commuting(qubit_wise=True)
@@ -125,9 +124,7 @@ def observables_to_indices(
         current_indices = []
         paulis = obs_group.paulis if isinstance(obs_group, SparsePauliOp) else obs_group
         reference_pauli = Pauli((np.logical_or.reduce(paulis.z), np.logical_or.reduce(paulis.x)))
-        for pauli_term in reversed(
-                reference_pauli.to_label()
-        ):  # Get individual qubit indices for each Pauli term
+        for pauli_term in reversed(reference_pauli.to_label()):  # Get individual qubit indices for each Pauli term
             if pauli_term == "I" or pauli_term == "Z":
                 current_indices.append(0)
             elif pauli_term == "X":
@@ -137,8 +134,8 @@ def observables_to_indices(
         observable_indices.append(tuple(current_indices))
     return observable_indices
 
-class QMEstimatorJob(QMPrimitiveJob):
 
+class QMEstimatorJob(QMPrimitiveJob):
     def result(self) -> ResultT:
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")
@@ -183,7 +180,7 @@ class QMEstimatorJob(QMPrimitiveJob):
             obs_vars = ParameterTable.from_qiskit(
                 pub.circuit,
                 input_type=self._input_type,
-                filter_function=lambda p: pub.circuit.has_var(p) and 'obs_' in p.name
+                filter_function=lambda p: pub.circuit.has_var(p) and "obs_" in p.name,
             )
 
             # This is the main loop that feeds the running QUA program
@@ -196,19 +193,12 @@ class QMEstimatorJob(QMPrimitiveJob):
 
                 # Push parameter values if the circuit has them
                 if param_table and len(param_values) > 0:
-                    param_dict = {
-                        param.name: value
-                        for param, value in zip(param_table.parameters, param_values)
-                    }
+                    param_dict = {param.name: value for param, value in zip(param_table.parameters, param_values)}
                     param_table.push_to_opx(param_dict, self.qm_job, self._backend.qm)
 
                 # Push observable indices for the measurement basis switch
-                obs_indices_dict = {
-                    f"obs_{i}": val for i, val in enumerate(obs_indices_tuple)
-                }
+                obs_indices_dict = {f"obs_{i}": val for i, val in enumerate(obs_indices_tuple)}
                 obs_vars.push_to_opx(obs_indices_dict, self.qm_job, self._backend.qm)
-
-
 
     def _result_function(self, qm_job: Union[RunningQmJob, List[QmPendingJob]]) -> PrimitiveResult[PubResult]:
         is_job_list = isinstance(qm_job, list)
@@ -229,8 +219,6 @@ class QMEstimatorJob(QMPrimitiveJob):
             bit_array = BitArray.from_samples(data.tolist())
             bit_array = bit_array.reshape(pub.shape)
 
-
-            
     def _run(self):
         pass
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import itertools
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from pathlib import Path
+from typing import Any, Dict, List, TYPE_CHECKING, Union
 import sys
 
 if TYPE_CHECKING:
@@ -44,7 +45,7 @@ class ParameterPool:
         Returns:
             obj: The object associated with the ID.
         """
-        return cls._parameters_dict.get(id)
+        return cls._parameters_dict[id]
 
     @classmethod
     def reset(cls):
@@ -58,7 +59,7 @@ class ParameterPool:
         cls._parameters_dict.clear()
 
     @classmethod
-    def get_all_ids(cls):
+    def get_all_ids(cls) -> List[int]:
         """
         Get all the IDs.
 
@@ -68,7 +69,7 @@ class ParameterPool:
         return list(cls._parameters_dict.keys())
 
     @classmethod
-    def get_all_objs(cls) -> Any:
+    def get_all_objs(cls) -> List[ParameterTable | Parameter]:
         """
         Get all the objects.
 
@@ -87,7 +88,7 @@ class ParameterPool:
         """
         return cls._parameters_dict
 
-    def __getitem__(self, id: int) -> Any:
+    def __getitem__(self, id: int) -> ParameterTable | Parameter:
         """
         Get the object associated with the given ID.
 
@@ -99,7 +100,7 @@ class ParameterPool:
         """
         return self.get_obj(id)
 
-    def __setitem__(self, id: int, obj: Any):
+    def __setitem__(self, id: int, obj: ParameterTable | Parameter):
         """
         Set the object associated with the given ID.
 
@@ -172,7 +173,9 @@ class ParameterPool:
         return f"ParameterPool({self._parameters_dict})"
 
     @classmethod
-    def patch_opnic_wrapper(cls, path_to_opnic_dev: Optional[str] = "/home/dpoulos/opnic-dev"):
+    def patch_opnic_wrapper(
+        cls, path_to_python_wrapper: Union[str, Path], force_recompile_python_wrapper: bool = False
+    ):
         """
         Patch the OPNIC wrapper.
 
@@ -183,68 +186,77 @@ class ParameterPool:
 
         def check_function(param_table: ParameterTable | Parameter) -> bool:
             return (
-                param_table.usable_for_dgx_communication
+                param_table._usable_for_dgx_communication
                 if isinstance(param_table, ParameterTable)
                 else param_table.is_standalone()
             )
 
         param_tables = list(filter(check_function, cls.get_all_objs()))
-        patch_opnic_wrapper(param_tables, path_to_opnic_dev)
+        patch_opnic_wrapper(param_tables, path_to_python_wrapper, force_recompile_python_wrapper)
         cls._patched = True
 
     @classmethod
     def configure_stream(
         cls,
-        path_to_opnic_wrapper: Optional[
-            str
-        ] = "/home/dpoulos/aps_demo/python-wrapper/wrapper/build/python",
+        path_to_python_wrapper: Union[str, Path],
     ):
         # from opnic_python.opnic_wrapper import configure_stream
         # from opnic_python.opnic_wrapper import Direction_INCOMING, Direction_OUTGOING
         if "opnic_wrapper" not in sys.modules:
-            sys.path.append(path_to_opnic_wrapper)
+            sys.path.append(str(path_to_python_wrapper))
         from opnic_wrapper import (
             Direction_INCOMING,
             Direction_OUTGOING,
             configure_stream,
         )
+        from .input_type import Direction
 
         for obj in cls.get_all_objs():
-            direction = Direction_INCOMING if obj.direction == "INCOMING" else Direction_OUTGOING
+            direction = Direction_INCOMING if obj.direction == Direction.INCOMING else Direction_OUTGOING
             configure_stream(obj.stream_id, direction)
         cls._configured = True
 
     @classmethod
-    def initialize_streams(cls, path_to_opnic_dev: Optional[str] = "/home/dpoulos/opnic-dev"):
+    def initialize_streams(cls, path_to_python_wrapper: Union[str, Path]):
         """
         Initialize the OPNIC and the necessary streams for the current stage of the ParameterPool.
         Args:
-            path_to_opnic_dev:
+            path_to_python_wrapper: The path to the Python wrapper.
 
         Returns:
 
         """
-        cls.patch_opnic_wrapper(path_to_opnic_dev)
-        cls.configure_stream()
+        cls.patch_opnic_wrapper(path_to_python_wrapper)
+        cls.configure_stream(path_to_python_wrapper)
 
     @classmethod
-    @property
+    def opx_handshake(cls):
+        """
+        Perform the OPNIC handshake.
+        """
+        from opnic_wrapper import opx_handshake
+
+        opx_handshake()
+
+    @classmethod
     def patched(cls) -> bool:
         return cls._patched
 
     @classmethod
-    @property
     def configured(cls) -> bool:
         return cls._configured
 
     @classmethod
     def close_streams(cls):
+        """
+        Close the streams.
+        """
         if cls._configured and cls._patched:
-            if "opnic_wrapper" not in sys.modules:
-                sys.path.append("/home/dpoulos/aps_demo/python-wrapper/wrapper/build/python")
             from opnic_wrapper import close_stream
 
             for obj in cls.get_all_objs():
                 close_stream(obj.stream_id)
             cls._configured = False
             cls._patched = False
+        else:
+            raise ValueError("The streams are not configured or patched.")

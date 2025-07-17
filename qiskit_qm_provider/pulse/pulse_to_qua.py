@@ -119,7 +119,6 @@ class QuaPlayMacro(QuaPulseMacro):
 
 @dataclass
 class QuaShiftPhaseMacro(QuaPulseMacro):
-
     @property
     def macro(self) -> Callable:
         """
@@ -138,7 +137,6 @@ class QuaShiftPhaseMacro(QuaPulseMacro):
 
 @dataclass
 class QuaShiftFrequencyMacro(QuaPulseMacro):
-
     @property
     def macro(self) -> Callable:
         """
@@ -157,7 +155,6 @@ class QuaShiftFrequencyMacro(QuaPulseMacro):
 
 @dataclass
 class QuaSetFrequencyMacro(QuaPulseMacro):
-
     @property
     def macro(self) -> Callable:
         """
@@ -176,7 +173,6 @@ class QuaSetFrequencyMacro(QuaPulseMacro):
 
 @dataclass
 class QuaSetPhaseMacro(QuaPulseMacro):
-
     @property
     def macro(self) -> Callable:
         """
@@ -197,7 +193,6 @@ class QuaSetPhaseMacro(QuaPulseMacro):
 
 @dataclass
 class QuaDelayMacro(QuaPulseMacro):
-
     @property
     def macro(self) -> Callable:
         """

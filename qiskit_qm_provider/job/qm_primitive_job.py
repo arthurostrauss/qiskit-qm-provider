@@ -11,8 +11,11 @@ from ..backend import QMBackend
 from ..parameter_table import InputType
 
 Pub = Union[SamplerPub, EstimatorPub]
+
+
 class QMPrimitiveJob(BasePrimitiveJob, ABC):
     """QM Primitive Job class for executing QUA programs from PUBs."""
+
     def __init__(self, backend: QMBackend, pubs: List[Pub], input_type: InputType, **kwargs):
         super().__init__(job_id="pending", **kwargs)
         self._backend = backend

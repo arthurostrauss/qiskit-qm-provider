@@ -20,10 +20,7 @@ class QMSamplerJob(QMPrimitiveJob):
     def __init__(self, backend: QMBackend, pubs: List[SamplerPub], input_type: InputType, **kwargs):
         super().__init__(backend, pubs, input_type, **kwargs)
 
-    def _result_function(
-        self, qm_job: Union[RunningQmJob, List[QmPendingJob]]
-    ) -> PrimitiveResult[SamplerPubResult]:
-
+    def _result_function(self, qm_job: Union[RunningQmJob, List[QmPendingJob]]) -> PrimitiveResult[SamplerPubResult]:
         is_job_list = isinstance(qm_job, list)
         if is_job_list:
             results_handle = [job.result_handles for job in qm_job]
@@ -47,14 +44,14 @@ class QMSamplerJob(QMPrimitiveJob):
                     qc_meas_data[creg.name] = bit_array
                 elif meas_level == "kerneled":
                     # TODO: Assume that buffering was done like (2, creg.size)
-                    qc_meas_data[creg.name] = np.array(
-                        [d[0] + 1j * d[1] for d in data], dtype=complex
-                    ).reshape(pub.shape + (pub.shots, creg.size))
+                    qc_meas_data[creg.name] = np.array([d[0] + 1j * d[1] for d in data], dtype=complex).reshape(
+                        pub.shape + (pub.shots, creg.size)
+                    )
                 else:
                     # TODO: Figure it out
-                    qc_meas_data[creg.name] = np.array(
-                        [d[0] + 1j * d[1] for d in data], dtype=complex
-                    ).reshape(pub.shape + (pub.shots, creg.size))
+                    qc_meas_data[creg.name] = np.array([d[0] + 1j * d[1] for d in data], dtype=complex).reshape(
+                        pub.shape + (pub.shots, creg.size)
+                    )
 
             sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
             all_data.append(sampler_data)
@@ -70,14 +67,10 @@ class QMSamplerJob(QMPrimitiveJob):
         sampler_prog = sampler_program(self._backend, self._pubs, self._input_type, **self.metadata)
         if self._qm_job is not None:
             raise RuntimeError("QM job has already been submitted")
-        compiler_options: Optional[CompilerOptionArguments] = self.metadata.get(
-            "compiler_options", None
-        )
+        compiler_options: Optional[CompilerOptionArguments] = self.metadata.get("compiler_options", None)
         simulate: Optional[SimulationConfig] = self.metadata.get("simulate", None)
         if simulate is not None:
-            self._qm_job = self._backend.qm.simulate(
-                sampler_prog, simulate=simulate, compiler_options=compiler_options
-            )
+            self._qm_job = self._backend.qm.simulate(sampler_prog, simulate=simulate, compiler_options=compiler_options)
         else:
             self._qm_job = self._backend.qm.execute(sampler_prog, compiler_options=compiler_options)
             self._job_id = self._qm_job.id
@@ -89,11 +82,8 @@ class QMSamplerJob(QMPrimitiveJob):
                         filter_function=lambda x: isinstance(x, Parameter),
                     )
                     for parameters in pub.parameter_values.ravel().as_array():
-                            param_dict = {
-                                param.name: value
-                                for param, value in zip(param_table.parameters, parameters)
-                            }
-                            param_table.push_to_opx(param_dict, self.qm_job, self._backend.qm)
+                        param_dict = {param.name: value for param, value in zip(param_table.parameters, parameters)}
+                        param_table.push_to_opx(param_dict, self.qm_job, self._backend.qm)
 
     def result(self) -> PrimitiveResult[SamplerPubResult]:
         """Get the job result."""

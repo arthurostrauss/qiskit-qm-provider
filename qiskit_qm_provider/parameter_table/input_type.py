@@ -26,9 +26,10 @@ class Direction(Enum):
     The direction of the data flow.
     INCOMING: OPX -> DGX
     OUTGOING: DGX -> OPX
-    
+
     Useful for defining DGX streams.
     """
+
     INCOMING = "INCOMING"  # OPX -> DGX
     OUTGOING = "OUTGOING"  # DGX -> OPX
 

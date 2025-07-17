@@ -63,7 +63,6 @@ class QMSamplerV2(BaseSamplerV2):
     """QM Sampler class."""
 
     def __init__(self, backend: QMBackend, options: QMSamplerOptions | dict | None = None):
-
         self._backend = backend
         self._options = QMSamplerOptions(**options) if isinstance(options, dict) else options or QMSamplerOptions()
 
@@ -82,17 +81,11 @@ class QMSamplerV2(BaseSamplerV2):
             shots = self._options.default_shots
         coerced_pubs = [SamplerPub.coerce(pub, shots) for pub in pubs]
         coerced_pubs = self._validate_pubs(coerced_pubs)
-        job_obj = (
-            QMSamplerJob
-            if isinstance(self.backend.qmm, QuantumMachinesManager)
-            else IQCCSamplerJob
-        )
+        job_obj = QMSamplerJob if isinstance(self.backend.qmm, QuantumMachinesManager) else IQCCSamplerJob
         backend_options = deepcopy(self.backend.options.__dict__)
 
         backend_options["meas_level"] = meas_level_dict[self._options.meas_level]
-        backend_options["meas_return_type"] = meas_return_type_dict.get(
-            self._options.meas_level, MeasReturnType.SINGLE
-        )
+        backend_options["meas_return_type"] = meas_return_type_dict.get(self._options.meas_level, MeasReturnType.SINGLE)
         backend_options["shots"] = shots
         backend_options.update(self._options.run_options or {})
 

@@ -12,6 +12,7 @@ from ..additional_gates import CRGate, SYGate, SYdgGate
 
 try:
     from qiskit.circuit.controlflow import get_control_flow_name_mapping
+
     control_flow_name_mapping = get_control_flow_name_mapping()
 except ImportError:
     warnings.warn(
@@ -37,11 +38,10 @@ oq3_keyword_instructions = (
 )
 _QASM3_DUMP_LOOSE_BIT_PREFIX = "_bit"
 
+
 def validate_machine(machine) -> BasicQuam:
     if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
-        raise ValueError(
-            "Invalid QuAM instance provided, should have qubits and qubit_pairs attributes"
-        )
+        raise ValueError("Invalid QuAM instance provided, should have qubits and qubit_pairs attributes")
     if not all(isinstance(qubit, Qubit) for qubit in machine.qubits.values()):
         raise ValueError("All qubits should be of type Qubit")
     if not all(isinstance(qubit_pair, QubitPair) for qubit_pair in machine.qubit_pairs.values()):
@@ -72,11 +72,7 @@ def validate_circuits(
                 raise ValueError("Only one register per clbit is supported.")
         if not has_reset_at_boundary(qc) and should_reset:
             qc_reset = qc.copy_empty_like()
-            index_layout = (
-                qc.layout.final_index_layout(filter_ancillas=True)
-                if qc.layout
-                else range(len(qc.qubits))
-            )
+            index_layout = qc.layout.final_index_layout(filter_ancillas=True) if qc.layout else range(len(qc.qubits))
             qubits = [qc.qubits[i] for i in index_layout]
             qc_reset.reset(qubits)
             new_circuits.append(qc.compose(qc_reset, inplace=False, front=True))
@@ -172,7 +168,7 @@ def binary(val: int, num_bits: int = 0) -> str:
     return bin(val)[2:].zfill(num_bits)
 
 
-def add_basic_macros_to_machine(machine: BasicQuam, reset_type: Literal['active', 'thermalize'] = 'thermalize'):
+def add_basic_macros_to_machine(machine: BasicQuam, reset_type: Literal["active", "thermalize"] = "thermalize"):
     """
     Add macros to the machine.
     :param machine: The BaseQuam instance to which macros will be added.
@@ -200,8 +196,7 @@ def add_basic_macros_to_machine(machine: BasicQuam, reset_type: Literal['active'
         qubit.macros["sy"] = PulseMacro(pulse=y90_pulse)
         qubit.macros["sydg"] = PulseMacro(pulse=my90_pulse)
         qubit.macros["measure"] = MeasureMacro(pulse=readout_pulse)
-        qubit.macros["reset"] = ResetMacro(reset_type=reset_type,pi_pulse=x180_pulse, 
-                                           readout_pulse=readout_pulse)
+        qubit.macros["reset"] = ResetMacro(reset_type=reset_type, pi_pulse=x180_pulse, readout_pulse=readout_pulse)
         qubit.macros["delay"] = DelayMacro()
         qubit.macros["id"] = IdMacro()
 
