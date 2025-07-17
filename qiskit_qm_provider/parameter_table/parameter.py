@@ -815,7 +815,7 @@ class Parameter:
 
             from opnic_wrapper import wait_for_packets, read_packet
 
-            wait_for_packets(self.stream_id, fetching_size)
+            wait_for_packets(self.stream_id, fetching_index + fetching_size)
             packets = []
             for i in range(fetching_size):
                 packet = read_packet(self.stream_id, fetching_index + i)

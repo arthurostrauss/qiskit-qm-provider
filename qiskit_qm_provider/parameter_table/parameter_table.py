@@ -749,10 +749,10 @@ class ParameterTable:
 
             from opnic_wrapper import read_packet, wait_for_packets
 
-            wait_for_packets(self.stream_id, fetching_size)
+            wait_for_packets(self.stream_id, fetching_index + fetching_size)
             packets = []
             for i in range(fetching_size):
-                packet = read_packet(self.stream_id, fetching_index + i)
+                packet = read_packet(self.stream_id, fetching_index + i)  # TODO: check if this is correct
                 packets.append(packet)
             for parameter in self.parameters:
                 param_dict[parameter.name] = np.array([getattr(packet, parameter.name) for packet in packets])
