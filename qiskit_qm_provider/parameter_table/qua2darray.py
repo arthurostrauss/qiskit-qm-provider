@@ -5,7 +5,7 @@ from qm.qua import declare, assign as qua_assign, fixed, for_
 from quam.utils.qua_types import QuaVariableInt, Scalar, ScalarInt
 
 from .parameter import Parameter
-from typing import Tuple, Union, List, Sequence, Literal
+from typing import Tuple, Union, List, Sequence, Literal, Optional
 import numpy as np
 from qm.qua._dsl import QuaArrayVariable
 
@@ -19,37 +19,51 @@ class QUA2DArray(Parameter):
     def __init__(
         self,
         name: str,
-        n_rows: int,
-        n_cols: int,
-        value: np.ndarray | List[List[Number]] = None,
-        qua_type: Union[str, type] = None,
+        n_rows_or_value: int | List[List[Number]] | np.ndarray,
+        n_cols: Optional[int] = None,
+        qua_type: Optional[Union[str, type]] = None,
         input_type=None,
         direction=None,
         units: str = "",
     ):
+        """
+        Class to create a 2D array of QUA variables.
+        Args:
+            name: Name of the parameter.
+            n_rows_or_value: Number of rows or a 2D array of values.
+            n_cols: Number of columns.
+            qua_type: QUA type of the elements.
+            input_type: Input type of the parameter.
+            direction: Direction of the parameter (only for DGX Quantum).
+            units: Units of the parameter.
+        Example:
+            >>> fake_data = QUA2DArray("fake_data", 50, 2, 8)
+            >>> fake_data[0, 0]
+            >>> fake_data[0]
+            >>> fake_data.assign(0, [1, 0, 1, 0, 1, 0, 1, 0])
+        """
         # prepare an "initial" 1D list of zeros so that Parameter can infer length/type
-        length = n_rows * n_cols
-        if value is not None:
-            if isinstance(value, np.ndarray):
-                if value.ndim != 2 or value.shape != (n_rows, n_cols):
-                    raise ValueError(f"Value must be a 2D array of shape ({n_rows}, {n_cols})")
-                init_list = value.flatten().tolist()
-            elif isinstance(value, list) and all(isinstance(row, list) for row in value):
-                if len(value) != n_rows or any(len(row) != n_cols for row in value):
-                    raise ValueError(f"Value must be a 2D list of shape ({n_rows}, {n_cols})")
-                init_list = [item for row in value for item in row]
-            else:
-                raise TypeError("Value must be a 2D numpy array or a list of lists")
-        else:
-            # if no value is given, initialize with zeros
-            if not isinstance(n_rows, int) or not isinstance(n_cols, int):
-                raise TypeError("n_rows and n_cols must be integers")
+        if isinstance(n_rows_or_value, int):
+            n_rows = n_rows_or_value
+            if n_cols is None:
+                raise ValueError("n_cols must be provided if n_rows_or_value is an integer")
             if n_rows < 1 or n_cols < 1:
                 raise ValueError("n_rows and n_cols must be strictly positive integers")
-            if n_rows * n_cols > 1000000:
-                raise ValueError("2D array size exceeds maximum limit of 1,000,000 elements")
-
+            length = n_rows * n_cols
             init_list = [0] * length
+        elif isinstance(n_rows_or_value, np.ndarray):
+            if n_rows_or_value.ndim != 2:
+                raise ValueError(f"Value must be a 2D array")
+            n_rows, n_cols = n_rows_or_value.shape
+            init_list = n_rows_or_value.flatten().tolist()
+        elif isinstance(n_rows_or_value, list) and all(isinstance(row, list) for row in n_rows_or_value):
+            n_rows = len(n_rows_or_value)
+            n_cols = len(n_rows_or_value[0])
+            if len(n_rows_or_value) != n_rows or any(len(row) != n_cols for row in n_rows_or_value):
+                raise ValueError(f"Value must be a 2D list of shape ({n_rows}, {n_cols})")
+            init_list = [item for row in n_rows_or_value for item in row]
+        else:
+            raise TypeError("Value must be a 2D numpy array or a list of lists")
 
         # let Parameter.__init__ infer or take the qua_type you pass
         super().__init__(
@@ -179,14 +193,7 @@ class QUA2DArray(Parameter):
 
     def push_to_opx(
         self,
-        value: Union[
-            int,
-            float,
-            bool,
-            Sequence[Union[int, float, bool]],
-            Sequence[Sequence[Union[int, float, bool]]],
-            np.ndarray,
-        ],
+        value: Union[np.ndarray, List[List[Number]]],
         job: RunningQmJob,
         verbosity: int = 1,
         time_out: int = 30,
@@ -199,8 +206,8 @@ class QUA2DArray(Parameter):
         - time_out: time out in seconds for the operation.
         """
 
-        if not isinstance(value, (int, float, bool, list, np.ndarray)):
-            raise TypeError("Value must be an int, float, bool, list or numpy array")
+        if not isinstance(value, (np.ndarray, list)):
+            raise TypeError("Value must be a numpy array or a list of lists")
 
         if isinstance(value, np.ndarray):
             if value.ndim != 2 or value.shape != (self.n_rows, self.n_cols):
@@ -233,3 +240,7 @@ class _QUA2DRow:
     def assign(self, col_or_vals: Union[ScalarInt, Sequence, QuaArrayVariable], val: Scalar = None):
         """Delegate to the parent’s assign."""
         self._parent.assign(self._row, col_or_vals, val)
+
+    def __len__(self):
+        return self._parent.n_cols
+    

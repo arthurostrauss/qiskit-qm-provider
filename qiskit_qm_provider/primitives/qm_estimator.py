@@ -11,7 +11,7 @@ from qiskit.primitives import (
     PubResult,
 )
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from qiskit.transpiler import PassManagerConfig, PassManager
 from qiskit.transpiler.passes import Optimize1qGatesDecomposition
@@ -35,7 +35,7 @@ class QMEstimatorOptions:
     Default: True.
     """
 
-    input_type: InputType | Literal["INPUT_STREAM", "IO1", "IO2", "DGX"] = InputType.INPUT_STREAM
+    input_type: InputType = InputType.INPUT_STREAM
     """The input mechanism to load the parameter values to the OPX. Choices are:
     - :class:`~.InputType.INPUT_STREAM`: Input stream mechanism.
     - :class:`~.InputType.IO1`: IO1.
@@ -55,7 +55,9 @@ class QMEstimatorOptions:
             raise TypeError(f"input_type must be of type InputType, got {type(self.input_type)}")
         if self.run_options is not None and not isinstance(self.run_options, dict):
             raise TypeError(f"run_options must be a dictionary, got {type(self.run_options)}")
-
+    
+    def as_dict(self) -> dict:
+        return asdict(self)
 
 class QMEstimatorV2(BaseEstimatorV2):
     """QM Estimator V2 class for Qiskit Quantum Machine backend."""
@@ -90,6 +92,12 @@ class QMEstimatorV2(BaseEstimatorV2):
                         qc.sdg(qubit)
                         qc.h(qubit)
                 qc.measure_all()
+            
+            from ..job.qm_estimator_job import QMEstimatorJob
+            job = QMEstimatorJob(self._backend, coerced_pubs, self.options.input_type, **self.options.as_dict())
+
+            job.submit()
+            return job
 
     @property
     def backend(self) -> QMBackend:

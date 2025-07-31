@@ -36,7 +36,7 @@ class QMSamplerOptions:
     Default: 1024.
     """
 
-    input_type: InputType | Literal["INPUT_STREAM", "IO1", "IO2", "DGX"] = InputType.INPUT_STREAM
+    input_type: InputType = InputType.INPUT_STREAM
     """The input mechanism to load the parameter values to the OPX. Choices are:
     - :class:`~.InputType.INPUT_STREAM`: Input stream mechanism.
     - :class:`~.InputType.IO1`: IO1.
