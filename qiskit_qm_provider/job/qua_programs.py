@@ -43,18 +43,26 @@ def _process_circuit(
         # Save integer state to each stream
 
         for creg, stream in zip(qc.cregs, reg_streams):
-            for i in range(creg.size):
-                assign(state_int, state_int + (1 << i) * Cast.to_int(clbits_dict[creg.name][i]))
+            assign(
+                state_int,
+                sum(
+                    (state_int + (1 << i) * Cast.to_int(clbits_dict[creg.name][i]) for i in range(1, creg.size)),
+                    start=Cast.to_int(clbits_dict[creg.name][0]),
+                ),
+            )
             save(state_int, stream)
-            assign(state_int, 0)
         if num_solo_bits > 0:
-            for i in range(num_solo_bits):
-                assign(
-                    state_int,
-                    state_int + (1 << i) * Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i]),
-                )
+            assign(
+                state_int,
+                sum(
+                    (
+                        state_int + (1 << i) * Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i])
+                        for i in range(1, num_solo_bits)
+                    ),
+                    start=Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][0]),
+                ),
+            )
             save(state_int, solo_bits_stream)
-            assign(state_int, 0)
 
 
 def _process_sampler_pub(
@@ -241,18 +249,26 @@ def get_run_program(backend: QMBackend, num_shots, circuits: List[QuantumCircuit
             # Save integer state to each stream
 
             for creg, stream in zip(qc.cregs, reg_streams):
-                for i in range(creg.size):
-                    assign(state_int, state_int + (1 << i) * Cast.to_int(clbits_dict[creg.name][i]))
+                assign(
+                    state_int,
+                    sum(
+                        (state_int + (1 << i) * Cast.to_int(clbits_dict[creg.name][i]) for i in range(1, creg.size)),
+                        start=Cast.to_int(clbits_dict[creg.name][0]),
+                    ),
+                )
                 save(state_int, stream)
-                assign(state_int, 0)
             if num_solo_bits > 0:
-                for i in range(num_solo_bits):
-                    assign(
-                        state_int,
-                        state_int + (1 << i) * Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i]),
-                    )
+                assign(
+                    state_int,
+                    sum(
+                        (
+                            state_int + (1 << i) * Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i])
+                            for i in range(1, num_solo_bits)
+                        ),
+                        start=Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][0]),
+                    ),
+                )
                 save(state_int, solo_bits_stream)
-                assign(state_int, 0)
 
     if not has_conflicting_calibrations(circuits):
         with program() as prog:

@@ -40,7 +40,7 @@ class QMEstimatorOptions:
     - :class:`~.InputType.INPUT_STREAM`: Input stream mechanism.
     - :class:`~.InputType.IO1`: IO1.
     - :class:`~.InputType.IO2`: IO2.
-    - :class:`~.InputType.DGX`: Using DGX Quantum communication.
+    - :class:`~.InputType.DGX_Q`: Using DGX Quantum communication.
     Default: InputType.INPUT_STREAM."""
 
     run_options: dict[str, Any] | None = None
@@ -55,9 +55,10 @@ class QMEstimatorOptions:
             raise TypeError(f"input_type must be of type InputType, got {type(self.input_type)}")
         if self.run_options is not None and not isinstance(self.run_options, dict):
             raise TypeError(f"run_options must be a dictionary, got {type(self.run_options)}")
-    
+
     def as_dict(self) -> dict:
         return asdict(self)
+
 
 class QMEstimatorV2(BaseEstimatorV2):
     """QM Estimator V2 class for Qiskit Quantum Machine backend."""
@@ -92,8 +93,9 @@ class QMEstimatorV2(BaseEstimatorV2):
                         qc.sdg(qubit)
                         qc.h(qubit)
                 qc.measure_all()
-            
+
             from ..job.qm_estimator_job import QMEstimatorJob
+
             job = QMEstimatorJob(self._backend, coerced_pubs, self.options.input_type, **self.options.as_dict())
 
             job.submit()

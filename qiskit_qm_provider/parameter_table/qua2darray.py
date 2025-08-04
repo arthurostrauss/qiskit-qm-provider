@@ -243,4 +243,3 @@ class _QUA2DRow:
 
     def __len__(self):
         return self._parent.n_cols
-    

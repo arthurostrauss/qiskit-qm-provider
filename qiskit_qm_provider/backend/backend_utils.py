@@ -214,26 +214,36 @@ def add_basic_macros_to_machine(machine: BasicQuam, reset_type: Literal["active"
         except ValueError as e:
             warnings.warn("Could not add default two qubit gates. Add it manually if necessary.")
 
-def get_integers_from_cregs(qc: QuantumCircuit, result: CompilationResult) -> dict[str, QuaVariableInt]:
+
+def get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult) -> dict[str, dict[str, QuaVariableInt]]:
     """
     Get the measurement outcomes resulting from the execution of the QuantumCircuit.
-    This is returned as a dictionary of the form {creg_name: state_int}, where state_int is a QUA variable that contains the integer representation of each ClassicalRegister belonging to the QuantumCircuit.
+    This is returned as a dictionary of the form {creg_name: {"value": [outcome_values], "state_int": state_int}}, where state_int is a QUA variable that contains the integer representation of each ClassicalRegister belonging to the QuantumCircuit.
     Note that this follows the Qiskit convention of using the least significant bit (LSB) of the integer to represent the state of the qubit with index 0.
     We also support the case where the QuantumCircuit contains loose bits (bits that are not associated with a ClassicalRegister).
     In this case, an extra ClassicalRegister is added to the QuantumCircuit with the name _bit, containing the measurement outcomes of the loose bits with the same convention.
     """
     clbits_dict = {
-        creg.name: [result.result_program[creg.name][i] for i in range(creg.size)] for creg in qc.cregs
+        creg.name: {
+            "value": [result.result_program[creg.name][i] for i in range(creg.size)],
+            "state_int": declare(int),
+        }
+        for creg in qc.cregs
     }
-    state_ints = {creg.name: declare(int) for creg in qc.cregs}
     num_solo_bits = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
     if num_solo_bits > 0:
-        clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX] = [
-            result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"] for i in range(num_solo_bits)
-        ]
-        state_ints[_QASM3_DUMP_LOOSE_BIT_PREFIX] = declare(int)
-    
-    for creg_name, state_int in state_ints.items():
-        c_reg_res = clbits_dict[creg_name]
-        assign(state_int, sum((((1 << i) * Cast.to_int(c_reg_res[i])) for i in range(1, len(c_reg_res))), start=Cast.to_int(c_reg_res[0])))
-    return state_ints
+        clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX] = {
+            "value": [result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"] for i in range(num_solo_bits)],
+            "state_int": declare(int),
+        }
+
+    for creg_dict in clbits_dict.values():
+        c_reg_res = creg_dict["value"]
+        assign(
+            creg_dict["state_int"],
+            sum(
+                (((1 << i) * Cast.to_int(c_reg_res[i])) for i in range(1, len(c_reg_res))),
+                start=Cast.to_int(c_reg_res[0]),
+            ),
+        )
+    return clbits_dict

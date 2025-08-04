@@ -41,7 +41,7 @@ class QMSamplerOptions:
     - :class:`~.InputType.INPUT_STREAM`: Input stream mechanism.
     - :class:`~.InputType.IO1`: IO1.
     - :class:`~.InputType.IO2`: IO2.
-    - :class:`~.InputType.DGX`: Using DGX Quantum communication.
+    - :class:`~.InputType.DGX_Q`: Using DGX Quantum communication.
     Default: InputType.INPUT_STREAM."""
 
     run_options: dict[str, Any] | None = None

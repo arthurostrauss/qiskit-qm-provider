@@ -117,7 +117,7 @@ class ParameterTable:
                             self._input_type = input_type
                         elif self._input_type != input_type:
                             raise ValueError("All parameters in the table must have the same input type.")
-                        if input_type == InputType.DGX:
+                        if input_type == InputType.DGX_Q:
                             assert (
                                 len(parameter) == 4
                             ), "Direction of the parameter is missing (required for DGX input)."
@@ -153,13 +153,13 @@ class ParameterTable:
                     self._input_type = parameter.input_type
                 elif self._input_type != parameter.input_type:
                     raise ValueError("All parameters in the table must have the same input type.")
-                if self._input_type == InputType.DGX:
+                if self._input_type == InputType.DGX_Q:
                     if self._direction is None:
                         self._direction = parameter.direction
                     elif self._direction != parameter.direction:
                         raise ValueError("All parameters in the table must have the same direction.")
 
-        if self.input_type == InputType.DGX:
+        if self.input_type == InputType.DGX_Q:
             from qm.qua import qua_struct, QuaArray
 
             attributes = {
@@ -178,7 +178,7 @@ class ParameterTable:
             declare_streams: Boolean indicating if output streams should be declared for all the parameters.
 
         """
-        if self.input_type == InputType.DGX:
+        if self.input_type == InputType.DGX_Q:
             from qm.qua import (
                 declare_struct,
                 declare_external_stream,
@@ -262,7 +262,7 @@ class ParameterTable:
         Python side.
         Args: filter_func: Optional function to filter the parameters to be loaded.
         """
-        if self.input_type == InputType.DGX:
+        if self.input_type == InputType.DGX_Q:
             from qm.qua import receive_from_external_stream
 
             if not self._usable_for_dgx_communication:
@@ -610,7 +610,7 @@ class ParameterTable:
 
     @property
     def packet(self):
-        if not self.input_type == InputType.DGX:
+        if not self.input_type == InputType.DGX_Q:
             raise ValueError("No packet declared for non-DGX parameter tables.")
         return self._packet
 
@@ -632,7 +632,7 @@ class ParameterTable:
         Returns:
 
         """
-        if self.input_type != InputType.DGX:
+        if self.input_type != InputType.DGX_Q:
             raise ValueError("Direction is only relevant for DGX parameter tables.")
         return self._direction
 
@@ -652,7 +652,7 @@ class ParameterTable:
             qm: QuantumMachine object to push the values to (IO variables). Relevant only for OPX+ with IO variables.
             verbosity: Verbosity level of the pushing process.
         """
-        if self.input_type != InputType.DGX:
+        if self.input_type != InputType.DGX_Q:
             for parameter, value in param_dict.items():
                 self.get_parameter(parameter).push_to_opx(value, job, qm, verbosity)
 
@@ -704,7 +704,7 @@ class ParameterTable:
         Args:
             reset: Whether to reset the parameter to a 0 value (in the appropriate QUA type) after sending it to the client/server side.
         """
-        if self.input_type != InputType.DGX:
+        if self.input_type != InputType.DGX_Q:
             for parameter in self.parameters:
                 parameter.stream_back(reset)
         else:
@@ -741,7 +741,7 @@ class ParameterTable:
         Returns: Dictionary of the form {parameter_name: parameter_value}.
         """
         param_dict = {}
-        if self.input_type == InputType.DGX:
+        if self.input_type == InputType.DGX_Q:
             if not self._usable_for_dgx_communication:
                 raise ValueError(
                     "Parameter table not usable for DGX communication, as it contains parameters that "
@@ -892,12 +892,12 @@ class ParameterTable:
         """
         Client function: Reset the parameter table to its initial state.
         """
-        if self.input_type == InputType.DGX:
+        if self.input_type == InputType.DGX_Q:
             raise ValueError("Cannot reset DGX parameter tables.")
 
         for parameter in self.parameters:
             parameter.reset()
-    
+
     def reset_vars(self):
         """
         QUA Macro:Reset the QUA variables of the parameter table to 0 (in the appropriate QUA type).

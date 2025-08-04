@@ -85,11 +85,9 @@ except ImportError:
         ImportWarning,
     )
     QISKIT_PULSE_AVAILABLE = False
-    QiskitChannel = (
-        DriveChannel
-    ) = (
-        MeasureChannel
-    ) = AcquireChannel = ControlChannel = Schedule = ScheduleBlock = Play = Waveform = SymbolicPulse = None
+    QiskitChannel = DriveChannel = MeasureChannel = AcquireChannel = ControlChannel = Schedule = ScheduleBlock = (
+        Play
+    ) = Waveform = SymbolicPulse = None
 
 
 def requires_qiskit_pulse(func):

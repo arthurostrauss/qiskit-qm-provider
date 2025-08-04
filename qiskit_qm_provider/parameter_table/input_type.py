@@ -3,7 +3,7 @@ from typing import Optional, Union, ClassVar
 
 
 class InputType(Enum):
-    DGX = "DGX"
+    DGX_Q = "DGX_Q"
     INPUT_STREAM = "INPUT_STREAM"
     IO1 = "IO1"
     IO2 = "IO2"
@@ -24,14 +24,14 @@ class InputType(Enum):
 class Direction(Enum):
     """
     The direction of the data flow.
-    INCOMING: OPX -> DGX
-    OUTGOING: DGX -> OPX
+    INCOMING: OPX -> DGX_Q
+    OUTGOING: DGX_Q -> OPX
 
-    Useful for defining DGX streams.
+    Useful for defining DGX Quantum streams.
     """
 
-    INCOMING = "INCOMING"  # OPX -> DGX
-    OUTGOING = "OUTGOING"  # DGX -> OPX
+    INCOMING = "INCOMING"  # OPX -> DGX_Q
+    OUTGOING = "OUTGOING"  # DGX_Q -> OPX
 
     def __str__(self) -> str:
         return self.value

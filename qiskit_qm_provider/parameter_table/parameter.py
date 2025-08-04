@@ -130,7 +130,7 @@ class Parameter:
         name: str,
         value: Optional[Union[int, float, List, np.ndarray]] = None,
         qua_type: Optional[Union[str, type]] = None,
-        input_type: Optional[Union[Literal["DGX", "INPUT_STREAM", "IO1", "IO2"], InputType]] = None,
+        input_type: Optional[Union[Literal["DGX_Q", "INPUT_STREAM", "IO1", "IO2"], InputType]] = None,
         direction: Optional[Union[Literal["INCOMING", "OUTGOING"], Direction]] = None,
         units: str = "",
     ):
@@ -140,13 +140,13 @@ class Parameter:
             name: Name of the parameter.
             value: Initial value of the parameter.
             qua_type: Type of the QUA variable to be declared (int, fixed, bool). If none is provided, the type is inferred from initial value.
-            input_type: Input type of the parameter (dgx, input_stream, IO1, IO2). Default is None.
+            input_type: Input type of the parameter (DGX_Q, INPUT_STREAM, IO1, IO2). Default is None.
             direction: Direction of the parameter stream (INCOMING, OUTGOING).
-                The direction describes in this case the relationship between DGX and OPX in the following manner:
-                DGX -> OPX: OUTGOING
-                OPX -> DGX: INCOMING
+                The direction describes in this case the relationship between DGX_Q and OPX in the following manner:
+                DGX_Q -> OPX: OUTGOING
+                OPX -> DGX_Q: INCOMING
                 Default is None. Relevant only if
-                          input_type is dgx.
+                          input_type is DGX_Q.
             units: Units of the parameter. Default is "".
 
         """
@@ -177,7 +177,7 @@ class Parameter:
         self._table_indices: Dict[str, int] = {}
         self._main_table = None
 
-        if self._input_type == InputType.DGX and self.direction is None:
+        if self._input_type == InputType.DGX_Q and self.direction is None:
             raise ValueError("Direction must be provided for DGX input type.")
 
         self._initialized = True
@@ -237,7 +237,7 @@ class Parameter:
         """
         Returns:
             The ParameterTable object used to declare the parameter.
-            Specifically, the one that should be used for communication if InputType is DGX.
+            Specifically, the one that should be used for communication if InputType is DGX_Q.
         :returns: ParameterTable object or None if not found.
 
         """
@@ -282,24 +282,22 @@ class Parameter:
             if value_cond is not None and not isinstance(value_cond, Parameter):
                 raise ValueError("Invalid input. value_cond should be of same type as value.")
             if self.is_array:
-                i = self._ctr
-                with for_(i, 0, i < self.length, i + 1):
+                with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
                     assign_with_condition(
-                        self.var[i],
-                        value.var[i],
-                        value_cond.var[i] if value_cond else None,
+                        self.var[self._ctr],
+                        value.var[self._ctr],
+                        value_cond.var[self._ctr] if value_cond else None,
                     )
             else:
                 assign_with_condition(self.var, value.var, value_cond.var if value_cond else None)
         else:
             if self.is_array:
                 if isinstance(value, QuaArrayVariable):
-                    i = self._ctr
-                    with for_(i, 0, i < self.length, i + 1):
+                    with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
                         assign_with_condition(
-                            self.var[i],
-                            value[i],
-                            value_cond[i] if value_cond is not None else None,
+                            self.var[self._ctr],
+                            value[self._ctr],
+                            value_cond[self._ctr] if value_cond is not None else None,
                         )
                 else:
                     if len(value) != self.length:
@@ -322,7 +320,7 @@ class Parameter:
             raise ValueError("Variable already declared. Cannot declare again.")
         if self.input_type == InputType.INPUT_STREAM:
             self._var = declare_input_stream(t=self.type, name=self.name, value=self.value)
-        elif self.input_type == InputType.DGX:
+        elif self.input_type == InputType.DGX_Q:
             if self.is_standalone():
                 from qm.qua import declare_struct, declare_external_stream
 
@@ -373,7 +371,7 @@ class Parameter:
 
     @property
     def direction(self):
-        if self.input_type != InputType.DGX:
+        if self.input_type != InputType.DGX_Q:
             warnings.warn("This parameter is not associated with a DGX stream.")
             raise ValueError("This parameter is not associated with a DGX stream.")
         return self._direction
@@ -387,7 +385,7 @@ class Parameter:
         Returns:
 
         """
-        if self.input_type != InputType.DGX:
+        if self.input_type != InputType.DGX_Q:
             raise ValueError("Invalid input type for calling dgx_struct property. Must be set to InputType.DGX.")
         if self.is_standalone():
             try:
@@ -441,7 +439,7 @@ class Parameter:
         """
         if not self.is_declared:
             raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
-        if self.input_type == InputType.DGX:
+        if self.input_type == InputType.DGX_Q:
             var = getattr(self._var, self.name)
             return var if self.is_array else var[0]
 
@@ -512,10 +510,8 @@ class Parameter:
         """
         if self.is_declared and self.stream is not None:
             if self.is_array:
-                # i = self._ctr
-                # with for_(i, 0, i < self.length, i + 1):
-                for i in range(self.length):
-                    save(self.var[i], self.stream)
+                with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
+                    save(self.var[self._ctr], self.stream)
             else:
                 save(self.var, self.stream)
         else:
@@ -601,18 +597,18 @@ class Parameter:
 
     def load_input_value(self):
         """
-        Advance the input stream associated with the parameter.
-        The mechanism to advance the input stream depends on the input type.
+        QUA Macro: Load a value from the input mechanism associated with the parameter.
+        This should be corresponding to one call of the `fetch_from_opx` method on the client side.
         For input streams, the stream is advanced.
         For IO1 and IO2, the value is assigned to the QUA variable.
-        For dgx, the value is polled.
+        For DGX Quantum, the value is polled.
         """
         if self.input_type is None:
             raise ValueError("No input type specified")
         elif self.input_type == InputType.INPUT_STREAM:
             qua_advance_input_stream(self.var)
 
-        elif self.input_type == InputType.DGX:
+        elif self.input_type == InputType.DGX_Q:
             from qm.qua import receive_from_external_stream
 
             if self.is_standalone():
@@ -649,7 +645,8 @@ class Parameter:
         time_out: int = 30,
     ):
         """
-        To be outside QUA program: pass an input value to the OPX from Python
+        Client function: pass an input value to the OPX from client/server side.
+        This should be corresponding to one call of the `load_input_value` method on the QUA side.
         Args:
             value: Value to be passed to the OPX.
             job: RunningQmJob object (required if input_type is IO1 or IO2 or input_stream).
@@ -707,7 +704,7 @@ class Parameter:
                 print(f"Pushing value {value} to {self.name} through input stream.")
             job.push_to_input_stream(self.name, value)
 
-        elif self.input_type == InputType.DGX:
+        elif self.input_type == InputType.DGX_Q:
             if self.is_standalone():
                 if self.direction == Direction.INCOMING:
                     raise ValueError("Cannot push value to Incoming stream.")
@@ -736,15 +733,14 @@ class Parameter:
 
     def stream_back(self, reset: bool = False):
         """
-        QUA macro designed to send the value of the parameter to Python.
-        This method uses IO variables if input type is IO1 or IO2, and
-        external streams if input type is dgx. If specified as an input stream,
-        the value is saved to the stream.
+        QUA Macro: Save/stream the value of the parameter to the client/server side.
+        This method uses stream_processing method to save the value to the stream if input_type is different from DGX Quantum.
+        If input_type is DGX Quantum, the value is sent to the external stream.
 
         Args:
             reset: Whether to reset the parameter to a 0 value (in the appropriate QUA type) after sending it to the client/server side.
         """
-        if self.input_type != InputType.DGX:
+        if self.input_type != InputType.DGX_Q:
             self.save_to_stream()
         else:
             from qm.qua import send_to_external_stream
@@ -772,7 +768,7 @@ class Parameter:
         time_out=30,
     ):
         """
-        Fetches data based on the specified input type and returns the fetched value.
+        Client function: Fetches data based on the specified input type and returns the fetched value.
 
         This method handles various input types defined by the `InputType` enumeration
         (IO1, IO2, INPUT_STREAM, DGX). It manages the fetching logic, including waiting
@@ -792,7 +788,7 @@ class Parameter:
         :param time_out: Time in seconds to wait for the job to be paused before fetching data. Defaults to 30 seconds.
         :return: The fetched value depending upon the input type and fetching logic.
         """
-        if self.input_type != InputType.DGX:
+        if self.input_type != InputType.DGX_Q:
             if verbosity > 1:
                 print(f"Fetching value from {self.name} with input type {self.input_type}")
             result_handle = job.result_handles
@@ -805,7 +801,7 @@ class Parameter:
             result.wait_for_values(fetching_index + fetching_size, time_out)
             value = result.fetch(slice(fetching_index, fetching_index + fetching_size))["value"]
 
-        elif self.input_type == InputType.DGX:
+        elif self.input_type == InputType.DGX_Q:
             if not self.is_standalone():  # Part of a parameter table
                 raise RuntimeError(
                     f"This method should be called from the"
@@ -835,7 +831,7 @@ class Parameter:
 
     def reset(self):
         """
-        Reset the parameter to its initial state.
+        Client function: Reset the parameter to its initial state.
         """
         self._is_declared = False
         self._var = None
@@ -851,7 +847,7 @@ class Parameter:
 
     def reset_var(self):
         """
-        Assign the QUA variable to 0 (in the appropriate QUA type).
+        QUA Macro: Assign the QUA variable to 0 (in the appropriate QUA type).
         """
         if self.is_array:
             with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):

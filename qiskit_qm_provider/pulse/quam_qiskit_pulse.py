@@ -72,7 +72,14 @@ class QuAMQiskitPulse(QuAMPulse):
 
     def waveform_function(
         self,
-    ) -> Union[float, complex, List[float], List[complex], Tuple[float, float], Tuple[List[float], List[float]],]:
+    ) -> Union[
+        float,
+        complex,
+        List[float],
+        List[complex],
+        Tuple[float, float],
+        Tuple[List[float], List[float]],
+    ]:
         if isinstance(self.pulse, Waveform):
             return self.pulse.samples.tolist()
 
