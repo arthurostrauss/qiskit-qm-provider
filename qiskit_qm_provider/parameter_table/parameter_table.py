@@ -644,7 +644,7 @@ class ParameterTable:
         verbosity: int = 1,
     ):
         """
-        Push the values of the parameters to the OPX (Python side).
+        Client function: Push the values of the parameters to the OPX (Python side).
         Args:
             param_dict: Dictionary of the form {parameter_name: parameter_value}.
             The parameter value can be either a Python value or a QuaExpressionType.
@@ -695,16 +695,18 @@ class ParameterTable:
             if verbosity > 1:
                 print(f"Sent packet: {values_for_packet}")
 
-    def stream_back(self):
+    def stream_back(self, reset: bool = False):
         """
-        Stream the values of the parameters to Python.
-            This method is used as a QUA macro to send the values of the parameters to Python.
-            It is expected to work jointly with the use of fetch_from_opx method on the Python side.
+        QUA Macro: Stream the values of the parameters to Python.
+            This method is used as a QUA macro to send the values of the parameters to the client/server side.
+            It is expected to work jointly with the use of fetch_from_opx method on the client side.
 
+        Args:
+            reset: Whether to reset the parameter to a 0 value (in the appropriate QUA type) after sending it to the client/server side.
         """
         if self.input_type != InputType.DGX:
             for parameter in self.parameters:
-                parameter.stream_back()
+                parameter.stream_back(reset)
         else:
             if not self._usable_for_dgx_communication:
                 raise ValueError(
@@ -716,6 +718,9 @@ class ParameterTable:
             from qm.qua import send_to_external_stream
 
             send_to_external_stream(self._qua_external_stream, self._packet)
+            if reset:
+                for parameter in self.parameters:
+                    parameter.reset_var()
 
     def fetch_from_opx(
         self,
@@ -726,7 +731,7 @@ class ParameterTable:
         time_out: int = 30,
     ):
         """
-        Fetch the values of the parameters from the OPX (Python side).
+        Client function: Fetch the values of the parameters from the OPX (Client/server side).
         The values are returned in a dictionary of the form {parameter_name: parameter_value}.
 
         Args: job: RunningQmJob object to fetch the values from (input stream).
@@ -885,13 +890,20 @@ class ParameterTable:
 
     def reset(self):
         """
-        Reset the parameter table to its initial state.
+        Client function: Reset the parameter table to its initial state.
         """
         if self.input_type == InputType.DGX:
             raise ValueError("Cannot reset DGX parameter tables.")
 
         for parameter in self.parameters:
             parameter.reset()
+    
+    def reset_vars(self):
+        """
+        QUA Macro:Reset the QUA variables of the parameter table to 0 (in the appropriate QUA type).
+        """
+        for parameter in self.parameters:
+            parameter.reset_var()
 
     def __deepcopy__(self, memo=None):
         if memo is None:

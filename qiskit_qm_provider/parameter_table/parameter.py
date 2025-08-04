@@ -734,12 +734,15 @@ class Parameter:
                     f"was associated with a bigger packet."
                 )
 
-    def stream_back(self):
+    def stream_back(self, reset: bool = False):
         """
         QUA macro designed to send the value of the parameter to Python.
         This method uses IO variables if input type is IO1 or IO2, and
         external streams if input type is dgx. If specified as an input stream,
         the value is saved to the stream.
+
+        Args:
+            reset: Whether to reset the parameter to a 0 value (in the appropriate QUA type) after sending it to the client/server side.
         """
         if self.input_type != InputType.DGX:
             self.save_to_stream()
@@ -757,6 +760,8 @@ class Parameter:
                 raise ValueError("Cannot send value to outgoing stream.")
 
             send_to_external_stream(self._external_stream_outgoing, self._var)
+        if reset:
+            self.reset_var()
 
     def fetch_from_opx(
         self,
@@ -843,6 +848,26 @@ class Parameter:
         self._index = -1
         self._main_table = None
         self._table_indices = {}
+
+    def reset_var(self):
+        """
+        Assign the QUA variable to 0 (in the appropriate QUA type).
+        """
+        if self.is_array:
+            with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
+                if self.type == int:
+                    assign(self.var[self._ctr], 0)
+                elif self.type == fixed:
+                    assign(self.var[self._ctr], 0.0)
+                elif self.type == bool:
+                    assign(self.var[self._ctr], False)
+        else:
+            if self.type == int:
+                assign(self.var, 0)
+            elif self.type == fixed:
+                assign(self.var, 0.0)
+            elif self.type == bool:
+                assign(self.var, False)
 
     def __deepcopy__(self, memodict=None):
         if memodict is None:
