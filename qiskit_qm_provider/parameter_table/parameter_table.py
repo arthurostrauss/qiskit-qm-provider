@@ -904,8 +904,6 @@ class ParameterTable:
         """
         Client function: Reset the parameter table to its initial state.
         """
-        if self.input_type == InputType.DGX_Q:
-            raise ValueError("Cannot reset DGX parameter tables.")
 
         for parameter in self.parameters:
             parameter.reset()
