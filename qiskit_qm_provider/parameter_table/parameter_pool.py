@@ -185,6 +185,7 @@ class ParameterPool:
             path_to_opnic_dev (Optional[str]): The path to the OPNIC development directory
         """
         from .opnic_utils import patch_opnic_wrapper
+        from .parameter_table import ParameterTable
 
         def check_function(param_table: ParameterTable | Parameter) -> bool:
             return (
