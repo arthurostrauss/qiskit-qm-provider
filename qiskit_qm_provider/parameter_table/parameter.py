@@ -322,16 +322,17 @@ class Parameter:
             self._var = declare_input_stream(t=self.type, name=self.name, value=self.value)
         elif self.input_type == InputType.DGX_Q:
             if self.is_standalone():
-                from qm.qua import declare_struct, declare_external_stream
+                from qm.qua import declare_struct, declare_external_stream, QuaStreamDirection
 
                 # Parameter not part of a parameter table
+                self.stream_id = ParameterPool.get_id(self)
                 dgx_struct = self.dgx_struct
                 self._var = declare_struct(dgx_struct)
-
+                
                 if self.direction == Direction.INCOMING:
-                    self._external_stream_outgoing = declare_external_stream(dgx_struct, self.stream_id, "OUTGOING")
+                    self._external_stream_outgoing = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.OUTGOING)
                 else:
-                    self._external_stream_incoming = declare_external_stream(dgx_struct, self.stream_id, "INCOMING")
+                    self._external_stream_incoming = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.INCOMING)
             else:
                 raise ValueError(
                     f"This parameter is part of a parameter table. "
@@ -346,7 +347,7 @@ class Parameter:
         if pause_program:
             pause()
         self._is_declared = True
-        self.stream_id = ParameterPool.get_id(self)
+        
         return self._var
 
     def declare_stream(self):
