@@ -612,7 +612,19 @@ class ParameterTable:
     def packet(self):
         if not self.input_type == InputType.DGX_Q:
             raise ValueError("No packet declared for non-DGX parameter tables.")
+        if not self.is_declared:
+            raise ValueError("Table not declared. Please declare the table first.")
         return self._packet
+    
+    @property   
+    def dgx_struct(self):
+        """
+        Get the struct type of the parameter table.
+        Relevant for DGX Quantum parameter tables.
+        """
+        if not self.input_type == InputType.DGX_Q:
+            raise ValueError("No struct declared for non-DGX parameter tables.")
+        return self._packet_type
 
     @property
     def stream_id(self) -> int:
