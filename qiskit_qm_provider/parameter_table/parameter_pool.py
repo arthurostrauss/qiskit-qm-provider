@@ -57,6 +57,8 @@ class ParameterPool:
             if hasattr(value, "reset"):
                 value.reset()
         cls._parameters_dict.clear()
+        cls._configured = False
+        cls._patched = False
 
     @classmethod
     def get_all_ids(cls) -> List[int]:
