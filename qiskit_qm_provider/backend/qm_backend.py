@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     )
     from iqcc_cloud_client import IQCC_Cloud
     from oqc import QubitsMapping, Compiler, CompilationResult, OperationIdentifier
+    from quam.utils.qua_types import Scalar
 
 # Helper modules
 from ..parameter_table import ParameterTable, InputType, Parameter
@@ -857,7 +858,7 @@ class QMBackend(Backend):
     def quantum_circuit_to_qua(
         self,
         qc: QuantumCircuit,
-        param_table: Optional[ParameterTable | List[ParameterTable | Parameter]] = None,
+        param_table: Optional[ParameterTable | List[ParameterTable | Parameter] | Dict[str, Scalar]] = None,
     ) -> CompilationResult:
         """
         Convert a QuantumCircuit to a QUA program (can be called within an existing QUA program or to generate a
@@ -895,14 +896,17 @@ class QMBackend(Backend):
             inputs = {}
             if isinstance(param_table, (ParameterTable, Parameter)):
                 param_table = [param_table]
-            for table in param_table:
-                if not table.is_declared:
-                    if isinstance(table, ParameterTable):
-                        table.declare_variables(pause_program=False)
-                    else:
-                        table.declare_variable(pause_program=False)
-                variables = table.variables_dict if isinstance(table, ParameterTable) else {table.name: table.var}
-                inputs.update(variables)
+            if isinstance(param_table, List):
+                for table in param_table:
+                    if not table.is_declared:
+                        if isinstance(table, ParameterTable):
+                            table.declare_variables(pause_program=False)
+                        else:
+                            table.declare_variable(pause_program=False)
+                    variables = table.variables_dict if isinstance(table, ParameterTable) else {table.name: table.var}
+                    inputs.update(variables)
+            elif isinstance(param_table, Dict):
+                inputs.update(param_table)
 
         result = self.compiler.compile(
             open_qasm_code,
