@@ -179,7 +179,7 @@ def add_basic_macros_to_machine(machine: BasicQuam, reset_type: Literal["active"
     :param machine: The BaseQuam instance to which macros will be added.
     :param reset_type: The type of reset to use. Can be 'active' or 'thermalize'.
     """
-    from quam_libs.components.gate_macros import (
+    from iqcc_calibration_tools.quam_config.components.gate_macros import (
         ResetMacro,
         VirtualZMacro,
         MeasureMacro,

@@ -130,3 +130,5 @@ qiskit_qm_provider/.DS_Store
 .DS_Store
 
 .vscode/settings.json
+
+pyrightconfig.json

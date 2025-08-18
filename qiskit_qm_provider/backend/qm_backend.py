@@ -13,6 +13,7 @@ from qiskit.circuit import (
     Instruction,
 )
 from qiskit.circuit.controlflow import CONTROL_FLOW_OP_NAMES
+from qiskit.circuit.classical.expr import Var
 from qiskit.primitives import BitArray, SamplerPubResult, DataBin
 from qiskit.providers import BackendV2 as Backend, QubitProperties, Options
 
@@ -45,6 +46,8 @@ if TYPE_CHECKING:
     from iqcc_cloud_client import IQCC_Cloud
     from oqc import QubitsMapping, Compiler, CompilationResult, OperationIdentifier
     from quam.utils.qua_types import Scalar
+    from ..job.qm_job import QMJob, IQCCJob
+    from quam_builder.architecture.superconducting.qpu.base_quam import BaseQuam as Quam
 
 # Helper modules
 from ..parameter_table import ParameterTable, InputType, Parameter
@@ -58,10 +61,7 @@ from .backend_utils import (
     validate_circuits,
 )
 from .qm_instruction_properties import QMInstructionProperties
-
-if TYPE_CHECKING:
-    from qiskit_qm_provider.job.qm_job import QMJob, IQCCJob
-    from quam_builder.architecture.superconducting.qpu.base_quam import BaseQuam as Quam
+    
 __all__ = ["QMBackend", "QISKIT_PULSE_AVAILABLE"]
 
 try:  # Importing Qiskit Pulse components
@@ -149,8 +149,8 @@ class QMBackend(Backend):
         self._qubit_dict = {qubit.name: i for i, qubit in enumerate(machine.active_qubits)}
         self._qubit_pair_dict = {
             qubit_pair.name: (
-                self._qubit_dict[qubit_pair.qubit_control.name],
-                self._qubit_dict[qubit_pair.qubit_target.name],
+                self._qubit_dict.get(qubit_pair.qubit_control.name, None),
+                self._qubit_dict.get(qubit_pair.qubit_target.name, None),
             )
             for qubit_pair in machine.active_qubit_pairs
         }
@@ -346,7 +346,7 @@ class QMBackend(Backend):
 
         gate_map = get_extended_gate_name_mapping()
         target = Target(
-            "Transmon based QuAM",
+            "Qiskit Backend for Quantum Abstract Machine (Quam)",
             dt=1e-9,
             granularity=4,
             num_qubits=len(machine.active_qubits),
@@ -393,8 +393,11 @@ class QMBackend(Backend):
                     self._custom_instructions[op_] = gate_op
 
         for qubit_pair in machine.active_qubit_pairs:
-            q_ctrl = self.qubit_dict[qubit_pair.qubit_control.name]
-            q_tgt = self.qubit_dict[qubit_pair.qubit_target.name]
+            q_ctrl = self.qubit_dict.get(qubit_pair.qubit_control.name, None)
+            q_tgt = self.qubit_dict.get(qubit_pair.qubit_target.name, None)
+            if q_ctrl is None or q_tgt is None:
+                warnings.warn(f"Qubit pair {qubit_pair.name} contains a qubit ({qubit_pair.qubit_control.name if q_ctrl is None else qubit_pair.qubit_target.name}) that is not part of the active qubits.")
+                continue
             coupling_map.append([q_ctrl, q_tgt])
             for op, func in qubit_pair.macros.items():
                 op_ = look_for_standard_op(op)
@@ -511,8 +514,10 @@ class QMBackend(Backend):
                 qubit_pair: QubitPair = element.parent
                 qubit_control = qubit_pair.qubit_control
                 qubit_target = qubit_pair.qubit_target
-                q_ctrl_idx = self.qubit_dict[qubit_control.name]
-                q_tgt_idx = self.qubit_dict[qubit_target.name]
+                q_ctrl_idx = self.qubit_dict.get(qubit_control.name, None)
+                q_tgt_idx = self.qubit_dict.get(qubit_target.name, None)
+                if q_ctrl_idx is None or q_tgt_idx is None:
+                    continue
                 if (q_ctrl_idx, q_tgt_idx) == tuple(qubits):
                     channels.append(channel)
         if len(channels) == 0:
@@ -858,7 +863,7 @@ class QMBackend(Backend):
     def quantum_circuit_to_qua(
         self,
         qc: QuantumCircuit,
-        param_table: Optional[ParameterTable | List[ParameterTable | Parameter] | Dict[str, Scalar]] = None,
+        param_table: Optional[ParameterTable | List[ParameterTable | Parameter] | Dict[str | QiskitParameter | Var, Scalar]] = None,
     ) -> CompilationResult:
         """
         Convert a QuantumCircuit to a QUA program (can be called within an existing QUA program or to generate a
@@ -906,7 +911,11 @@ class QMBackend(Backend):
                     variables = table.variables_dict if isinstance(table, ParameterTable) else {table.name: table.var}
                     inputs.update(variables)
             elif isinstance(param_table, Dict):
-                inputs.update(param_table)
+                for key, value in param_table.items():
+                    if isinstance(key, (QiskitParameter, Var)):
+                        inputs[key.name] = value
+                    else:
+                        inputs[key] = value
 
         result = self.compiler.compile(
             open_qasm_code,
