@@ -7,7 +7,7 @@ from quam.utils.qua_types import QuaVariableInt, Scalar, ScalarInt
 from .parameter import Parameter
 from typing import Tuple, Union, List, Sequence, Literal, Optional
 import numpy as np
-from qm.qua._dsl import QuaArrayVariable
+from qm.qua._expressions import QuaArrayVariable
 
 
 class QUA2DArray(Parameter):
