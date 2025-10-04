@@ -216,8 +216,8 @@ class QMEstimatorJob(QMPrimitiveJob):
                 data = results_handle[i].get(f"counts_{i}").fetch_all()["value"]
             else:
                 data = results_handle.get(f"counts_{i}").fetch_all()["value"]
-            bit_array = BitArray.from_samples(data.tolist())
-            bit_array = bit_array.reshape(pub.shape)
+            bit_array = BitArray.from_samples(data.tolist()).reshape(pub.shape)
+
 
     def _run(self):
         pass
