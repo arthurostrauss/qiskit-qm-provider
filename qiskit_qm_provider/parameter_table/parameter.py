@@ -640,7 +640,7 @@ class Parameter:
     def push_to_opx(
         self,
         value: Union[int, float, bool, Sequence[Union[int, float, bool]]],
-        job: RunningQmJob | JobApi,
+        job: Optional[RunningQmJob | JobApi] = None,
         qm: Optional[QuantumMachine] = None,
         verbosity: int = 1,
         time_out: int = 30,
@@ -674,6 +674,8 @@ class Parameter:
                 raise ValueError(f"Invalid input. {self.name} should be a single value of type {param_type}.")
 
         if self.input_type in [InputType.IO1, InputType.IO2]:
+            if job is None:
+                raise ValueError("Job object is required to set IO values.")
             io = "io1" if self.input_type == InputType.IO1 else "io2"
             if self.is_array:
                 for i in range(self.length):
@@ -703,6 +705,8 @@ class Parameter:
         elif self.input_type == InputType.INPUT_STREAM:
             if verbosity > 1:
                 print(f"Pushing value {value} to {self.name} through input stream.")
+            if job is None:
+                raise ValueError("Job object is required to push values to the input stream.")
             job.push_to_input_stream(self.name, value)
 
         elif self.input_type == InputType.DGX_Q:
@@ -718,7 +722,7 @@ class Parameter:
                 from opnic_wrapper import OutgoingPacket, send_packet
 
                 flattened_values = list(chain(*param_dict.values()))
-                packet = OutgoingPacket(flattened_values)
+                packet = OutgoingPacket(*flattened_values)
                 for k, v in param_dict.items():
                     setattr(packet, k, v)
                 send_packet(self.stream_id, packet)
@@ -741,9 +745,9 @@ class Parameter:
         Args:
             reset: Whether to reset the parameter to a 0 value (in the appropriate QUA type) after sending it to the client/server side.
         """
-        if self.input_type != InputType.DGX_Q:
+        if self.stream is not None:
             self.save_to_stream()
-        else:
+        if self.input_type == InputType.DGX_Q:
             from qm.qua import send_to_external_stream
 
             if not self.is_standalone():  # Part of a parameter table
@@ -762,7 +766,7 @@ class Parameter:
 
     def fetch_from_opx(
         self,
-        job: RunningQmJob,
+        job: Optional[RunningQmJob | JobApi] = None,
         fetching_index: int = 0,
         fetching_size: int = 1,
         verbosity: int = 1,
@@ -790,6 +794,8 @@ class Parameter:
         :return: The fetched value depending upon the input type and fetching logic.
         """
         if self.input_type != InputType.DGX_Q:
+            if job is None:
+                raise ValueError("Job object is required to fetch values from the result handles.")
             if verbosity > 1:
                 print(f"Fetching value from {self.name} with input type {self.input_type}")
             result_handle = job.result_handles

@@ -651,7 +651,7 @@ class ParameterTable:
     def push_to_opx(
         self,
         param_dict: Dict[Union[str, Parameter], Union[float, int, bool, List, np.ndarray]],
-        job: RunningQmJob | JobApi,
+        job: Optional[RunningQmJob | JobApi] = None,
         qm: Optional[QuantumMachine] = None,
         verbosity: int = 1,
     ):
@@ -699,7 +699,7 @@ class ParameterTable:
                 from opnic_wrapper import OutgoingPacket, send_packet
 
                 flattened_values = list(chain(*values_for_packet.values()))
-                packet = OutgoingPacket(flattened_values)
+                packet = OutgoingPacket(*flattened_values)
                 send_packet(self.stream_id, packet)
             else:
                 raise ValueError("OPNIC wrapper not configured or patched.")
@@ -730,13 +730,17 @@ class ParameterTable:
             from qm.qua import send_to_external_stream
 
             send_to_external_stream(self._qua_external_stream, self._packet)
-            if reset:
-                for parameter in self.parameters:
+            
+            for parameter in self.parameters:
+                if parameter.stream is not None:
+                    parameter.save_to_stream()
+                if reset:
                     parameter.reset_var()
+            
 
     def fetch_from_opx(
         self,
-        job: RunningQmJob,
+        job: Optional[RunningQmJob | JobApi] = None,
         fetching_index: int = 0,
         fetching_size: int = 1,
         verbosity: int = 1,
@@ -820,7 +824,7 @@ class ParameterTable:
                     "ParameterVectors are not yet supported "
                     "(Reason: Qiskit exporter to OpenQASM3 does not "
                     "support array of parameters specification."
-                    " Please use individual parameters instead."
+                    " Please use a list of individual parameters instead."
                 )
             if isinstance(parameter, QiskitParameter):
                 if filter_function is not None and not filter_function(parameter):

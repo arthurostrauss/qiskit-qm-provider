@@ -56,7 +56,7 @@ class FluxTunableTransmonBackend(QMBackend):
             channel_mapping=channel_mapping,
             init_macro=machine.apply_all_flux_to_joint_idle,
             qmm=qmm,
-            name=name if name is not None else "FluxTunableTransmonBackend",
+            name=name,
             **fields,
         )
 

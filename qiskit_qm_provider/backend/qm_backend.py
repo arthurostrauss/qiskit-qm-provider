@@ -135,8 +135,12 @@ class QMBackend(Backend):
 
 
         """
-
-        Backend.__init__(self, name="QMBackend" if name is None else name, **fields)
+        if name is None:
+            if 'quantum_computer_backend' in machine.network:
+                name = machine.network['quantum_computer_backend']
+            else:
+                name = "QMBackend"
+        Backend.__init__(self, name=name, **fields)
 
         self._custom_instructions = {}
         self.machine = validate_machine(machine)
@@ -158,7 +162,7 @@ class QMBackend(Backend):
         self._target, self._ref_operation_mapping_QUA, self._coupling_map = self._populate_target(machine)
         self._operation_mapping_QUA = self._ref_operation_mapping_QUA.copy()
         self._oq3_custom_gates = []
-        self._init_macro = init_macro
+        self._init_macro = init_macro if init_macro is not None else lambda: None
 
     @property
     def target(self):
@@ -975,7 +979,7 @@ class QMBackend(Backend):
         return self.machine.generate_config()
 
     @property
-    def init_macro(self) -> Optional[Callable]:
+    def init_macro(self) -> Callable:
         """
         The macro to be called at the beginning of the QUA program
         """
