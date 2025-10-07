@@ -91,7 +91,8 @@ class ParameterTable:
             self.name = f"ParameterTable_{id(self)}"
         self._input_type = None
         self._id = ParameterPool.get_id(self)
-        self._qua_external_stream = None
+        self._qua_external_stream_in = None
+        self._qua_external_stream_out = None
         self._packet = None
         self._packet_type = None
         self._direction = None
@@ -185,11 +186,15 @@ class ParameterTable:
                 QuaStreamDirection,
             )
 
-            qua_direction = (
-                QuaStreamDirection.INCOMING if self.direction == Direction.OUTGOING else QuaStreamDirection.OUTGOING
-            )
+            
             self._packet = declare_struct(self._packet_type)
-            self._qua_external_stream = declare_external_stream(self._packet, self._id, qua_direction)
+            if self.direction == Direction.BOTH:
+                self._qua_external_stream_in = declare_external_stream(self._packet, self._id, QuaStreamDirection.INCOMING)
+                self._qua_external_stream_out = declare_external_stream(self._packet, self._id, QuaStreamDirection.OUTGOING)
+            elif self.direction == Direction.OUTGOING:
+                self._qua_external_stream_out = declare_external_stream(self._packet, self._id, QuaStreamDirection.OUTGOING)
+            else:
+                self._qua_external_stream_in = declare_external_stream(self._packet, self._id, QuaStreamDirection.INCOMING)
 
             for parameter in self.parameters:
                 # In ParameterTable.declare_variables(), DGX path:
@@ -274,8 +279,8 @@ class ParameterTable:
                 warnings.warn("Filter function is not supported for DGX parameter tables.")
             if self.direction == Direction.INCOMING:
                 raise ValueError("Cannot load input values for outgoing DGX parameter tables.")
-            elif self.direction == Direction.OUTGOING:
-                receive_from_external_stream(self._qua_external_stream, self._packet)
+            elif self.direction == Direction.OUTGOING or self.direction == Direction.BOTH:
+                receive_from_external_stream(self._qua_external_stream_in, self._packet)
 
         else:
             for parameter in self.parameters:
@@ -728,8 +733,8 @@ class ParameterTable:
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot send values to outgoing DGX parameter tables.")
             from qm.qua import send_to_external_stream
-
-            send_to_external_stream(self._qua_external_stream, self._packet)
+            
+            send_to_external_stream(self._qua_external_stream_out, self._packet)
             
             for parameter in self.parameters:
                 if parameter.stream is not None:

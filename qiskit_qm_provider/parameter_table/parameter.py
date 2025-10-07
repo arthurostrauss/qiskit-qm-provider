@@ -141,10 +141,11 @@ class Parameter:
             value: Initial value of the parameter.
             qua_type: Type of the QUA variable to be declared (int, fixed, bool). If none is provided, the type is inferred from initial value.
             input_type: Input type of the parameter (DGX_Q, INPUT_STREAM, IO1, IO2). Default is None.
-            direction: Direction of the parameter stream (INCOMING, OUTGOING).
+            direction: Direction of the parameter stream (INCOMING, OUTGOING, BOTH).
                 The direction describes in this case the relationship between DGX_Q and OPX in the following manner:
                 DGX_Q -> OPX: OUTGOING
                 OPX -> DGX_Q: INCOMING
+                DGX_Q <-> OPX: BOTH
                 Default is None. Relevant only if
                           input_type is DGX_Q.
             units: Units of the parameter. Default is "".
@@ -164,8 +165,8 @@ class Parameter:
         self._length = 0 if not isinstance(value, (List, np.ndarray)) else len(value)
         self._ctr: Optional[QuaScalar[int]] = None  # Counter for QUA array variables
 
-        self._external_stream_incoming = None
-        self._external_stream_outgoing = None
+        self._external_stream_in = None
+        self._external_stream_out = None
 
         if input_type is not None:
             input_type = InputType(input_type) if isinstance(input_type, str) else input_type
@@ -330,9 +331,13 @@ class Parameter:
                 self._var = declare_struct(dgx_struct)
                 
                 if self.direction == Direction.INCOMING:
-                    self._external_stream_outgoing = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.OUTGOING)
+                    self._external_stream_out = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.OUTGOING)
+                elif self.direction == Direction.OUTGOING:
+                    self._external_stream_in = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.INCOMING)
                 else:
-                    self._external_stream_incoming = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.INCOMING)
+                    self._external_stream_in = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.INCOMING)
+                    self._external_stream_out = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.OUTGOING)
+
             else:
                 raise ValueError(
                     f"This parameter is part of a parameter table. "
@@ -613,7 +618,7 @@ class Parameter:
             from qm.qua import receive_from_external_stream
 
             if self.is_standalone():
-                receive_from_external_stream(self._external_stream_incoming, self._var)
+                receive_from_external_stream(self._external_stream_in, self._var)
             else:
                 raise RuntimeError(
                     f"This method should be called from the ParameterTable {ParameterPool.get_obj(self.stream_id).name}"
@@ -760,7 +765,7 @@ class Parameter:
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot send value to outgoing stream.")
 
-            send_to_external_stream(self._external_stream_outgoing, self._var)
+            send_to_external_stream(self._external_stream_out, self._var)
         if reset:
             self.reset_var()
 

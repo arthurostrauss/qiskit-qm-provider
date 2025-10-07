@@ -32,6 +32,7 @@ class Direction(Enum):
 
     INCOMING = "INCOMING"  # OPX -> DGX_Q
     OUTGOING = "OUTGOING"  # DGX_Q -> OPX
+    BOTH = "BOTH"  # DGX_Q -> OPX and OPX -> DGX_Q
 
     def __str__(self) -> str:
         return self.value

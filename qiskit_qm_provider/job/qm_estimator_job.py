@@ -102,7 +102,7 @@ class _ExecutionPlan:
 
 
 def observables_to_indices(
-    observables: List[SparsePauliOp, Pauli, str] | SparsePauliOp | PauliList | Pauli | str,
+    observables: List[SparsePauliOp|Pauli|str] | SparsePauliOp | PauliList | Pauli | str,
 ):
     """
     Get single qubit indices of Pauli observables for the reward computation.

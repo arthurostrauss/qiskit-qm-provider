@@ -350,7 +350,7 @@ class QMBackend(Backend):
 
         gate_map = get_extended_gate_name_mapping()
         target = Target(
-            "Qiskit Backend for Quantum Abstract Machine (Quam)",
+            f"Qiskit Backend for Quantum Abstract Machine (Quam) of {self.name}",
             dt=1e-9,
             granularity=4,
             num_qubits=len(machine.active_qubits),
