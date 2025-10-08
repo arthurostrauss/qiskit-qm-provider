@@ -191,7 +191,7 @@ class ParameterTable:
             if self.direction == Direction.BOTH:
                 self._qua_external_stream_in = declare_external_stream(self._packet, self._id, QuaStreamDirection.INCOMING)
                 self._qua_external_stream_out = declare_external_stream(self._packet, self._id, QuaStreamDirection.OUTGOING)
-            elif self.direction == Direction.OUTGOING:
+            elif self.direction == Direction.INCOMING:
                 self._qua_external_stream_out = declare_external_stream(self._packet, self._id, QuaStreamDirection.OUTGOING)
             else:
                 self._qua_external_stream_in = declare_external_stream(self._packet, self._id, QuaStreamDirection.INCOMING)
