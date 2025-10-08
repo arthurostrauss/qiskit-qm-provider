@@ -1,18 +1,21 @@
+from __future__ import annotations
 import numpy as np
 from qiskit.circuit import Parameter
 from qiskit.primitives import PrimitiveResult
 from qiskit.primitives.containers import SamplerPubResult, DataBin, BitArray
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit.providers import JobStatus
+from qiskit_qm_provider.job.post_hook_sampler import generate_sync_hook_sampler
 from qm import SimulationConfig, CompilerOptionArguments
 from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
-from typing import Optional, Union, List, Dict
+from typing import Optional, Union, List, TYPE_CHECKING
 from ..backend import QMBackend
 from ..parameter_table import InputType, ParameterTable
 from .qua_programs import sampler_program
 from .qm_primitive_job import QMPrimitiveJob
-
+if TYPE_CHECKING:
+    from iqcc_cloud_client.qmm_cloud import CloudJob
 
 class QMSamplerJob(QMPrimitiveJob):
     """QM Primitive Job class for executing QUA programs from PUBs."""
@@ -98,16 +101,21 @@ class IQCCSamplerJob(QMSamplerJob):
     def submit(self):
         """Submit the job to the backend."""
         sampler_prog = sampler_program(self._backend, self._pubs, self._input_type)
+
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
-        options = {"timeout": self.metadata.get("timeout", None)}
-        self._qm_job = self._backend.qmm.execute(
+        sync_hook_code = generate_sync_hook_sampler(self._pubs, self._backend, self._input_type)
+        with open("sync_hook_sampler.py", "w") as f:
+            f.write(sync_hook_code)
+        options = {"timeout": self.metadata.get("timeout", None),
+                   "sync_hook": "sync_hook_sampler.py"}
+        self._qm_job = self._backend.qm.execute(
             sampler_prog, self._backend.qm_config, options=options if options["timeout"] else {}
         )
 
-    def _result_function(self, qm_job: Dict) -> PrimitiveResult[SamplerPubResult]:
+    def _result_function(self, qm_job: CloudJob) -> PrimitiveResult[SamplerPubResult]:
         """Get the result from the IQCC QM job."""
-        results_handle = qm_job["result"]
+        results_handle = qm_job.result_handles
         all_data = []
         for i, pub in enumerate(self._pubs):
             qc_meas_data = {}

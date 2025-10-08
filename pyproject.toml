@@ -32,7 +32,8 @@ dependencies = [
     "sympy>=1.14.0",
     "quam-builder",
     "qm-qua >=1.2.3",
-    "openqasm3"
+    "openqasm3",
+    "qiskit_qasm3_import"
 ]
 [tool.uv]
 prerelease = "allow"

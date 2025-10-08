@@ -286,7 +286,7 @@ class QMBackend(Backend):
         it is called for the underlying configuration might have changed between two calls
         """
         try:
-            from quam_libs.cloud_infrastructure import CloudQuantumMachinesManager
+            from iqcc_cloud_client.qmm_cloud import CloudQuantumMachinesManager
         except ImportError:
             CloudQuantumMachinesManager = None
         if self._qm is None:

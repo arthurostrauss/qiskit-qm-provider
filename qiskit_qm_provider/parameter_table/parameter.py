@@ -267,7 +267,7 @@ class Parameter:
         if not self.is_declared:
             raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
         if (condition is not None) != (value_cond is not None):
-            raise ValueError("Both condition and value_cond must be provided together.")
+            raise ValueError("Both condition and value_cond must be provided.")
 
         def assign_with_condition(var, val, cond_val):
             if condition is not None:
@@ -279,7 +279,7 @@ class Parameter:
             if not value.is_declared:
                 raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
             if value.length != self.length:
-                raise ValueError(f"Invalid input. {self.name} should be a list of length {self.length}.")
+                raise ValueError(f"Invalid input. Mismatch in length of {self.name} ({self.length}) and {value.name} ({value.length}).")
             if value_cond is not None and not isinstance(value_cond, Parameter):
                 raise ValueError("Invalid input. value_cond should be of same type as value.")
             if self.is_array:
