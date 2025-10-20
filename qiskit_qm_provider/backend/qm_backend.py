@@ -405,10 +405,11 @@ class QMBackend(Backend):
             coupling_map.append([q_ctrl, q_tgt])
             for op, func in qubit_pair.macros.items():
                 op_ = look_for_standard_op(op)
+                prop = QMInstructionProperties(qua_pulse_macro=func)
                 if op_ in gate_map:
                     gate_op = gate_map[op_]
                     num_params = len(gate_op.params)
-                    operations_dict.setdefault(op_, {})[(q_ctrl, q_tgt)] = None
+                    operations_dict.setdefault(op_, {})[(q_ctrl, q_tgt)] = prop
                     operations_qua_dict[OperationIdentifier(op_, num_params, (q_ctrl, q_tgt))] = func.apply
                     name_to_op_dict[op_] = gate_op
                 else:
@@ -426,7 +427,7 @@ class QMBackend(Backend):
                     if return_type is not None and return_type is not Signature.empty:
                         raise ValueError(f"Return type {return_type} not yet supported for custom gate {op_}")
                     gate_op = Instruction(op_, 2, 0, params)
-                    operations_dict.setdefault(op_, {})[(q_ctrl, q_tgt)] = None
+                    operations_dict.setdefault(op_, {})[(q_ctrl, q_tgt)] = prop
                     operations_qua_dict[OperationIdentifier(op_, len(params), (q_ctrl, q_tgt))] = func.apply
                     name_to_op_dict[op_] = gate_op
                     self._custom_instructions[op_] = gate_op
