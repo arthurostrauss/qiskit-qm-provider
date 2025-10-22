@@ -37,7 +37,7 @@ from quam.components import Channel as QuAMChannel, QubitPair, Qubit
 # OpenQASM3 to QUA compiler
 
 if TYPE_CHECKING:
-    from quam_libs.cloud_infrastructure import (
+    from iqcc_cloud_client.qmm_cloud import (
         CloudQuantumMachine,
         CloudQuantumMachinesManager,
         CloudJob,
