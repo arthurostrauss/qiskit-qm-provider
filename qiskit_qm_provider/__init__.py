@@ -4,7 +4,7 @@ from .backend import (
     FluxTunableTransmonBackend,
     QMInstructionProperties,
 )
-
+from .iqcc_cloud_provider import IQCCProvider
 if QISKIT_PULSE_AVAILABLE:
     from .pulse.quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
 from .fixed_point import FixedPoint
@@ -31,4 +31,5 @@ __all__ = [
     "QMEstimatorOptions",
     "get_measurement_outcomes",
     "add_basic_macros_to_machine",
+    "IQCCProvider",
 ]

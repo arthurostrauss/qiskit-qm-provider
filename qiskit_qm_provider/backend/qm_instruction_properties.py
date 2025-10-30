@@ -16,8 +16,14 @@ class QMInstructionProperties(InstructionProperties):
                 else:
                     pulse = qua_pulse_macro.pulse
                 duration = pulse.length * 1e-9  # Convert to seconds
-        if error is None and hasattr(qua_pulse_macro, "fidelity") and qua_pulse_macro.fidelity is not None:
+        if error is None and hasattr(qua_pulse_macro, "fidelity") and isinstance(qua_pulse_macro.fidelity, float):
             error = 1 - qua_pulse_macro.fidelity
+        if duration == "#./inferred_duration":
+            try:
+                duration = qua_pulse_macro.inferred_duration
+            except ValueError:
+                duration = None
+                
         self = super().__new__(cls, duration=duration, error=error, *args, **kwargs)
         self._qua_pulse_macro = qua_pulse_macro
         return self
