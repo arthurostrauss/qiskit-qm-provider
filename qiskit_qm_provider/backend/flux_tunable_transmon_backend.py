@@ -1,13 +1,14 @@
 from __future__ import annotations
 import warnings
 
-from .qm_backend import QMBackend
-from typing import Optional, List, Union, TYPE_CHECKING, Tuple
+from .qm_backend import QMBackend, requires_qiskit_pulse
+from typing import Iterable, Optional, List, Union, TYPE_CHECKING, Tuple
 
 if TYPE_CHECKING:
     from oqc import QubitsMapping
     from quam_libs.components import QuAM as Quam, Transmon, TransmonPair
     from qm import QuantumMachinesManager
+    from qiskit.pulse import ControlChannel
 
 
 class FluxTunableTransmonBackend(QMBackend):
@@ -35,13 +36,14 @@ class FluxTunableTransmonBackend(QMBackend):
             from ..pulse.quam_qiskit_pulse import FluxChannel
 
             drive_channel_mapping = {DriveChannel(i): qubit.xy for i, qubit in enumerate(machine.active_qubits)}
-            flux_channel_mapping = {FluxChannel(i): qubit.z for i, qubit in enumerate(machine.active_qubits)}
+            flux_channel_mapping = {ControlChannel(i): qubit.z for i, qubit in enumerate(machine.active_qubits)}
             readout_channel_mapping = {
                 MeasureChannel(i): qubit.resonator for i, qubit in enumerate(machine.active_qubits)
             }
             control_channel_mapping = {
-                ControlChannel(i): qubit_pair.coupler for i, qubit_pair in enumerate(machine.active_qubit_pairs)
+                ControlChannel(i+len(machine.active_qubits)): qubit_pair.coupler for i, qubit_pair in enumerate(machine.active_qubit_pairs) if qubit_pair.coupler is not None
             }
+            
             channel_mapping = {
                 **drive_channel_mapping,
                 **flux_channel_mapping,
@@ -76,6 +78,7 @@ class FluxTunableTransmonBackend(QMBackend):
         """
         return [[i] for i in range(len(self.machine.active_qubits))]
 
+    @requires_qiskit_pulse
     def flux_channel(self, qubit: int):
         """
         Retrieve the flux channel for the given qubit.
@@ -86,6 +89,35 @@ class FluxTunableTransmonBackend(QMBackend):
             return FluxChannel(qubit)
         except ImportError:
             raise ImportError("Qiskit Pulse is not available, cannot retrieve flux channel.")
+
+    @requires_qiskit_pulse
+    def control_channel(self, qubits: Iterable[int]) -> ControlChannel:
+        """
+        Return the secondary drive channel for the given qubit/qubit pair.
+
+        If the qubits are a qubit pair, return the control channel for the qubit pair (tunable coupler).
+        If the qubits are a single qubit, return the control channel for the qubit (flux)
+
+        Args:
+            qubits: Tuple or list of qubits of the form
+                ``(control_qubit, target_qubit)``.
+
+        Returns:
+            List[ControlChannel]: The multi qubit control line.
+
+        Raises:
+            NotImplementedError: if the backend doesn't support querying the
+                measurement mapping
+        """
+        qubits = list(qubits)
+        if len(qubits) > 2:
+            raise ValueError("Control channel should be defined for a qubit pair or a single qubit.")
+        if len(qubits) == 2:
+            qubit_pair = self.get_qubit_pair(qubits)
+            return self.get_pulse_channel(qubit_pair.coupler)
+        else:
+            qubit = self.get_qubit(qubits[0])
+            return self.get_pulse_channel(qubit.z)
 
     @property
     def qubits(self) -> List[Transmon]:

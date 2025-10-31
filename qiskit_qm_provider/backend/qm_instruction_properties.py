@@ -44,6 +44,13 @@ class QMInstructionProperties(InstructionProperties):
     def qua_pulse_macro(self, value: Callable | QuamMacro | None):
         self._qua_pulse_macro = value
 
+    @property
+    def quam_macro(self) -> QuamMacro | None:
+        return self._qua_pulse_macro if isinstance(self._qua_pulse_macro, QuamMacro) else None
+
+    @quam_macro.setter
+    def quam_macro(self, value: QuamMacro | None):
+        self._qua_pulse_macro = value
     def __repr__(self):
         return (
             f"QMInstructionProperties(duration={self.duration}, "
