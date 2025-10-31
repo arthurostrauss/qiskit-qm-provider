@@ -91,7 +91,7 @@ class FluxTunableTransmonBackend(QMBackend):
             raise ImportError("Qiskit Pulse is not available, cannot retrieve flux channel.")
 
     @requires_qiskit_pulse
-    def control_channel(self, qubits: Iterable[int]) -> ControlChannel:
+    def control_channel(self, qubits: Iterable[int]) -> List[ControlChannel]:
         """
         Return the secondary drive channel for the given qubit/qubit pair.
 
@@ -109,15 +109,21 @@ class FluxTunableTransmonBackend(QMBackend):
             NotImplementedError: if the backend doesn't support querying the
                 measurement mapping
         """
-        qubits = list(qubits)
-        if len(qubits) > 2:
+        qubits = tuple(qubits)
+        if len(qubits) > 2 or len(qubits) < 1:
             raise ValueError("Control channel should be defined for a qubit pair or a single qubit.")
         if len(qubits) == 2:
             qubit_pair = self.get_qubit_pair(qubits)
-            return self.get_pulse_channel(qubit_pair.coupler)
-        else:
+            if qubit_pair.coupler is not None:
+                return [self.get_pulse_channel(qubit_pair.coupler)]
+            else:
+                return [] # no control channel for the qubit pair
+        elif len(qubits) == 1:
             qubit = self.get_qubit(qubits[0])
-            return self.get_pulse_channel(qubit.z)
+            if qubit.z is not None:
+                return [self.get_pulse_channel(qubit.z)]
+            else:
+                return [] # no control channel for the qubit
 
     @property
     def qubits(self) -> List[Transmon]:
