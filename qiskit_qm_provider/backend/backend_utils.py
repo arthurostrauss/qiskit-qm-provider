@@ -204,6 +204,7 @@ def add_basic_macros_to_machine(machine: BasicQuam, reset_type: Literal["active"
         IdMacro,
     )
     from quam.components.macro import PulseMacro
+    from quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates import CZGate
 
     for qubit in machine.active_qubits:
         x180_pulse = qubit.get_pulse("x180").get_reference()
@@ -223,12 +224,13 @@ def add_basic_macros_to_machine(machine: BasicQuam, reset_type: Literal["active"
 
     for qubit_pair in machine.active_qubit_pairs:
         try:
-            qubit_pair.macros["cz"] = CZMacro(
-                flux_pulse_control=qubit_pair.qubit_control.get_pulse("flux_pulse").get_reference(),
-                coupler_flux_pulse=qubit_pair.coupler.operations["cz"].get_reference(),
+            qubit_pair.macros["cz"] = None
+            qubit_pair.macros["cz"] = CZGate(
+                flux_pulse_control=qubit_pair.qubit_control.z.operations["const"].get_reference(),
             )
         except ValueError as e:
-            warnings.warn("Could not add default two qubit gates. Add it manually if necessary.")
+            warnings.warn(f"Could not add default two qubit gates. Add it manually if necessary. Error: {e}")
+
 
 
 def get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult) -> dict[str, dict[str, QuaVariableInt]]:

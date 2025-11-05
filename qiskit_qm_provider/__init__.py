@@ -5,6 +5,7 @@ from .backend import (
     QMInstructionProperties,
 )
 from .iqcc_cloud_provider import IQCCProvider
+from .qm_provider import QMProvider
 if QISKIT_PULSE_AVAILABLE:
     from .pulse.quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
 from .fixed_point import FixedPoint
@@ -32,4 +33,5 @@ __all__ = [
     "get_measurement_outcomes",
     "add_basic_macros_to_machine",
     "IQCCProvider",
+    "QMProvider",
 ]

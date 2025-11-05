@@ -6,7 +6,9 @@ from typing import Iterable, Optional, List, Union, TYPE_CHECKING, Tuple
 
 if TYPE_CHECKING:
     from oqc import QubitsMapping
-    from quam_libs.components import QuAM as Quam, Transmon, TransmonPair
+    from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import FluxTunableQuam as Quam
+    from quam_builder.architecture.superconducting.qubit.flux_tunable_transmon import FluxTunableTransmon as Transmon
+    from quam_builder.architecture.superconducting.qubit_pair.flux_tunable_transmon_pair import FluxTunableTransmonPair as TransmonPair
     from qm import QuantumMachinesManager
     from qiskit.pulse import ControlChannel
 
