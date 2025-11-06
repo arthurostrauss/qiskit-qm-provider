@@ -58,6 +58,6 @@ class IQCCProvider:
         else:
             machine = name
      
-        return FluxTunableTransmonBackend(machine)
+        return FluxTunableTransmonBackend(machine, provider=self)
 
     

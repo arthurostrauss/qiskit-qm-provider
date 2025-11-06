@@ -20,4 +20,4 @@ class QMProvider:
         """
         Get a QMBackend from the QMProvider.
         """
-        return FluxTunableTransmonBackend(self.get_machine(), **backend_options)
+        return FluxTunableTransmonBackend(self.get_machine(), **backend_options, provider=self)
