@@ -1,13 +1,15 @@
 import json
 import os
-from typing import Optional, List, Literal
-from .backend.qm_backend import QMBackend
+from typing import Optional
 from .backend.flux_tunable_transmon_backend import FluxTunableTransmonBackend
-from .backend.backend_utils import add_basic_macros_to_machine
 from iqcc_cloud_client import IQCC_Cloud
-from iqcc_calibration_tools.quam_config.components import Quam
+from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import FluxTunableQuam as Quam
 
 def get_machine_from_iqcc(backend_name: str, api_token: Optional[str] = None):
+    try:
+        from iqcc_calibration_tools.quam_config.components import Quam as IQCCQuam
+    except ImportError:
+        IQCCQuam = Quam
     iqcc = IQCC_Cloud(quantum_computer_backend=backend_name, api_token=api_token)
 
     # Get the latest state and wiring files
@@ -24,7 +26,7 @@ def get_machine_from_iqcc(backend_name: str, api_token: Optional[str] = None):
     with open(os.path.join(quam_state_folder_path, "state.json"), "w") as f:
         json.dump(latest_state.data, f, indent=4)
 
-    machine = Quam.load()
+    machine = IQCCQuam.load()
 
     return machine, iqcc
     

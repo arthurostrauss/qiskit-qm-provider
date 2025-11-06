@@ -33,7 +33,8 @@ dependencies = [
     "quam-builder",
     "qm-qua >=1.2.3",
     "openqasm3",
-    "qiskit_qasm3_import"
+    "qiskit_qasm3_import",
+    "iqcc-cloud-client"
 ]
 [tool.uv]
 prerelease = "allow"
