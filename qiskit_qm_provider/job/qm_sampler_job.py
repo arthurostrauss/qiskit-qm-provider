@@ -68,6 +68,7 @@ class QMSamplerJob(QMPrimitiveJob):
     def submit(self):
         """Submit the job to the backend."""
         sampler_prog = sampler_program(self._backend, self._pubs, self._input_type, **self.metadata)
+        self._program = sampler_prog
         if self._qm_job is not None:
             raise RuntimeError("QM job has already been submitted")
         compiler_options: Optional[CompilerOptionArguments] = self.metadata.get("compiler_options", None)
@@ -101,7 +102,7 @@ class IQCCSamplerJob(QMSamplerJob):
     def submit(self):
         """Submit the job to the backend."""
         sampler_prog = sampler_program(self._backend, self._pubs, self._input_type)
-
+        self._program = sampler_prog
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
         sync_hook_code = generate_sync_hook_sampler(self._pubs, self._backend, self._input_type)

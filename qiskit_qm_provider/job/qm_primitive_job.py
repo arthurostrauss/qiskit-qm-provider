@@ -9,7 +9,7 @@ from qm.jobs.running_qm_job import RunningQmJob
 from typing import Optional, Union, List, Dict
 from ..backend import QMBackend
 from ..parameter_table import InputType
-
+from qm import Program
 Pub = Union[SamplerPub, EstimatorPub]
 
 
@@ -22,6 +22,7 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         self._pubs = pubs
         self._input_type = input_type
         self._qm_job: Optional[Union[RunningQmJob, QmPendingJob, List[QmPendingJob]]] = None
+        self._program = None
 
     def status(self) -> JobStatus:
         """Return the job status."""
@@ -79,3 +80,8 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
             "input_type": self._input_type,
             "metadata": self.metadata,
         }
+    
+    @property
+    def program(self) -> Optional[Program]:
+        """Return the QUA program."""
+        return self._program

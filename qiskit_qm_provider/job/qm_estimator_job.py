@@ -157,7 +157,7 @@ class QMEstimatorJob(QMPrimitiveJob):
         estimator_prog = estimator_program(
             self._backend, self._pubs, self._input_type, execution_plans=self._execution_plans
         )
-
+        self._program = estimator_prog
         compiler_options = self.metadata.get("compiler_options", None)
 
         # 3. EXECUTION: Start the QUA program on the OPX. It will wait for data.
