@@ -24,7 +24,7 @@ openqasm_code = {openqasm_code}
 circuits = [loads(code) for code in openqasm_code]
 parameter_values = {np.array2string(parameter_value_dicts, separator=', ')}
 parameter_tables = [ParameterTable.from_qiskit(circuit, input_type='{str(input_type)}',
-filter_function=lambda x: isinstance(x, Parameter)) for circuit in circuits]
+filter_function=lambda x: isinstance(x, Parameter), name=f"param_table_{{i}}") for i, circuit in enumerate(circuits)]
 for parameter_value, parameter_table in zip(parameter_values, parameter_tables):
     if parameter_table is not None and parameter_table.input_type is not None:
         param_dict = {{param.name: value for param, value in zip(parameter_table.parameters, parameter_value)}}

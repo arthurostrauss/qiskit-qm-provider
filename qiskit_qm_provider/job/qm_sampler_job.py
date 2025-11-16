@@ -69,7 +69,8 @@ class QMSamplerJob(QMPrimitiveJob):
 
     def submit(self):
         """Submit the job to the backend."""
-        param_tables = [ParameterTable.from_qiskit(pub.circuit, input_type=self._input_type, filter_function=lambda x: isinstance(x, Parameter)) for pub in self._pubs]
+        param_tables = [ParameterTable.from_qiskit(pub.circuit, input_type=self._input_type, filter_function=lambda x: isinstance(x, Parameter),
+        name=f"param_table_{i}") for i, pub in enumerate(self._pubs)]
         sampler_prog = sampler_program(self._backend, self._pubs, param_tables, **self.metadata)
         self._program = sampler_prog
         if self._qm_job is not None:
@@ -100,7 +101,8 @@ class IQCCSamplerJob(QMSamplerJob):
     def submit(self):
         """Submit the job to the backend."""
         from .post_hook_sampler import generate_sync_hook_sampler
-        param_tables = [ParameterTable.from_qiskit(pub.circuit, input_type=self._input_type, filter_function=lambda x: isinstance(x, Parameter)) for pub in self._pubs]
+        param_tables = [ParameterTable.from_qiskit(pub.circuit, input_type=self._input_type, filter_function=lambda x: isinstance(x, Parameter),
+        name=f"param_table_{i}") for i, pub in enumerate(self._pubs)]
         sampler_prog = sampler_program(self._backend, self._pubs, param_tables)
         self._program = sampler_prog
         if self._qm_job is not None:

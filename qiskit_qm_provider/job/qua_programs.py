@@ -15,7 +15,7 @@ from qm.qua import *
 from qm.qua._dsl import _ResultSource
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from ..parameter_table import InputType, ParameterTable, QUA2DArray
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 
 def _process_circuit(
@@ -106,8 +106,118 @@ def sampler_program(
 
     return sampler_prog
 
+def _process_observables_with_circuit(
+    pub: EstimatorPub,
+    backend: QMBackend,
+    observables_var: ParameterTable,
+    obs_indices: List[List[Tuple[int, ...]]],
+    num_shots: int,
+    param_table: Optional[ParameterTable] = None,
+    **kwargs,
+):
+    """
+    QUA macro to process observables and execute the circuit.
+    Handles both cases where observables_var.input_type is None (compile-time) 
+    or not None (runtime input).
+    
+    Args:
+        pub: The EstimatorPub containing the circuit
+        backend: The QMBackend to use
+        observables_var: ParameterTable for observables
+        obs_indices: List of observation indices
+        num_shots: Number of shots to execute
+        param_table: Optional additional ParameterTable to pass to _process_circuit
+        **kwargs: Additional arguments for _process_circuit
+    """
+    total_tasks = sum(len(obs_indices_list) for obs_indices_list in obs_indices)
+    obs_idx = declare(int)
+    num_qubits = pub.circuit.num_qubits
+    
+    if observables_var.input_type is None:
+        obs_indices_qua_list = [QUA2DArray(f"obs_indices_{j}", obs_indices_list, qua_type=int) for j, obs_indices_list in enumerate(obs_indices)]
+        for obs_indices_qua_item in obs_indices_qua_list:
+            obs_indices_qua_item.declare_variable()
 
-def estimator_program(backend: QMBackend, pubs: List[EstimatorPub], input_type: InputType, **kwargs) -> Program:
+            with for_(obs_idx, 0, obs_idx < obs_indices_qua_item.n_rows, obs_idx + 1):
+                observables_var.assign_parameters({f"obs_{i}": obs_indices_qua_item[obs_idx, i] for i in range(num_qubits)})
+                # Combine param_table and observables_var if param_table is provided
+                process_param_table = [param_table, observables_var] if param_table is not None else observables_var
+                clbits_dict = _process_circuit(
+                    pub.circuit,
+                    backend,
+                    num_shots,
+                    param_table=process_param_table,
+                    **kwargs,
+                )
+    else:
+        with for_(obs_idx, 0, obs_idx < total_tasks, obs_idx + 1):
+            observables_var.load_input_values()
+            # Combine param_table and observables_var if param_table is provided
+            process_param_table = [param_table, observables_var] if param_table is not None else observables_var
+            clbits_dict = _process_circuit(
+                pub.circuit,
+                backend,
+                num_shots,
+                param_table=process_param_table,
+                **kwargs,
+            )
+    
+    return clbits_dict
+
+
+def _process_estimator_pub(
+    pub: EstimatorPub,
+    backend: QMBackend,
+    observables_var: ParameterTable,
+    obs_indices: List[List[Tuple[int, ...]]],
+    param_table: Optional[ParameterTable] = None,
+    **kwargs,
+):
+    """
+    Process the given EstimatorPub with the given backend.
+    If the parameter table is not provided, the circuit is processed without parameters.
+    If the parameter table is provided, the circuit is processed with parameters.
+    This is a QUA macro that is used to process the circuit.
+    """
+    if param_table is None:
+        # Process observables only (no additional param_table)
+        clbits_dict = _process_observables_with_circuit(
+            pub,
+            backend,
+            observables_var,
+            obs_indices,
+            int(1/pub.precision**2),
+            param_table=None,
+            **kwargs,
+        )
+    else:
+        # Process with both param_table and observables_var
+        p = declare(int)
+        if param_table.input_type is None:
+            # Declare the parameters at compile time
+            param_values_qua = QUA2DArray("param_values", pub.parameter_values.ravel().as_array())
+            param_values_qua.declare_variable()
+
+        with for_(p, 0, p < pub.parameter_values.ravel().size, p + 1):
+            if param_table.input_type is None:
+                param_table.assign_parameters({param.name: param_values_qua[p][i] for i, param in enumerate(param_table.parameters)})
+            else:
+                param_table.load_input_values()
+            
+            # Process observables with the additional param_table
+            clbits_dict = _process_observables_with_circuit(
+                pub,
+                backend,
+                observables_var,
+                obs_indices,
+                int(1/pub.precision**2),
+                param_table=param_table,
+                **kwargs,
+            )
+    return clbits_dict, observables_var
+
+
+def estimator_program(backend: QMBackend, pubs: List[EstimatorPub], param_tables: List[ParameterTable], observables_vars: List[ParameterTable], **kwargs) -> Program:
     """
     Return the QUA program for the estimator primitive based on pre-computed plans.
     """
@@ -116,27 +226,7 @@ def estimator_program(backend: QMBackend, pubs: List[EstimatorPub], input_type: 
     # The execution plans are generated in the 'submit' method and passed here.
     execution_plans: List[_ExecutionPlan] = kwargs["execution_plans"]
 
-    circuits = [pub.circuit for pub in pubs]
-
-    # Define the ParameterTables once per circuit.
-    param_tables = [
-        ParameterTable.from_qiskit(qc, input_type=input_type, filter_function=lambda p: isinstance(p, Parameter))
-        for qc in circuits
-    ]
-    observables_vars = [
-        ParameterTable.from_qiskit(
-            qc,
-            input_type=input_type,
-            filter_function=lambda p: "obs" in p.name and qc.has_var(p.name),
-        )
-        for qc in circuits
-    ]
-
-    results_streams = [declare_stream() for _ in pubs]
-
     with program() as estimator_prog:
-        shot = declare(int)
-        state_int = declare(int, value=0)
 
         # This is the main loop counter for the flattened tasks in the plan.
         task_idx = declare(int)
@@ -153,25 +243,22 @@ def estimator_program(backend: QMBackend, pubs: List[EstimatorPub], input_type: 
             with for_(task_idx, 0, task_idx < plan.total_tasks, task_idx + 1):
                 # These methods now implicitly wait for the 'push_to_opx' call
                 # in the submit method for the current 'task_idx'.
-                if param_tables[i] is not None:
+                if param_tables[i] is not None and param_tables[i].input_type is not None:
                     param_tables[i].load_input_values()
                 observables_vars[i].load_input_values()
 
                 # The _process_circuit function remains the same.
                 _process_circuit(
-                    circuits[i],
+                    pub.circuit,
                     backend,
                     plan.shots_per_task,
-                    state_int,
-                    shot,
-                    [results_streams[i]],
                     param_table=[param_tables[i], observables_vars[i]],
                 )
 
         with stream_processing():
-            for i, stream in enumerate(results_streams):
+            for i, pub in enumerate(pubs):
                 # The name now reflects that it contains all counts for that pub
-                stream.save_all(f"counts_pub_{i}")
+                pub.stream.save_all(f"counts_pub_{i}")
 
     return estimator_prog
 
