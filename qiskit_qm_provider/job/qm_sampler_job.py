@@ -100,7 +100,8 @@ class IQCCSamplerJob(QMSamplerJob):
     def submit(self):
         """Submit the job to the backend."""
         from .post_hook_sampler import generate_sync_hook_sampler
-        sampler_prog = sampler_program(self._backend, self._pubs, self._input_type)
+        param_tables = [ParameterTable.from_qiskit(pub.circuit, input_type=self._input_type, filter_function=lambda x: isinstance(x, Parameter)) for pub in self._pubs]
+        sampler_prog = sampler_program(self._backend, self._pubs, param_tables)
         self._program = sampler_prog
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
