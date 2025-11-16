@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, Literal, Any
+from typing import Iterable, Literal, Any, Optional
 
 from qiskit.circuit.classical import types
 from qiskit.primitives import (
@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass
 
 from qiskit.transpiler import PassManagerConfig, PassManager
 from qiskit.transpiler.passes import Optimize1qGatesDecomposition
-
+from qiskit.circuit import QuantumCircuit
 from ..parameter_table import InputType
 
 from ..backend.qm_backend import QMBackend
@@ -35,13 +35,14 @@ class QMEstimatorOptions:
     Default: True.
     """
 
-    input_type: InputType = InputType.INPUT_STREAM
+    input_type: Optional[InputType] = None
     """The input mechanism to load the parameter values to the OPX. Choices are:
     - :class:`~.InputType.INPUT_STREAM`: Input stream mechanism.
     - :class:`~.InputType.IO1`: IO1.
     - :class:`~.InputType.IO2`: IO2.
     - :class:`~.InputType.DGX_Q`: Using DGX Quantum communication.
-    Default: InputType.INPUT_STREAM."""
+    - None: Preload at compile time the parameter values to the OPX.
+    Default: None."""
 
     run_options: dict[str, Any] | None = None
     """A dictionary of options to pass to the backend's ``run()`` method.
@@ -71,6 +72,22 @@ class QMEstimatorV2(BaseEstimatorV2):
         opt1q = Optimize1qGatesDecomposition(basis=basis, target=backend.target)
 
         self._passmanager = PassManager([opt1q])
+        qc_switch_obs = QuantumCircuit(1, 1)
+        obs_var = qc_switch_obs.add_input("obs", types.Uint(4))
+        with qc_switch_obs.switch(obs_var) as case_obs:
+            with case_obs(0):
+                qc_switch_obs.measure(0, 0)
+            with case_obs(1):
+                qc_switch_obs.h(0)
+                qc_switch_obs.measure(0, 0)
+            with case_obs(2):
+                qc_switch_obs.sdg(0)
+                qc_switch_obs.h(0)
+                qc_switch_obs.measure(0, 0)
+        
+        qc_switch_obs = self._passmanager.run(qc_switch_obs)
+        self._switch_obs_circuit = qc_switch_obs
+
 
     def run(self, pubs: Iterable[EstimatorPubLike], *, precision: float | None = None):
         """Run the estimator on the given PUBs."""
@@ -79,27 +96,12 @@ class QMEstimatorV2(BaseEstimatorV2):
         coerced_pubs = [EstimatorPub.coerce(pub, precision) for pub in pubs]
         self._validate_pubs(coerced_pubs)
 
-        # Modify all quantum circuits in the PUBs to insert switch statements
-        for pub in coerced_pubs:
-            qc = pub.circuit
-            observables_vars = [qc.add_input(f"obs_{i}", types.Uint(4)) for i in range(qc.num_qubits)]
-            for q, qubit in enumerate(qc.qubits):
-                with qc.switch(observables_vars[q]) as case:
-                    with case(0):
-                        qc.delay(16, qubit)
-                    with case(1):
-                        qc.h(qubit)
-                    with case(2):
-                        qc.sdg(qubit)
-                        qc.h(qubit)
-                qc.measure_all()
+        from ..job.qm_estimator_job import QMEstimatorJob
 
-            from ..job.qm_estimator_job import QMEstimatorJob
+        job = QMEstimatorJob(self._backend, coerced_pubs, self.options.input_type, switch_obs_circuit=self._switch_obs_circuit, **self.options.as_dict())
 
-            job = QMEstimatorJob(self._backend, coerced_pubs, self.options.input_type, **self.options.as_dict())
-
-            job.submit()
-            return job
+        job.submit()
+        return job
 
     @property
     def backend(self) -> QMBackend:

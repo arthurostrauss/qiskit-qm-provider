@@ -51,7 +51,7 @@ class ParameterTable:
                     Tuple[
                         Union[float, int, bool, List, np.ndarray],
                         Optional[Union[str, type]],
-                        Optional[Union[Literal["INPUT_STREAM", "DGX", "IO1", "IO2"], InputType]],
+                        Optional[Union[Literal["INPUT_STREAM", "DGX_Q", "IO1", "IO2"], InputType]],
                         Optional[Union[Literal["INCOMING", "OUTGOING"], Direction]],
                     ],
                     Union[float, int, bool, List, np.ndarray],
@@ -805,7 +805,7 @@ class ParameterTable:
     def from_qiskit(
         cls,
         qc: QuantumCircuit,
-        input_type: Optional[Literal["INPUT_STREAM", "DGX", "IO1", "IO2"] | InputType] = None,
+        input_type: Optional[Literal["INPUT_STREAM", "DGX_Q", "IO1", "IO2"] | InputType] = None,
         filter_function: Optional[Callable[[QiskitParameter | Var], bool]] = None,
         name: Optional[str] = None,
     ) -> Optional["ParameterTable"]:

@@ -7,14 +7,14 @@ from qiskit.circuit import Parameter
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
 
 from ..backend import QMBackend
-from ..backend.backend_utils import _QASM3_DUMP_LOOSE_BIT_PREFIX, has_conflicting_calibrations
+from ..backend.backend_utils import _QASM3_DUMP_LOOSE_BIT_PREFIX, has_conflicting_calibrations, get_measurement_outcomes
 from qiskit import QuantumCircuit
 from quam.utils.qua_types import QuaScalarInt
 from qm import Program
 from qm.qua import *
 from qm.qua._dsl import _ResultSource
 from qiskit.primitives.containers.sampler_pub import SamplerPub
-from ..parameter_table import InputType, ParameterTable
+from ..parameter_table import InputType, ParameterTable, QUA2DArray
 from typing import List, Optional
 
 
@@ -22,56 +22,24 @@ def _process_circuit(
     qc: QuantumCircuit,
     backend: QMBackend,
     num_shots: int,
-    state_int: QuaScalarInt,
-    shot_var: QuaScalarInt,
-    reg_streams: List[_ResultSource],
-    solo_bits_stream: Optional[_ResultSource] = None,
     param_table: Optional[ParameterTable | List[ParameterTable]] = None,
     **kwargs,
 ):
+    shot_var = declare(int)
     with for_(shot_var, 0, shot_var < num_shots, shot_var + 1):
         result = backend.quantum_circuit_to_qua(qc, param_table)
-
-        clbits_dict = {creg.name: [result.result_program[creg.name][i] for i in range(creg.size)] for creg in qc.cregs}
-        num_solo_bits = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
-        if num_solo_bits > 0:
-            if solo_bits_stream is None:
-                raise ValueError("Circuit contains bits without registers but no stream provided")
-            clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX] = [
-                result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"] for i in range(num_solo_bits)
-            ]
+        clbits_dict = get_measurement_outcomes(qc, result)
         # Save integer state to each stream
 
-        for creg, stream in zip(qc.cregs, reg_streams):
-            assign(
-                state_int,
-                sum(
-                    (state_int + (1 << i) * Cast.to_int(clbits_dict[creg.name][i]) for i in range(1, creg.size)),
-                    start=Cast.to_int(clbits_dict[creg.name][0]),
-                ),
-            )
-            save(state_int, stream)
-        if num_solo_bits > 0:
-            assign(
-                state_int,
-                sum(
-                    (
-                        state_int + (1 << i) * Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i])
-                        for i in range(1, num_solo_bits)
-                    ),
-                    start=Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][0]),
-                ),
-            )
-            save(state_int, solo_bits_stream)
+        for creg_dict in clbits_dict.values():
+            save(creg_dict["state_int"], creg_dict["stream"])
+        
+    return clbits_dict
 
 
 def _process_sampler_pub(
     pub: SamplerPub,
     backend: QMBackend,
-    state_int: QuaScalarInt,
-    shot: QuaScalarInt,
-    regs_streams: List[_ResultSource],
-    solo_bits_stream: Optional[_ResultSource] = None,
     param_table: Optional[ParameterTable] = None,
     **kwargs,
 ):
@@ -82,74 +50,59 @@ def _process_sampler_pub(
     This is a QUA macro that is used to process the circuit.
     """
     if param_table is None:
-        _process_circuit(
+        clbits_dict = _process_circuit(
             pub.circuit,
             backend,
             pub.shots,
-            state_int,
-            shot,
-            regs_streams,
-            solo_bits_stream,
             **kwargs,
         )
     else:
         p = declare(int)
+        if param_table.input_type is None:
+            # Declare the parameters at compile time
+            param_values_qua = QUA2DArray("param_values", pub.parameter_values.ravel().as_array())
+            param_values_qua.declare_variable()
+
         with for_(p, 0, p < pub.parameter_values.ravel().size, p + 1):
-            param_table.load_input_values()
-            _process_circuit(
+            if param_table.input_type is None:
+                param_table.assign_parameters({param.name: param_values_qua[p][i] for i, param in enumerate(param_table.parameters)})
+            else:
+                param_table.load_input_values()
+            clbits_dict = _process_circuit(
                 pub.circuit,
                 backend,
                 pub.shots,
-                state_int,
-                shot,
-                regs_streams,
-                solo_bits_stream,
                 param_table,
                 **kwargs,
             )
+    return clbits_dict
 
 
 def sampler_program(
-    backend: QMBackend, pubs: List[SamplerPub], input_type: Optional[InputType] = None, **kwargs
+    backend: QMBackend, pubs: List[SamplerPub], param_tables: List[ParameterTable], **kwargs
 ) -> Program:
     """Return the QUA program for the given PUBs."""
     circuits = [pub.circuit for pub in pubs]
     num_circuits = len(circuits)
     # TODO: Handle DGX Quantum case where circuits share parameters (loading might not work)
-    param_tables = [ParameterTable.from_qiskit(qc, input_type=input_type) for qc in circuits]
-
+    clbits_dicts = []
     with program() as sampler_prog:
-        shot = declare(int)
-        state_int = declare(int, value=0)
-        num_registers = [len(circuits[i].cregs) for i in range(num_circuits)]
-        num_solo_bits = [
-            len([bit for bit in circuits[0].clbits if len(circuits[i].find_bit(bit).registers) == 0])
-            for i in range(num_circuits)
-        ]
-        regs_streams = [[declare_stream() for _ in range(num_cregs)] for num_cregs in num_registers]
-        solo_bits_stream = [declare_stream() for _ in range(num_circuits)]
-
-        if backend.init_macro:
-            backend.init_macro()
+        backend.init_macro()
 
         for i in range(num_circuits):
             if param_tables[i] is not None:
                 param_tables[i].declare_variables()
-            _process_sampler_pub(
+            clbits_dict = _process_sampler_pub(
                 pubs[i],
                 backend,
-                state_int,
-                shot,
-                regs_streams[i],
-                solo_bits_stream[i] if num_solo_bits[i] > 0 else None,
                 param_tables[i],
                 **kwargs,
             )
-
+            clbits_dicts.append(clbits_dict)
         with stream_processing():
-            for i, creg_streams in enumerate(regs_streams):
-                for creg, creg_stream in zip(circuits[i].cregs, creg_streams):
-                    creg_stream.save_all(f"{creg.name}_{i}")
+            for i, clbits_dict in enumerate(clbits_dicts):
+                for creg_name, creg_dict in clbits_dict.items():
+                    creg_dict["stream"].save_all(f"{creg_name}_{i}")
 
     return sampler_prog
 
@@ -188,8 +141,8 @@ def estimator_program(backend: QMBackend, pubs: List[EstimatorPub], input_type: 
         # This is the main loop counter for the flattened tasks in the plan.
         task_idx = declare(int)
 
-        if backend.init_macro:
-            backend.init_macro()
+
+        backend.init_macro()
 
         # Loop over each PUB/circuit
         for i, pub in enumerate(pubs):

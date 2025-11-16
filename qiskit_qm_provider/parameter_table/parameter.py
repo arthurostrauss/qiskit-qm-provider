@@ -131,7 +131,7 @@ class Parameter:
         value: Optional[Union[int, float, List, np.ndarray]] = None,
         qua_type: Optional[Union[str, type]] = None,
         input_type: Optional[Union[Literal["DGX_Q", "INPUT_STREAM", "IO1", "IO2"], InputType]] = None,
-        direction: Optional[Union[Literal["INCOMING", "OUTGOING"], Direction]] = None,
+        direction: Optional[Union[Literal["INCOMING", "OUTGOING", "BOTH"], Direction]] = None,
         units: str = "",
     ):
         """

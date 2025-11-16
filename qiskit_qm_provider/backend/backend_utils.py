@@ -10,7 +10,7 @@ from qiskit.circuit.library import get_standard_gate_name_mapping
 from quam.components import Qubit, QubitPair, BasicQuam
 from quam.utils.qua_types import QuaVariableInt
 from ..additional_gates import CRGate, SYGate, SYdgGate
-from qm.qua import declare, assign, Cast
+from qm.qua import declare, assign, Cast, declare_stream
 
 if TYPE_CHECKING:
     from oqc import CompilationResult
@@ -245,6 +245,7 @@ def get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult) -> d
         creg.name: {
             "value": [result.result_program[creg.name][i] for i in range(creg.size)],
             "state_int": declare(int),
+            "stream": declare_stream(),
         }
         for creg in qc.cregs
     }
@@ -253,6 +254,7 @@ def get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult) -> d
         clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX] = {
             "value": [result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"] for i in range(num_solo_bits)],
             "state_int": declare(int),
+            "stream": declare_stream(),
         }
 
     for creg_dict in clbits_dict.values():

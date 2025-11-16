@@ -1,11 +1,13 @@
 from __future__ import annotations
 import numpy as np
+import os
+import inspect
 from qiskit.circuit import Parameter
 from qiskit.primitives import PrimitiveResult
 from qiskit.primitives.containers import SamplerPubResult, DataBin, BitArray
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit.providers import JobStatus
-from qiskit_qm_provider.job.post_hook_sampler import generate_sync_hook_sampler
+
 from qm import SimulationConfig, CompilerOptionArguments
 from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
@@ -67,7 +69,8 @@ class QMSamplerJob(QMPrimitiveJob):
 
     def submit(self):
         """Submit the job to the backend."""
-        sampler_prog = sampler_program(self._backend, self._pubs, self._input_type, **self.metadata)
+        param_tables = [ParameterTable.from_qiskit(pub.circuit, input_type=self._input_type, filter_function=lambda x: isinstance(x, Parameter)) for pub in self._pubs]
+        sampler_prog = sampler_program(self._backend, self._pubs, param_tables, **self.metadata)
         self._program = sampler_prog
         if self._qm_job is not None:
             raise RuntimeError("QM job has already been submitted")
@@ -78,14 +81,9 @@ class QMSamplerJob(QMPrimitiveJob):
         else:
             self._qm_job = self._backend.qm.execute(sampler_prog, compiler_options=compiler_options)
             self._job_id = self._qm_job.id
-            for pub in self._pubs:
-                if pub.circuit.parameters:
-                    param_table = ParameterTable.from_qiskit(
-                        pub.circuit,
-                        input_type=self._input_type,
-                        filter_function=lambda x: isinstance(x, Parameter),
-                    )
-                    for parameters in pub.parameter_values.ravel().as_array():
+            for pub, param_table in zip(self._pubs, param_tables):
+                if param_table is not None and param_table.input_type is not None:
+                    for parameters in pub.parameter_values.ravel().as_array([param.name for param in param_table.parameters]):
                         param_dict = {param.name: value for param, value in zip(param_table.parameters, parameters)}
                         param_table.push_to_opx(param_dict, self.qm_job, self._backend.qm)
 
@@ -101,15 +99,22 @@ class IQCCSamplerJob(QMSamplerJob):
 
     def submit(self):
         """Submit the job to the backend."""
+        from .post_hook_sampler import generate_sync_hook_sampler
         sampler_prog = sampler_program(self._backend, self._pubs, self._input_type)
         self._program = sampler_prog
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
         sync_hook_code = generate_sync_hook_sampler(self._pubs, self._backend, self._input_type)
-        with open("sync_hook_sampler.py", "w") as f:
+
+        # Determine the calling context to get the script file path
+        caller_frame = inspect.stack()[-1]
+        main_script_path = caller_frame.filename
+        main_script_dir = os.path.dirname(os.path.abspath(main_script_path))
+        sync_hook_path = os.path.join(main_script_dir, "sync_hook_sampler.py")
+        with open(sync_hook_path, "w") as f:
             f.write(sync_hook_code)
         options = {"timeout": self.metadata.get("timeout", None),
-                   "sync_hook": "sync_hook_sampler.py"}
+                   "sync_hook": sync_hook_path}
         self._qm_job = self._backend.qm.execute(
             sampler_prog, self._backend.qm_config, options=options if options["timeout"] else {}
         )

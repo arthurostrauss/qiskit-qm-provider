@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from copy import deepcopy
-from typing import Any, Iterable, Literal
+from typing import Any, Iterable, Literal, Optional
 
 from qiskit.primitives import (
     BaseSamplerV2,
@@ -36,13 +36,14 @@ class QMSamplerOptions:
     Default: 1024.
     """
 
-    input_type: InputType = InputType.INPUT_STREAM
+    input_type: Optional[InputType] = None
     """The input mechanism to load the parameter values to the OPX. Choices are:
     - :class:`~.InputType.INPUT_STREAM`: Input stream mechanism.
     - :class:`~.InputType.IO1`: IO1.
     - :class:`~.InputType.IO2`: IO2.
     - :class:`~.InputType.DGX_Q`: Using DGX Quantum communication.
-    Default: InputType.INPUT_STREAM."""
+    - None: Preload at compile time the parameter values to the OPX (Warning: This should be used only for small number of parameters)
+    Default: None."""
 
     run_options: dict[str, Any] | None = None
     """A dictionary of options to pass to the backend's ``run()`` method.
