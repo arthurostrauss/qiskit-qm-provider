@@ -814,6 +814,7 @@ class QMBackend(Backend):
         Update the target with the operations defined in the machine macros (if new macros were added)
         """
         self._target, self._ref_operation_mapping_QUA, self._coupling_map = self._populate_target(self.machine)
+        self._operation_mapping_QUA = self._ref_operation_mapping_QUA.copy()
 
     @requires_qiskit_pulse
     def update_calibrations(self, qc: QuantumCircuit, input_type: Optional[InputType] = None):
