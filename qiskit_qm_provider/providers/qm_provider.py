@@ -1,7 +1,7 @@
 from typing import Optional, List, Literal
-from .backend.qm_backend import QMBackend
-from .backend.flux_tunable_transmon_backend import FluxTunableTransmonBackend
-from .backend.backend_utils import add_basic_macros_to_machine
+from ..backend.qm_backend import QMBackend
+from ..backend.flux_tunable_transmon_backend import FluxTunableTransmonBackend
+from ..backend.backend_utils import add_basic_macros_to_machine
 from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import FluxTunableQuam as Quam
 from quam.core import QuamRoot
 class QMProvider:

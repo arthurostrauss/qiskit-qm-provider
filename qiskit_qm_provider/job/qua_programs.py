@@ -1,21 +1,19 @@
 from __future__ import annotations
 
-from collections import defaultdict
-
-import numpy as np
-from qiskit.circuit import Parameter
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
 
 from ..backend import QMBackend
-from ..backend.backend_utils import _QASM3_DUMP_LOOSE_BIT_PREFIX, has_conflicting_calibrations, get_measurement_outcomes
+from ..backend.backend_utils import has_conflicting_calibrations, get_measurement_outcomes
 from qiskit import QuantumCircuit
-from quam.utils.qua_types import QuaScalarInt
 from qm import Program
 from qm.qua import *
-from qm.qua._dsl import _ResultSource
 from qiskit.primitives.containers.sampler_pub import SamplerPub
-from ..parameter_table import InputType, ParameterTable, QUA2DArray
-from typing import List, Optional, Tuple
+from ..parameter_table import ParameterTable, QUA2DArray
+from typing import List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .qm_estimator_job import _ExecutionPlan
+
 
 
 def _process_circuit(
@@ -107,11 +105,9 @@ def sampler_program(
     return sampler_prog
 
 def _process_observables_with_circuit(
-    pub: EstimatorPub,
+    plan: _ExecutionPlan,
     backend: QMBackend,
     observables_var: ParameterTable,
-    obs_indices: List[List[Tuple[int, ...]]],
-    num_shots: int,
     param_table: Optional[ParameterTable] = None,
     **kwargs,
 ):
@@ -121,20 +117,18 @@ def _process_observables_with_circuit(
     or not None (runtime input).
     
     Args:
-        pub: The EstimatorPub containing the circuit
+        plan: The ExecutionPlan containing the circuit
         backend: The QMBackend to use
         observables_var: ParameterTable for observables
-        obs_indices: List of observation indices
-        num_shots: Number of shots to execute
         param_table: Optional additional ParameterTable to pass to _process_circuit
         **kwargs: Additional arguments for _process_circuit
     """
-    total_tasks = sum(len(obs_indices_list) for obs_indices_list in obs_indices)
+    total_tasks = plan.total_tasks
     obs_idx = declare(int)
-    num_qubits = pub.circuit.num_qubits
+    num_qubits = plan.pub.circuit.num_qubits
     
     if observables_var.input_type is None:
-        obs_indices_qua_list = [QUA2DArray(f"obs_indices_{j}", obs_indices_list, qua_type=int) for j, obs_indices_list in enumerate(obs_indices)]
+        obs_indices_qua_list = [QUA2DArray(f"obs_indices_{j}", obs_indices, qua_type=int) for j, obs_indices in enumerate(plan.obs_indices)]
         for obs_indices_qua_item in obs_indices_qua_list:
             obs_indices_qua_item.declare_variable()
 
@@ -143,9 +137,9 @@ def _process_observables_with_circuit(
                 # Combine param_table and observables_var if param_table is provided
                 process_param_table = [param_table, observables_var] if param_table is not None else observables_var
                 clbits_dict = _process_circuit(
-                    pub.circuit,
+                    plan.pub.circuit,
                     backend,
-                    num_shots,
+                    plan.shots,
                     param_table=process_param_table,
                     **kwargs,
                 )
@@ -155,9 +149,9 @@ def _process_observables_with_circuit(
             # Combine param_table and observables_var if param_table is provided
             process_param_table = [param_table, observables_var] if param_table is not None else observables_var
             clbits_dict = _process_circuit(
-                pub.circuit,
+                plan.pub.circuit,
                 backend,
-                num_shots,
+                plan.shots,
                 param_table=process_param_table,
                 **kwargs,
             )
@@ -166,10 +160,9 @@ def _process_observables_with_circuit(
 
 
 def _process_estimator_pub(
-    pub: EstimatorPub,
+    plan: _ExecutionPlan,
     backend: QMBackend,
     observables_var: ParameterTable,
-    obs_indices: List[List[Tuple[int, ...]]],
     param_table: Optional[ParameterTable] = None,
     **kwargs,
 ):
@@ -182,11 +175,9 @@ def _process_estimator_pub(
     if param_table is None:
         # Process observables only (no additional param_table)
         clbits_dict = _process_observables_with_circuit(
-            pub,
+            plan,
             backend,
             observables_var,
-            obs_indices,
-            int(1/pub.precision**2),
             param_table=None,
             **kwargs,
         )
@@ -195,150 +186,85 @@ def _process_estimator_pub(
         p = declare(int)
         if param_table.input_type is None:
             # Declare the parameters at compile time
-            param_values_qua = QUA2DArray("param_values", pub.parameter_values.ravel().as_array())
+            param_values_qua = QUA2DArray("param_values", plan.pub.parameter_values.ravel().as_array())
             param_values_qua.declare_variable()
 
-        with for_(p, 0, p < pub.parameter_values.ravel().size, p + 1):
+        with for_(p, 0, p < plan.pub.parameter_values.ravel().size, p + 1):
             if param_table.input_type is None:
-                param_table.assign_parameters({param.name: param_values_qua[p][i] for i, param in enumerate(param_table.parameters)})
+                param_table.assign_parameters({param.name: param_values_qua[p, i] for i, param in enumerate(param_table.parameters)})
             else:
                 param_table.load_input_values()
             
             # Process observables with the additional param_table
             clbits_dict = _process_observables_with_circuit(
-                pub,
+                plan,
                 backend,
                 observables_var,
-                obs_indices,
-                int(1/pub.precision**2),
                 param_table=param_table,
                 **kwargs,
             )
     return clbits_dict, observables_var
 
 
-def estimator_program(backend: QMBackend, pubs: List[EstimatorPub], param_tables: List[ParameterTable], observables_vars: List[ParameterTable], **kwargs) -> Program:
+def estimator_program(backend: QMBackend, execution_plans: List[_ExecutionPlan], param_tables: List[ParameterTable], observables_vars: List[ParameterTable], **kwargs) -> Program:
     """
     Return the QUA program for the estimator primitive based on pre-computed plans.
     """
-    from .qm_estimator_job import _ExecutionPlan
-
     # The execution plans are generated in the 'submit' method and passed here.
-    execution_plans: List[_ExecutionPlan] = kwargs["execution_plans"]
-
+    clbits_dicts = []
     with program() as estimator_prog:
-
-        # This is the main loop counter for the flattened tasks in the plan.
-        task_idx = declare(int)
-
-
         backend.init_macro()
 
         # Loop over each PUB/circuit
-        for i, pub in enumerate(pubs):
-            plan = execution_plans[i]
-
-            # This is the single, powerful QUA loop that will run through all tasks.
-            # The 'submit' method will push the correct data for each 'task_idx'.
-            with for_(task_idx, 0, task_idx < plan.total_tasks, task_idx + 1):
-                # These methods now implicitly wait for the 'push_to_opx' call
-                # in the submit method for the current 'task_idx'.
-                if param_tables[i] is not None and param_tables[i].input_type is not None:
-                    param_tables[i].load_input_values()
-                observables_vars[i].load_input_values()
-
-                # The _process_circuit function remains the same.
-                _process_circuit(
-                    pub.circuit,
-                    backend,
-                    plan.shots_per_task,
-                    param_table=[param_tables[i], observables_vars[i]],
-                )
+        for i, plan in enumerate(execution_plans):
+            clbits_dict = _process_estimator_pub(
+                plan,
+                backend,
+                observables_vars[i],
+                param_tables[i],
+                **kwargs,
+            )
+            clbits_dicts.append(clbits_dict)
 
         with stream_processing():
-            for i, pub in enumerate(pubs):
-                # The name now reflects that it contains all counts for that pub
-                pub.stream.save_all(f"counts_pub_{i}")
+            for i, clbits_dict in enumerate(clbits_dicts):
+                for creg_name, creg_dict in clbits_dict.items():
+                    creg_dict["stream"].save_all(f"{creg_name}_{i}")
 
     return estimator_prog
 
 
 def get_run_program(backend: QMBackend, num_shots, circuits: List[QuantumCircuit]) -> Program | List[Program]:
-    num_circuits = len(circuits)
+    """
+    QUA program generated upon the call of backend.run().
+    If the circuits have conflicting calibrations, a list of programs is returned.
+    Otherwise, a single program is returned, executing all the circuits sequentially.
+    Args:
+        backend: The QMBackend to use
+        num_shots: Number of shots to execute
+        circuits: List of QuantumCircuits to execute
 
-    def _process_circuit(
-        qc: QuantumCircuit,
-        state_int: QuaScalarInt,
-        shot_var: QuaScalarInt,
-        reg_streams: List[_ResultSource],
-        solo_bits_stream: Optional[_ResultSource] = None,
-    ):
-        with for_(shot_var, 0, shot_var < num_shots, shot_var + 1):
-            result = backend.qiskit_to_qua_macro(qc)
-
-            clbits_dict = {
-                creg.name: [result.result_program[creg.name][i] for i in range(creg.size)] for creg in qc.cregs
-            }
-            num_solo_bits = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
-            if num_solo_bits > 0:
-                if solo_bits_stream is None:
-                    raise ValueError("Circuit contains bits without registers but no stream provided")
-                clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX] = [
-                    result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"] for i in range(num_solo_bits)
-                ]
-            # Save integer state to each stream
-
-            for creg, stream in zip(qc.cregs, reg_streams):
-                assign(
-                    state_int,
-                    sum(
-                        (state_int + (1 << i) * Cast.to_int(clbits_dict[creg.name][i]) for i in range(1, creg.size)),
-                        start=Cast.to_int(clbits_dict[creg.name][0]),
-                    ),
-                )
-                save(state_int, stream)
-            if num_solo_bits > 0:
-                assign(
-                    state_int,
-                    sum(
-                        (
-                            state_int + (1 << i) * Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][i])
-                            for i in range(1, num_solo_bits)
-                        ),
-                        start=Cast.to_int(clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX][0]),
-                    ),
-                )
-                save(state_int, solo_bits_stream)
-
+    Returns:
+        Program: The QUA program
+    """
+    clbits_dicts = []
     if not has_conflicting_calibrations(circuits):
         with program() as prog:
             if backend.init_macro:
                 backend.init_macro()
 
-            shot = declare(int)
-            state_int = declare(int, value=0)
-            num_registers = [len(circuits[i].cregs) for i in range(num_circuits)]
-
-            num_solo_bits = [
-                len([bit for bit in circuits[0].clbits if len(circuits[i].find_bit(bit).registers) == 0])
-                for i in range(num_circuits)
-            ]
-            regs_streams = [[declare_stream() for _ in range(num_cregs)] for num_cregs in num_registers]
-            solo_bits_stream = [declare_stream() for _ in range(num_circuits)]
-
             for i, qc in enumerate(circuits):
-                _process_circuit(
+                clbits_dict = _process_circuit(
                     qc,
-                    state_int,
-                    shot,
-                    regs_streams[i],
-                    solo_bits_stream[i] if num_solo_bits[i] > 0 else None,
+                    backend,
+                    num_shots,
                 )
+                clbits_dicts.append(clbits_dict)
 
             with stream_processing():
-                for i, creg_streams in enumerate(regs_streams):
-                    for creg, creg_stream in zip(circuits[i].cregs, creg_streams):
-                        creg_stream.save_all(f"{creg.name}_{i}")
+                for i, clbits_dict in enumerate(clbits_dicts):
+                    for creg_name, creg_dict in clbits_dict.items():
+                        creg_dict["stream"].save_all(f"{creg_name}_{i}")
 
         return prog
     else:
@@ -347,23 +273,18 @@ def get_run_program(backend: QMBackend, num_shots, circuits: List[QuantumCircuit
             with program() as prog:
                 if backend.init_macro:
                     backend.init_macro()
-                shot = declare(int)
-                state_int = declare(int, value=0)
-                num_registers = len(qc.cregs)
-                num_solo_bits = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
-                regs_streams = [declare_stream() for _ in range(num_registers)]
-                solo_bits_stream = declare_stream() if num_solo_bits > 0 else None
-                _process_circuit(
+                
+                clbits_dict = _process_circuit(
                     qc,
-                    state_int,
-                    shot,
-                    regs_streams,
-                    solo_bits_stream,
+                    backend,
+                    num_shots,
                 )
+                clbits_dicts.append(clbits_dict)
 
             with stream_processing():
-                for i, creg_stream in enumerate(regs_streams):
-                    creg_stream.save_all(f"{qc.cregs[i].name}_{j}")
-
+                for i, clbits_dict in enumerate(clbits_dicts):
+                    for creg_name, creg_dict in clbits_dict.items():
+                        creg_dict["stream"].save_all(f"{creg_name}_{j}")
             progs.append(prog)
+
         return progs

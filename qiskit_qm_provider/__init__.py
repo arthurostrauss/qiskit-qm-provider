@@ -4,8 +4,10 @@ from .backend import (
     FluxTunableTransmonBackend,
     QMInstructionProperties,
 )
-from .iqcc_cloud_provider import IQCCProvider
-from .qm_provider import QMProvider
+from .providers.iqcc_cloud_provider import IQCCProvider
+from .providers.qm_provider import QMProvider
+from .providers.qm_saas_provider import QmSaasProvider
+
 if QISKIT_PULSE_AVAILABLE:
     from .pulse.quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
 from .fixed_point import FixedPoint
@@ -34,4 +36,5 @@ __all__ = [
     "add_basic_macros_to_machine",
     "IQCCProvider",
     "QMProvider",
+    "QmSaasProvider",
 ]

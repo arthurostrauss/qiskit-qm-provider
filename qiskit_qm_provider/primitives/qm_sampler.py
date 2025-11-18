@@ -54,7 +54,7 @@ class QMSamplerOptions:
     def __post_init__(self):
         if isinstance(self.input_type, str):
             self.input_type = InputType(self.input_type)
-        if not isinstance(self.input_type, InputType):
+        if self.input_type is not None and not isinstance(self.input_type, InputType):
             raise TypeError(f"input_type must be of type InputType, got {type(self.input_type)}")
         if self.run_options is not None and not isinstance(self.run_options, dict):
             raise TypeError(f"run_options must be a dictionary, got {type(self.run_options)}")

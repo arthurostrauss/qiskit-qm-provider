@@ -1,7 +1,7 @@
 import json
 import os
 from typing import Optional
-from .backend.flux_tunable_transmon_backend import FluxTunableTransmonBackend
+from ..backend.flux_tunable_transmon_backend import FluxTunableTransmonBackend
 from iqcc_cloud_client import IQCC_Cloud
 from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import FluxTunableQuam as Quam
 

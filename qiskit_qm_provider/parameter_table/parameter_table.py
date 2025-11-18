@@ -876,10 +876,10 @@ class ParameterTable:
         if len(param_list) == 0:
             return
         new_table = cls(param_list, name if name is not None else qc.name)
-        if "qua" in qc.metadata:
-            qc.metadata["qua"][new_table.name] = new_table
-        else:
-            qc.metadata["qua"] = {new_table.name: new_table}
+        # if "qua" in qc.metadata:
+        #     qc.metadata["qua"][new_table.name] = new_table
+        # else:
+        #     qc.metadata["qua"] = {new_table.name: new_table}
 
         return new_table
 
@@ -919,7 +919,7 @@ class ParameterTable:
 
     def reset_vars(self):
         """
-        QUA Macro:Reset the QUA variables of the parameter table to 0 (in the appropriate QUA type).
+        QUA Macro: Reset the QUA variables of the parameter table to 0 (in the appropriate QUA type).
         """
         for parameter in self.parameters:
             parameter.reset_var()

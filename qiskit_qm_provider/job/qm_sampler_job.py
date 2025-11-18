@@ -64,9 +64,6 @@ class QMSamplerJob(QMPrimitiveJob):
         result = PrimitiveResult(all_data)
         return result
 
-    def get_sampler_program(self):
-        return sampler_program(self._backend, self._pubs, self._input_type)
-
     def submit(self):
         """Submit the job to the backend."""
         param_tables = [ParameterTable.from_qiskit(pub.circuit, input_type=self._input_type, filter_function=lambda x: isinstance(x, Parameter),
@@ -77,8 +74,8 @@ class QMSamplerJob(QMPrimitiveJob):
             raise RuntimeError("QM job has already been submitted")
         compiler_options: Optional[CompilerOptionArguments] = self.metadata.get("compiler_options", None)
         simulate: Optional[SimulationConfig] = self.metadata.get("simulate", None)
-        if simulate is not None:
-            self._qm_job = self._backend.qm.simulate(sampler_prog, simulate=simulate, compiler_options=compiler_options)
+        if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
+            self._qm_job = self._backend.qmm.simulate(sampler_prog, simulate=simulate, compiler_options=compiler_options)
         else:
             self._qm_job = self._backend.qm.execute(sampler_prog, compiler_options=compiler_options)
             self._job_id = self._qm_job.id

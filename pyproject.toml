@@ -34,7 +34,8 @@ dependencies = [
     "qm-qua >=1.2.3",
     "openqasm3",
     "qiskit_qasm3_import",
-    "iqcc-cloud-client"
+    "iqcc-cloud-client",
+    "qm-saas"
 ]
 [tool.uv]
 prerelease = "allow"

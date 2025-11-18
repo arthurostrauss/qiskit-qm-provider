@@ -52,7 +52,7 @@ class QMEstimatorOptions:
     def __post_init__(self):
         if isinstance(self.input_type, str):
             self.input_type = InputType(self.input_type)
-        if not isinstance(self.input_type, InputType):
+        if self.input_type is not None and not isinstance(self.input_type, InputType):
             raise TypeError(f"input_type must be of type InputType, got {type(self.input_type)}")
         if self.run_options is not None and not isinstance(self.run_options, dict):
             raise TypeError(f"run_options must be a dictionary, got {type(self.run_options)}")
@@ -93,12 +93,12 @@ class QMEstimatorV2(BaseEstimatorV2):
         """Run the estimator on the given PUBs."""
         if precision is None:
             precision = self.options.default_precision
-        coerced_pubs = [EstimatorPub.coerce(pub, precision) for pub in pubs]
-        self._validate_pubs(coerced_pubs)
+        pubs = [EstimatorPub.coerce(pub, precision) for pub in pubs]
+        pubs = self._validate_pubs(pubs)
 
         from ..job.qm_estimator_job import QMEstimatorJob
 
-        job = QMEstimatorJob(self._backend, coerced_pubs, self.options.input_type, switch_obs_circuit=self._switch_obs_circuit, **self.options.as_dict())
+        job = QMEstimatorJob(self._backend, pubs, self.options.input_type, switch_obs_circuit=self._switch_obs_circuit, **self.options.as_dict())
 
         job.submit()
         return job
@@ -113,10 +113,24 @@ class QMEstimatorV2(BaseEstimatorV2):
         """Return the options for this estimator."""
         return self._options
 
-    def _validate_pubs(self, pubs: list[EstimatorPub]):
+    def _validate_pubs(self, pubs: list[EstimatorPub]) -> list[EstimatorPub]:
+        new_pubs = []
         for i, pub in enumerate(pubs):
             if pub.precision <= 0.0:
                 raise ValueError(
                     f"The {i}-th pub has precision less than or equal to 0 ({pub.precision}). ",
                     "But precision should be larger than 0.",
                 )
+            qc = pub.circuit.copy()
+            creg = ClassicalRegister(pub.circuit.num_qubits, name="__c")
+            qc.add_register(creg)
+            for q in range(pub.circuit.num_qubits):
+                qubit = qc.qubits[q]
+                clbit = creg[q]
+                qc.compose(switch_obs_circuit, [qubit], [clbit], inplace=True,
+                var_remap={"obs": f"obs_{q}"})
+            new_pub = EstimatorPub(qc, pub.observables, pub.parameter_values, pub.precision)
+            new_pubs.append(new_pub)
+
+        return new_pubs
+            

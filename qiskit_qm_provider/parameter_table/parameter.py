@@ -1,5 +1,5 @@
 """
-This module provides the ParameterValue class, which enables the mapping of a parameter to a QUA variable to be updated.
+This module provides the Parameter class, which enables the mapping of a parameter to a QUA variable to be updated.
 
 Author: Arthur Strauss - Quantum Machines
 Created: 25/11/2024
@@ -892,7 +892,7 @@ class Parameter:
         new_param._type = self._type
         new_param._input_type = self._input_type
         new_param._direction = self._direction
-        new_param._value = copy.deepcopy(self.value, memodict)  # Deepcopy mutable values
+        new_param.value = copy.deepcopy(self.value, memodict)  # Deepcopy mutable values
         new_param._length = self._length
 
         # Reset QUA-specific and context-dependent state
@@ -900,14 +900,15 @@ class Parameter:
         new_param._is_declared = False
         new_param._stream = None
         new_param._ctr = None
-        new_param._external_stream_incoming = None
-        new_param._external_stream_outgoing = None
+        new_param._external_stream_in = None
+        new_param._external_stream_out = None
 
         # Reset table/DGX specific attributes that will be set by the new table or properties
         new_param._index = -1  # Default for a parameter not (yet) in a table
         new_param._table_indices = {}  # New dictionary for table associations
         new_param._dgx_struct = None
         new_param._stream_id = None  # Will be re-evaluated by property or new table
+        new_param._main_table = None
 
         # If your __init__ sets an _initialized flag, set it here too
         if hasattr(self, "_initialized"):
