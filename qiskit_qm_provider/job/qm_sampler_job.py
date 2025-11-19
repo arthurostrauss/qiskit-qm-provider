@@ -8,7 +8,7 @@ from qiskit.primitives.containers import SamplerPubResult, DataBin, BitArray
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit.providers import JobStatus
 
-from qm import SimulationConfig, CompilerOptionArguments
+from qm import SimulationConfig, CompilerOptionArguments, QuantumMachinesManager
 from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
 from typing import Optional, Union, List, TYPE_CHECKING
@@ -75,7 +75,8 @@ class QMSamplerJob(QMPrimitiveJob):
         compiler_options: Optional[CompilerOptionArguments] = self.metadata.get("compiler_options", None)
         simulate: Optional[SimulationConfig] = self.metadata.get("simulate", None)
         if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
-            self._qm_job = self._backend.qmm.simulate(sampler_prog, simulate=simulate, compiler_options=compiler_options)
+            self._qm_job = self._backend.qmm.simulate(self._backend.qm_config, sampler_prog, simulate=simulate, compiler_options=compiler_options)
+            self._job_id = self._qm_job.id
         else:
             self._qm_job = self._backend.qm.execute(sampler_prog, compiler_options=compiler_options)
             self._job_id = self._qm_job.id

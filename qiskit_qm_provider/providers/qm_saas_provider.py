@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 from typing import Optional
-from qm_saas import QmSaas, QOPVersion
+from qm_saas import QmSaas, QOPVersion, QmSaasInstance
 from ..backend import QMBackend, FluxTunableTransmonBackend
 from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import FluxTunableQuam as Quam
 from qm import QuantumMachinesManager, SimulationConfig
@@ -22,9 +22,9 @@ class QmSaasProvider:
         self.email = email
         self.password = password
         self.host = host
-        self.client = QmSaas(email=email, password=password, host=host)
-        self.version = QOPVersion(version) if version is not None else self.client.latest_version()
-        self.instance = self.client.simulator(version=self.version)
+        self._client = QmSaas(email=email, password=password, host=host)
+        self._version = QOPVersion(version) if version is not None else self.client.latest_version()
+        self._instance = self._client.simulator(version=self.version)
 
     def get_machine(self, quam_state_folder_path: Optional[str] = None) -> Quam:
         """
@@ -46,8 +46,37 @@ class QmSaasProvider:
             simulation_config = SimulationConfig(duration=10000)
         return FluxTunableTransmonBackend(machine, provider=self, qmm=qmm, simulate=simulation_config)
         
+    @property
+    def client(self) -> QmSaas:
+        """
+        Get the QmSaas client.
+        """
+        return self._client
+    
+    @property
+    def version(self) -> QOPVersion:
+        """
+        Get the QmSaas version.
+        """
+        return self._version
+    
+    @property
+    def instance(self) -> QmSaasInstance:
+        """
+        Get the QmSaas instance.
+        """
+        return self._instance
 
+    def close_all(self):
+        """
+        Close all QmSaas instances and QuantumMachinesManager instances.
+        """
+        self._client.close_all()
 
-
+    def spawn(self):
+        """
+        Spawn a new QmSaas instance.
+        """
+        self._instance.spawn()
     
     

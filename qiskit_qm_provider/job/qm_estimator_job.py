@@ -7,7 +7,7 @@ from qiskit.primitives.base.base_primitive_job import ResultT
 from qiskit.primitives.containers import DataBin, BitArray
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit.primitives.containers import PubResult
-from qm import SimulationConfig, CompilerOptionArguments
+from qm import SimulationConfig, CompilerOptionArguments, QuantumMachinesManager
 from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
 from typing import Optional, Union, List, Dict, Tuple
@@ -179,11 +179,16 @@ class QMEstimatorJob(QMPrimitiveJob):
         )
         self._program = estimator_prog
         compiler_options = self.metadata.get("compiler_options", None)
-
+        simulate = self.metadata.get("simulate", None)
         # 3. EXECUTION: Start the QUA program on the OPX. It will wait for data.
-        self._qm_job = self._backend.qm.execute(estimator_prog, compiler_options=compiler_options)
-        self._job_id = self._qm_job.id
+        if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
+            self._qm_job = self._backend.qmm.simulate(self._backend.qm_config,estimator_prog, simulate=simulate, compiler_options=compiler_options)
+            self._job_id = self._qm_job.id
+        else:
+            self._qm_job = self._backend.qm.execute(estimator_prog, compiler_options=compiler_options)
+            self._job_id = self._qm_job.id
 
+        
         # 4. DATA PUSHING: Loop through the planned tasks and push data to the running job.
         for i, plan in enumerate(self._execution_plans):
             plan = self._execution_plans[i]
