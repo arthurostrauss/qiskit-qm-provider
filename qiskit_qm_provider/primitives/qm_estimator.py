@@ -15,10 +15,11 @@ from dataclasses import asdict, dataclass
 
 from qiskit.transpiler import PassManagerConfig, PassManager
 from qiskit.transpiler.passes import Optimize1qGatesDecomposition
-from qiskit.circuit import QuantumCircuit
+from qiskit.circuit import QuantumCircuit, ClassicalRegister
 from ..parameter_table import InputType
 
 from ..backend.qm_backend import QMBackend
+from ..backend.backend_utils import validate_circuits
 
 
 @dataclass
@@ -72,18 +73,17 @@ class QMEstimatorV2(BaseEstimatorV2):
         opt1q = Optimize1qGatesDecomposition(basis=basis, target=backend.target)
 
         self._passmanager = PassManager([opt1q])
-        qc_switch_obs = QuantumCircuit(1, 1)
+        qc_switch_obs = QuantumCircuit(1)
         obs_var = qc_switch_obs.add_input("obs", types.Uint(4))
         with qc_switch_obs.switch(obs_var) as case_obs:
-            with case_obs(0):
-                qc_switch_obs.measure(0, 0)
             with case_obs(1):
                 qc_switch_obs.h(0)
-                qc_switch_obs.measure(0, 0)
             with case_obs(2):
                 qc_switch_obs.sdg(0)
                 qc_switch_obs.h(0)
-                qc_switch_obs.measure(0, 0)
+            with case_obs(case_obs.DEFAULT):
+                qc_switch_obs.id(0)
+              
         
         qc_switch_obs = self._passmanager.run(qc_switch_obs)
         self._switch_obs_circuit = qc_switch_obs
@@ -94,7 +94,7 @@ class QMEstimatorV2(BaseEstimatorV2):
         if precision is None:
             precision = self.options.default_precision
         pubs = [EstimatorPub.coerce(pub, precision) for pub in pubs]
-        pubs = self._validate_pubs(pubs)
+        pubs = self.validate_estimator_pubs(pubs)
 
         from ..job.qm_estimator_job import QMEstimatorJob
 
@@ -113,8 +113,9 @@ class QMEstimatorV2(BaseEstimatorV2):
         """Return the options for this estimator."""
         return self._options
 
-    def _validate_pubs(self, pubs: list[EstimatorPub]) -> list[EstimatorPub]:
+    def validate_estimator_pubs(self, pubs: list[EstimatorPub]) -> list[EstimatorPub]:
         new_pubs = []
+
         for i, pub in enumerate(pubs):
             if pub.precision <= 0.0:
                 raise ValueError(
@@ -125,10 +126,12 @@ class QMEstimatorV2(BaseEstimatorV2):
             creg = ClassicalRegister(pub.circuit.num_qubits, name="__c")
             qc.add_register(creg)
             for q in range(pub.circuit.num_qubits):
-                qubit = qc.qubits[q]
-                clbit = creg[q]
-                qc.compose(switch_obs_circuit, [qubit], [clbit], inplace=True,
+                qubits = [qc.qubits[q]]
+                qc.compose(self._switch_obs_circuit, qubits, inplace=True,
                 var_remap={"obs": f"obs_{q}"})
+            qc.measure(qc.qubits, creg)
+            qc = validate_circuits(qc)[0]
+
             new_pub = EstimatorPub(qc, pub.observables, pub.parameter_values, pub.precision)
             new_pubs.append(new_pub)
 

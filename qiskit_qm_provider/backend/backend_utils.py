@@ -56,7 +56,7 @@ def validate_machine(machine) -> BasicQuam:
 
 
 def validate_circuits(
-    circuits: List[QuantumCircuit], should_reset: bool = True, check_for_params: bool = False
+    circuits: QuantumCircuit | List[QuantumCircuit], should_reset: bool = True, check_for_params: bool = False
 ) -> List[QuantumCircuit]:
     """
     Validate the circuits to be compiled. The circuits should be a list of QuantumCircuits.
@@ -65,8 +65,10 @@ def validate_circuits(
     :param check_for_params: If True, check if the circuit has compile-time parameters.
     :return: Modified circuits with an added reset if needed.
     """
+    if isinstance(circuits, QuantumCircuit):
+        circuits = [circuits]
     if not all(isinstance(qc, QuantumCircuit) for qc in circuits):
-        raise ValueError("Input should be a QuantumCircuit")
+        raise ValueError("Input should be a list of QuantumCircuits")
     if check_for_params and not all(len(qc.parameters) == 0 for qc in circuits):
         raise ValueError("Input should not contain parameters")
 
@@ -76,16 +78,25 @@ def validate_circuits(
             if len(qc.find_bit(clbit).registers) != 1:
                 raise ValueError("Only one register per clbit is supported.")
         if not has_reset_at_boundary(qc) and should_reset:
-            qc_reset = qc.copy_empty_like()
-            index_layout = qc.layout.final_index_layout(filter_ancillas=True) if qc.layout else range(len(qc.qubits))
-            qubits = [qc.qubits[i] for i in index_layout]
-            qc_reset.reset(qubits)
+            qc_reset = qc.copy_empty_like(vars_mode="drop")
+            active_qubits = get_active_qubits(qc)
+            qc_reset.reset(active_qubits)
             new_circuits.append(qc.compose(qc_reset, inplace=False, front=True))
         else:
             new_circuits.append(qc)
 
     return new_circuits
 
+def get_active_qubits(qc: QuantumCircuit) -> List[Qubit]:
+    """
+    Get the qubits that are not idle.
+    :param qc: The QuantumCircuit to get the active qubits from.
+    :return: The list of active qubits.
+    """
+    from qiskit.converters.circuit_to_dag import circuit_to_dag
+    dag = circuit_to_dag(qc)
+    active_qubits = [qubit for qubit in qc.qubits if qubit not in dag.idle_wires()]
+    return active_qubits
 
 def has_conflicting_calibrations(circuits: List[QuantumCircuit]) -> bool:
     """
@@ -233,19 +244,21 @@ def add_basic_macros_to_machine(machine: BasicQuam, reset_type: Literal["active"
 
 
 
-def get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult) -> dict[str, dict[str, QuaVariableInt]]:
+def get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult, compute_state_int: bool = True) -> dict[str, dict[str, QuaVariableInt]]:
     """
     Get the measurement outcomes resulting from the execution of the QuantumCircuit.
-    This is returned as a dictionary of the form {creg_name: {"value": [outcome_values], "state_int": state_int}}, where state_int is a QUA variable that contains the integer representation of each ClassicalRegister belonging to the QuantumCircuit.
+    This is returned as a dictionary of the form {creg_name: {"value": [outcome_values], "state_int": state_int, "size": size}}, where state_int is a QUA variable that contains the integer representation of each ClassicalRegister belonging to the QuantumCircuit and size is the size of the ClassicalRegister.
     Note that this follows the Qiskit convention of using the least significant bit (LSB) of the integer to represent the state of the qubit with index 0.
     We also support the case where the QuantumCircuit contains loose bits (bits that are not associated with a ClassicalRegister).
     In this case, an extra ClassicalRegister is added to the QuantumCircuit with the name _bit, containing the measurement outcomes of the loose bits with the same convention.
+    :param compute_state_int: If True, compute the state integer for each ClassicalRegister.
     """
     clbits_dict = {
         creg.name: {
-            "value": [result.result_program[creg.name][i] for i in range(creg.size)],
-            "state_int": declare(int),
+            "value": result.result_program[creg.name],
+            "state_int": declare(int) if compute_state_int else None,
             "stream": declare_stream(),
+            "size": creg.size,
         }
         for creg in qc.cregs
     }
@@ -253,17 +266,19 @@ def get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult) -> d
     if num_solo_bits > 0:
         clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX] = {
             "value": [result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"] for i in range(num_solo_bits)],
-            "state_int": declare(int),
+            "state_int": declare(int) if compute_state_int else None,
             "stream": declare_stream(),
+            "size": num_solo_bits,
         }
 
     for creg_dict in clbits_dict.values():
         c_reg_res = creg_dict["value"]
-        assign(
-            creg_dict["state_int"],
-            sum(
-                (((1 << i) * Cast.to_int(c_reg_res[i])) for i in range(1, len(c_reg_res))),
-                start=Cast.to_int(c_reg_res[0]),
-            ),
-        )
+        if compute_state_int:
+            assign(
+                creg_dict["state_int"],
+                sum(
+                    (((1 << i) * Cast.to_int(c_reg_res[i])) for i in range(1, creg_dict["size"])),
+                    start=Cast.to_int(c_reg_res[0]),
+                ),
+            )
     return clbits_dict

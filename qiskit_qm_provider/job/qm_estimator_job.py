@@ -45,6 +45,8 @@ class _ExecutionPlan:
     metadata: List[Dict]
     param_indices: np.ndarray
     obs_indices: List[List[Tuple[int, ...]]]
+    observables_var: ParameterTable
+    param_table: Optional[ParameterTable]
 
     @classmethod
     def from_pub(cls, pub: EstimatorPub, options: QMEstimatorOptions):
@@ -97,7 +99,9 @@ class _ExecutionPlan:
                         "param_index": param_index,
                         "orig_paulis": obs,
                     })
-        return cls(pub, metadata, param_indices, obs_indices_list)
+        observables_var = ParameterTable.from_qiskit(pub.circuit, input_type=options.input_type, filter_function=lambda p: pub.circuit.has_var(p) and "obs" in p.name, name=f"observables_var_{pub.circuit.name}")
+        param_table = ParameterTable.from_qiskit(pub.circuit, input_type=options.input_type, filter_function=lambda p: isinstance(p, Parameter), name=f"param_table_{pub.circuit.name}")
+        return cls(pub, metadata, param_indices, obs_indices_list, observables_var, param_table)
 
     @property
     def total_tasks(self) -> int:
@@ -161,23 +165,15 @@ class QMEstimatorJob(QMPrimitiveJob):
 
     def __init__(self, backend: QMBackend, pubs: List[EstimatorPub], input_type: Optional[InputType], switch_obs_circuit: QuantumCircuit, **kwargs):
         super().__init__(backend, pubs, input_type, **kwargs)
-        self._execution_plans: List[_ExecutionPlan] = []
+        self._execution_plans: List[_ExecutionPlan] = [_ExecutionPlan.from_pub(pub, options=self._options) for pub in pubs]
         self._switch_obs_circuit: QuantumCircuit = switch_obs_circuit
+        self._program = estimator_program(backend, self._execution_plans)
         
     def submit(self):
         """Submit the job to the backend after creating an efficient execution plan."""
         if self._qm_job is not None:
             raise RuntimeError("Job has already been submitted.")
-        
-        # 1. PRE-PROCESSING: Create an execution plan for each pub.
-        self._execution_plans = [_ExecutionPlan.from_pub(pub, options=self._options) for pub in pubs]
-        param_tables = [ParameterTable.from_qiskit(pub.circuit, input_type=self._input_type, filter_function=lambda p: isinstance(p, Parameter), name=f"param_table_{i}") for i, pub in enumerate(pubs)]
-        observables_vars = [ParameterTable.from_qiskit(pub.circuit, input_type=self._input_type, filter_function=lambda p: pub.circuit.has_var(p) and "obs" in p.name, name=f"observables_var_{i}") for i, pub in enumerate(pubs)]
-        # 2. PROGRAM CREATION: Pass the plans to the program builder.
-        estimator_prog = estimator_program(
-            self._backend, self._execution_plans, param_tables, observables_vars
-        )
-        self._program = estimator_prog
+    
         compiler_options = self.metadata.get("compiler_options", None)
         simulate = self.metadata.get("simulate", None)
         # 3. EXECUTION: Start the QUA program on the OPX. It will wait for data.
@@ -192,8 +188,8 @@ class QMEstimatorJob(QMPrimitiveJob):
         # 4. DATA PUSHING: Loop through the planned tasks and push data to the running job.
         for i, plan in enumerate(self._execution_plans):
             plan = self._execution_plans[i]
-            param_table = param_tables[i]
-            observables_var = observables_vars[i]
+            param_table = plan.param_table
+            observables_var = plan.observables_var
             # Push parameter values if the circuit has them
             if param_table is not None and param_table.input_type is not None:
                 for p, param_value in enumerate(plan.pub.parameter_values.ravel().as_array()):
@@ -210,6 +206,164 @@ class QMEstimatorJob(QMPrimitiveJob):
                     obs_dict = {f"obs_{i}": val for i, val in enumerate(obs_value)}
                     observables_var.push_to_opx(obs_dict, self.qm_job, self._backend.qm)
 
+    def _calc_expval_map(
+        self,
+        bitstrings: np.ndarray,
+        metadata: List[Dict],
+        shots: int,
+        num_qubits: int,
+    ) -> Dict[Tuple[Tuple[int, ...], str], Tuple[float, float]]:
+        """Computes the map of expectation values from bitstrings.
+
+        Args:
+            bitstrings: Array of bitstrings organized by task, shape (total_tasks, shots, num_bits)
+            metadata: List of metadata dicts, one per task
+            shots: Number of shots per task
+            num_qubits: Number of qubits
+
+        Returns:
+            The map of expectation values takes a pair of an index of the bindings array and
+            a pauli string as a key and returns the expectation value and variance of the pauli string.
+        """
+        expval_map: Dict[Tuple[Tuple[int, ...], str], Tuple[float, float]] = {}
+        
+        for task_idx, meta in enumerate(metadata):
+            orig_paulis = meta["orig_paulis"]
+            meas_paulis = meta["meas_paulis"]
+            param_index = meta["param_index"]
+            
+            # Get bitstrings for this task
+            task_bitstrings = bitstrings[task_idx]  # Shape: (shots, num_bits)
+            
+            # Convert to BitArray
+            # from_bool_array expects boolean array with last axis as bits
+            # Convert to boolean if needed (QUA might return integers 0/1)
+            task_bitstrings_bool = np.asarray(task_bitstrings, dtype=bool)
+            # Add a leading dimension for the pub shape (single task = shape (1,))
+            task_bitstrings_bool = task_bitstrings_bool[np.newaxis, ...]  # Shape: (1, shots, num_bits)
+            bit_array = BitArray.from_bool_array(task_bitstrings_bool)
+            
+            # meas_paulis are NOT diagonal - they still contain X/Y terms
+            # After basis rotation in the circuit, measuring in Z basis effectively measures
+            # the rotated Pauli. To compute expectation values from bitstrings using BitArray,
+            # we need to convert to diagonal form (I -> I, X/Y -> Z)
+            # This matches the logic in channel_reward.py lines 519-524
+            diag_obs = SparsePauliOp("I" * num_qubits, 0.0)
+            for pauli, coeff in zip(meas_paulis, [1.0] * len(meas_paulis)):
+                diag_label = ""
+                for char in pauli.to_label():
+                    if char == "I":
+                        diag_label += "I"
+                    else:
+                        # X, Y, or Z -> all become Z after basis rotation
+                        diag_label += "Z"
+                diag_obs += SparsePauliOp(diag_label, coeff)
+            diag_obs = diag_obs.simplify()
+            
+            # Compute expectation values using BitArray
+            # BitArray.expectation_values expects a SparsePauliOp or similar
+            # Returns one value per Pauli term in diag_obs
+            expvals = bit_array.expectation_values(diag_obs)
+            
+            # Convert to array and ensure it matches the number of meas_paulis
+            if isinstance(expvals, np.ndarray):
+                expvals = expvals.flatten()
+            else:
+                expvals = np.array([expvals])
+            
+            # Ensure we have the right number of values (one per meas_pauli)
+            num_meas_paulis = len(meas_paulis)
+            if len(expvals) != num_meas_paulis:
+                if len(expvals) == 1:
+                    # Single value - broadcast to all Paulis
+                    expvals = np.full(num_meas_paulis, expvals[0])
+                else:
+                    # Truncate or pad as needed
+                    if len(expvals) > num_meas_paulis:
+                        expvals = expvals[:num_meas_paulis]
+                    else:
+                        expvals = np.pad(expvals, (0, num_meas_paulis - len(expvals)), mode='constant', constant_values=expvals[-1] if len(expvals) > 0 else 0.0)
+            
+            # Compute variances (1 - expval^2 for each Pauli)
+            variances = 1 - expvals**2
+            
+            # Map back to original Paulis
+            # orig_paulis can be a SparsePauliOp (with coefficients) or PauliList
+            # meas_paulis and orig_paulis should be in the same order
+            if isinstance(orig_paulis, SparsePauliOp):
+                # orig_paulis is a SparsePauliOp, iterate over its paulis
+                orig_paulis_list = orig_paulis.paulis
+            elif isinstance(orig_paulis, PauliList):
+                # orig_paulis is a PauliList
+                orig_paulis_list = orig_paulis
+            else:
+                # Fallback: treat as single Pauli
+                if isinstance(orig_paulis, Pauli):
+                    orig_paulis_list = PauliList([orig_paulis])
+                else:
+                    # Try to convert to PauliList
+                    orig_paulis_list = PauliList([Pauli(str(orig_paulis))])
+            
+            # Map expectation values: meas_paulis and orig_paulis_list should be in same order
+            if len(meas_paulis) == len(orig_paulis_list):
+                # Direct 1-to-1 mapping
+                for orig_pauli, expval, variance in zip(orig_paulis_list, expvals, variances):
+                    expval_map[param_index, orig_pauli.to_label()] = (float(expval), float(variance))
+            else:
+                # Length mismatch - this shouldn't happen normally, but handle it
+                # Use first expval for all orig_paulis (grouped measurement case)
+                for orig_pauli in orig_paulis_list:
+                    expval_map[param_index, orig_pauli.to_label()] = (float(expvals[0]), float(variances[0]))
+        
+        return expval_map
+
+    def _postprocess_pub(
+        self, 
+        pub: EstimatorPub, 
+        expval_map: Dict, 
+        param_indices: np.ndarray,
+        observables: np.ndarray,
+        shots: int
+    ) -> PubResult:
+        """Computes expectation values (evs) and standard errors (stds).
+
+        The values are stored in arrays broadcast to the shape of the pub.
+
+        Args:
+            pub: The pub to postprocess.
+            expval_map: The map of expectation values.
+            param_indices: The parameter indices array.
+            observables: The observables array broadcast to pub shape.
+            shots: The number of shots.
+
+        Returns:
+            The pub result.
+        """
+        bc_param_ind = param_indices
+        bc_obs = observables
+        evs = np.zeros_like(bc_param_ind, dtype=float)
+        variances = np.zeros_like(bc_param_ind, dtype=float)
+        
+        for index in np.ndindex(*bc_param_ind.shape):
+            param_index = bc_param_ind[index]
+            for pauli, coeff in bc_obs[index].items():
+                key = (param_index, pauli)
+                if key in expval_map:
+                    expval, variance = expval_map[key]
+                    evs[index] += expval * coeff
+                    variances[index] += np.abs(coeff) * variance**0.5
+        
+        stds = variances / np.sqrt(shots)
+        data_bin = DataBin(evs=evs, stds=stds, shape=evs.shape)
+        return PubResult(
+            data_bin,
+            metadata={
+                "target_precision": pub.precision,
+                "shots": shots,
+                "circuit_metadata": pub.circuit.metadata,
+            },
+        )
+
     def _result_function(self, qm_job: Union[RunningQmJob, List[QmPendingJob]]) -> PrimitiveResult[PubResult]:
         is_job_list = isinstance(qm_job, list)
         if is_job_list:
@@ -220,13 +374,63 @@ class QMEstimatorJob(QMPrimitiveJob):
             results_handle = qm_job.result_handles
             results_handle.wait_for_all_values()
 
-        all_data = []
+        pub_results = []
         for i, plan in enumerate(self._execution_plans):
             if is_job_list:
                 data = results_handle[i].get(f"__c_{i}").fetch_all()["value"]
             else:
                 data = results_handle.get(f"__c_{i}").fetch_all()["value"]
-            bit_array = BitArray.from_samples(data.tolist(), num_bits=plan.pub.circuit.num_qubits).reshape(plan.pub.shape)
+            
+            # Convert data to numpy array if needed
+            if not isinstance(data, np.ndarray):
+                data = np.array(data)
+            
+            num_qubits = plan.pub.circuit.num_qubits
+            shots = plan.shots
+            total_tasks = plan.total_tasks
+            
+            # Reshape data: (total_tasks * shots, num_bits) -> (total_tasks, shots, num_bits)
+            # The data comes as a flat array of bitstrings from all tasks
+            if data.ndim == 2:
+                # Data is already in (total_shots, num_bits) format
+                total_shots = data.shape[0]
+                if total_shots != total_tasks * shots:
+                    raise ValueError(
+                        f"Expected {total_tasks * shots} bitstrings, got {total_shots}"
+                    )
+                bitstrings = data.reshape(total_tasks, shots, num_qubits)
+            elif data.ndim == 1:
+                # Data is a flat list, need to reshape
+                # Assuming it's organized as [task0_bitstrings..., task1_bitstrings..., ...]
+                total_shots = len(data) // num_qubits
+                if total_shots != total_tasks * shots:
+                    raise ValueError(
+                        f"Expected {total_tasks * shots} bitstrings, got {total_shots}"
+                    )
+                bitstrings = np.array(data).reshape(total_tasks, shots, num_qubits)
+            else:
+                raise ValueError(f"Unexpected data shape: {data.shape}")
+            
+            # Compute expectation value map
+            expval_map = self._calc_expval_map(
+                bitstrings, plan.metadata, shots, num_qubits
+            )
+            
+            # Postprocess to get PubResult
+            # Convert observables to numpy array for broadcasting
+            # plan.pub.observables is an ObservablesArray, we need to broadcast it
+            bc_param_ind, bc_obs = np.broadcast_arrays(plan.param_indices, plan.pub.observables)
+            
+            pub_result = self._postprocess_pub(
+                plan.pub,
+                expval_map,
+                plan.param_indices,
+                bc_obs,
+                shots
+            )
+            pub_results.append(pub_result)
+        
+        return PrimitiveResult(pub_results, metadata={"version": 2})
 
 
     def _run(self):
