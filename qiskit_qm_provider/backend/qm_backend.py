@@ -158,9 +158,21 @@ class QMBackend(Backend):
             )
             for qubit_pair in machine.active_qubit_pairs
         }
-
-        self._target, self._ref_operation_mapping_QUA, self._coupling_map = self._populate_target(machine)
-        self._operation_mapping_QUA = self._ref_operation_mapping_QUA.copy()
+        self._target = Target(
+            f"Qiskit Backend for Quantum Abstract Machine (Quam) of {self.name}",
+            dt=1e-9,
+            granularity=4,
+            num_qubits=len(machine.active_qubits),
+            min_length=16,
+            qubit_properties=[
+                QubitProperties(t1=qubit.T1, t2=qubit.T2echo, frequency=qubit.f_01) for qubit in machine.active_qubits
+            ],
+        )
+        # Base mapping: operations from machine macros and target updates
+        self._operation_mapping_QUA = {}
+        self._populate_target()
+        # Calibration mapping: working copy for circuit-specific pulse calibrations
+        self._calibration_operation_mapping_QUA = self._operation_mapping_QUA.copy()
         self._oq3_custom_gates = []
         self._init_macro = init_macro if init_macro is not None else lambda: None
 
@@ -342,31 +354,23 @@ class QMBackend(Backend):
             timeout=60,
         )
 
-    def _populate_target(self, machine: Quam) -> Tuple[Target, Dict[OperationIdentifier, Callable], CouplingMap]:
+    def _populate_target(self) -> None:
         """
-        Populate the target instructions with the QOP configuration
+        Populate the target instructions with the QOP configuration from machine macros.
+        Updates both Target and operation_mapping_QUA incrementally (does not clear existing entries).
         """
         from oqc import OperationIdentifier
 
         gate_map = get_extended_gate_name_mapping()
-        target = Target(
-            f"Qiskit Backend for Quantum Abstract Machine (Quam) of {self.name}",
-            dt=1e-9,
-            granularity=4,
-            num_qubits=len(machine.active_qubits),
-            min_length=16,
-            qubit_properties=[
-                QubitProperties(t1=qubit.T1, t2=qubit.T2echo, frequency=qubit.f_01) for qubit in machine.active_qubits
-            ],
-        )
+        
 
         operations_dict = {}
-        operations_qua_dict = {}
+        operations_qua_dict = self._operation_mapping_QUA
         name_to_op_dict = {}
         coupling_map = []
 
         # Add single qubit instructions
-        for q, qubit in enumerate(machine.active_qubits):
+        for q, qubit in enumerate(self.machine.active_qubits):
             for op, func in qubit.macros.items():
                 op_ = look_for_standard_op(op)
                 prop = QMInstructionProperties(qua_pulse_macro=func)
@@ -396,7 +400,7 @@ class QMBackend(Backend):
                     name_to_op_dict[op_] = gate_op
                     self._custom_instructions[op_] = gate_op
 
-        for qubit_pair in machine.active_qubit_pairs:
+        for qubit_pair in self.machine.active_qubit_pairs:
             q_ctrl = self.qubit_dict.get(qubit_pair.qubit_control.name, None)
             q_tgt = self.qubit_dict.get(qubit_pair.qubit_target.name, None)
             if q_ctrl is None or q_tgt is None:
@@ -432,13 +436,24 @@ class QMBackend(Backend):
                     name_to_op_dict[op_] = gate_op
                     self._custom_instructions[op_] = gate_op
 
+        # Update Target object incrementally
         for op, properties in operations_dict.items():
-            target.add_instruction(name_to_op_dict[op], properties=properties)
+            if self._target.instruction_supported(op):
+                for qargs, prop in properties.items():
+                    # Check if this qargs combination already exists for this instruction
+                    if self._target.instruction_supported(op, qargs):
+                        self._target.update_instruction_properties(op, qargs, prop)
+                    else:
+                        raise ValueError(f"Instruction {op} with qargs {qargs} is not supported by the target")
+            else:
+                # Add new instruction to target
+                self._target.add_instruction(name_to_op_dict[op], properties=properties)
 
         for flow_op_name, control_flow_op in control_flow_name_mapping.items():
-            target.add_instruction(control_flow_op, name=flow_op_name)
-
-        return target, operations_qua_dict, CouplingMap(coupling_map)
+            if flow_op_name not in self._target.operation_names:
+                self._target.add_instruction(control_flow_op, name=flow_op_name)
+        self._coupling_map = CouplingMap(coupling_map)
+            
 
     @requires_qiskit_pulse
     def get_quam_channel(self, channel: QiskitChannel):
@@ -648,7 +663,9 @@ class QMBackend(Backend):
         )
 
         job.submit()
-        self._operation_mapping_QUA = self._ref_operation_mapping_QUA.copy()
+        # Note: _calibration_operation_mapping_QUA is reset at the start of each run() call via update_target(),
+        # so this reset is redundant but kept for clarity/explicit cleanup
+        self._calibration_operation_mapping_QUA = self._operation_mapping_QUA.copy()
         return job
 
     @requires_qiskit_pulse
@@ -729,92 +746,87 @@ class QMBackend(Backend):
             else:
                 self.get_quam_channel(channel).operations[pulse.name] = QuAMQiskitPulse(pulse)
 
-    def update_compiler_from_target(
-        self,
-        input_type: Optional[InputType] = None,
-    ):
+    def update_target(self, input_type: Optional[InputType] = None):
         """
-        Update the target with the operations defined in the target object.
-        :param input_type: Input type to use for the conversion of parameterized instructions to QUA variables.
-        :return:
+        Synchronize Target object with _operation_mapping_QUA.
+        
+        This method performs a one-way sync from Target to _operation_mapping_QUA:
+        1. Updates _operation_mapping_QUA from machine macros (incrementally, additive)
+        2. Syncs operations from Target to _operation_mapping_QUA, overwriting any existing
+           entries for the same OperationIdentifier (operations are identified by name,
+           parameter count, and qubits)
+        3. Updates the calibration mapping
+        
+        Important behavior:
+        - This method is ADDITIVE: it can add new operations but never removes existing ones
+        - This method OVERWRITES: Target operations will overwrite machine macros for the same
+          OperationIdentifier (as per Qiskit's Target specification, Target takes precedence)
+        - This method is NOT subtractive: operations cannot be removed from the mapping
+          (Qiskit Target does not support removal of operations)
+        
+        Args:
+            input_type: Input type to use for the conversion of parameterized instructions to QUA variables.
+                       Only needed when Target contains parameterized pulse schedules.
         """
-        # Check the target object for new operations
         from oqc import OperationIdentifier
-
+        
+        # Step 1: Update from machine macros (incremental - doesn't clear, additive only)
+        self._populate_target()
+        
+        # Step 2: Sync operations from Target to _operation_mapping_QUA (overwrites existing entries)
         for op_name, op_properties in self.target.items():
-            gate_set = list(set(key.name for key in self._ref_operation_mapping_QUA.keys())) + list(
-                CONTROL_FLOW_OP_NAMES
-            )
-            if op_name not in gate_set:
-                for qubits, properties in op_properties.items():
-                    if properties is None:
+            # Skip control flow operations (they're handled separately)
+            if op_name in CONTROL_FLOW_OP_NAMES:
+                continue
+                
+            for qubits, properties in op_properties.items():
+                if properties is None:
+                    raise ValueError(
+                        f"Operation {op_name} with qargs {qubits} has no properties defined in the target,"
+                        f"hence cannot be added to the QUA operations mapping"
+                    )
+                
+                # Determine the OperationIdentifier and QUA macro/schedule
+                if isinstance(properties, QMInstructionProperties):
+                    if properties.qua_pulse_macro is None:
                         raise ValueError(
-                            f"Operation {op_name} has no properties defined in the target,"
+                            f"Operation {op_name} with qargs {qubits} has no QUA macro defined in the target,"
                             f"hence cannot be added to the QUA operations mapping"
                         )
-                    elif isinstance(properties, QMInstructionProperties):
-                        if properties.qua_pulse_macro is None:
-                            raise ValueError(
-                                f"Operation {op_name} has no QUA macro defined in the target,"
-                                f"hence cannot be added to the QUA operations mapping"
+                    sched = properties.qua_pulse_macro
+                    sig = Signature.from_callable(sched)
+                    positional_params = [
+                        param
+                        for param in sig.parameters.values()
+                        if param.kind in (sigParam.POSITIONAL_OR_KEYWORD, sigParam.POSITIONAL_ONLY)
+                    ]
+                    num_params = len(positional_params)
+                    op_id = OperationIdentifier(op_name, num_params, qubits)
+                    # Overwrite existing entry if present (Target takes precedence over machine macros)
+                    self._operation_mapping_QUA[op_id] = sched
+                        
+                elif isinstance(properties, InstructionProperties) and hasattr(properties, "calibration"):
+                    from ..pulse.pulse_support_utils import validate_schedule
+                    
+                    sched = validate_schedule(properties.calibration)
+                    num_params = len(sched.parameters)
+                    op_id = OperationIdentifier(op_name, num_params, qubits)
+                    
+
+                    if num_params > 0:
+                        param_table = ParameterTable.from_qiskit(
+                                sched,
+                                input_type=input_type,
+                                name=sched.name + "_param_table",
                             )
-                        sched = properties.qua_pulse_macro
-                        sig = Signature.from_callable(sched)
-                        positional_params = [
-                            param
-                            for param in sig.parameters.values()
-                            if param.kind
-                            in (
-                                sigParam.POSITIONAL_OR_KEYWORD,
-                                sigParam.POSITIONAL_ONLY,
-                            )
-                        ]
-                        num_params = len(positional_params)
-                        op_id = OperationIdentifier(
-                            op_name,
-                            num_params,
-                            qubits,
-                        )
-                        self._ref_operation_mapping_QUA[op_id] = sched
-
-                    elif isinstance(properties, InstructionProperties) and hasattr(properties, "calibration"):
-                        from ..pulse.pulse_support_utils import validate_schedule
-
-                        sched = validate_schedule(properties.calibration)
-                        num_params = len(sched.parameters)
-                        if num_params > 0:
-                            param_table = sched.metadata.get(
-                                "qua",
-                                ParameterTable.from_qiskit(
-                                    sched,
-                                    input_type=input_type,
-                                    name=sched.name + "_param_table",
-                                ),
-                            )
-                            if isinstance(param_table, Dict):
-                                if len(param_table) == 1:
-                                    param_table = list(param_table.values())[0]
-                                else:
-                                    param_table = ParameterTable.from_other_tables(list(param_table.values()))
-
-                        else:
-                            param_table = None
-                        self._ref_operation_mapping_QUA[
-                            OperationIdentifier(
-                                op_name,
-                                num_params,
-                                qubits,
-                            )
-                        ] = self.schedule_to_qua_macro(sched, param_table)
-
-        self._operation_mapping_QUA = self._ref_operation_mapping_QUA.copy()
-
-    def update_target(self):
-        """
-        Update the target with the operations defined in the machine macros (if new macros were added)
-        """
-        self._target, self._ref_operation_mapping_QUA, self._coupling_map = self._populate_target(self.machine)
-        self._operation_mapping_QUA = self._ref_operation_mapping_QUA.copy()
+                        
+                    else:
+                        param_table = None
+                    # Overwrite existing entry if present (Target takes precedence over machine macros)
+                    self._operation_mapping_QUA[op_id] = self.schedule_to_qua_macro(sched, param_table)
+        
+        # Step 3: Update calibration mapping
+        self._calibration_operation_mapping_QUA = self._operation_mapping_QUA.copy()
 
     @requires_qiskit_pulse
     def update_calibrations(self, qc: QuantumCircuit, input_type: Optional[InputType] = None):
@@ -854,7 +866,7 @@ class QMBackend(Backend):
                     if param_table is not None:
                         param_table = handle_parameterized_channel(schedule, param_table)
 
-                    self._operation_mapping_QUA[
+                    self._calibration_operation_mapping_QUA[
                         OperationIdentifier(
                             gate_name,
                             len(parameters),
@@ -930,30 +942,6 @@ class QMBackend(Backend):
         )
         return result
 
-    def qiskit_to_qua_macro(
-        self,
-        qc: QuantumCircuit,
-        input_type: Optional[InputType] = None,
-    ) -> CompilationResult | Program | Callable[..., Any]:
-        """
-        Convert given input into a QUA program
-        """
-
-        if qc.parameters:  # Initialize the parameter table
-            parameter_table = ParameterTable.from_qiskit(qc, input_type=input_type)
-            qc.metadata["parameter_table"] = parameter_table
-        else:
-            parameter_table = None
-        if isinstance(qc, QuantumCircuit):
-            return self.quantum_circuit_to_qua(qc, parameter_table)
-        elif isinstance(qc, (ScheduleBlock, Schedule)):  # Convert to Schedule first
-            from ..pulse import validate_schedule
-
-            schedule = validate_schedule(qc)
-            return self.schedule_to_qua_macro(schedule, parameter_table)
-        else:
-            raise ValueError(f"Unsupported input {qc}")
-
     @property
     def compiler(self) -> Compiler:
         """
@@ -963,7 +951,7 @@ class QMBackend(Backend):
 
         return Compiler(
             hardware_config=HardwareConfig(
-                quantum_operations_db=self._operation_mapping_QUA,
+                quantum_operations_db=self._calibration_operation_mapping_QUA,
                 physical_qubits=self.qubit_mapping,
             )
         )
