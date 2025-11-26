@@ -176,8 +176,29 @@ class QMBackend(Backend):
         self._oq3_custom_gates = []
         self._init_macro = init_macro if init_macro is not None else lambda: None
 
+    @classmethod
+    def _default_options(cls) -> Options:
+        """
+        Returns the default options for the backend. The options are:
+        - shots: The number of shots to run the circuit for (default is 1024)
+        - compiler_options: The options for the QOP compiler (if any)
+        - simulate: The simulation configuration to use (if any) on the QOP
+        - memory: Whether to save each shot in memory (default is False)
+        :return:
+        """
+        return Options(
+            shots=1024,
+            compiler_options=None,
+            simulate=None,
+            memory=False,
+            skip_reset=False,
+            meas_level=MeasLevel.CLASSIFIED,
+            meas_return=MeasReturnType.AVERAGE,
+            timeout=60,
+        )
+
     @property
-    def target(self):
+    def target(self) -> Target:
         return self._target
 
     @property
@@ -332,27 +353,6 @@ class QMBackend(Backend):
     @property
     def max_circuits(self):
         return None
-
-    @classmethod
-    def _default_options(cls) -> Options:
-        """
-        Returns the default options for the backend. The options are:
-        - shots: The number of shots to run the circuit for (default is 1024)
-        - compiler_options: The options for the QOP compiler (if any)
-        - simulate: The simulation configuration to use (if any) on the QOP
-        - memory: Whether to save each shot in memory (default is False)
-        :return:
-        """
-        return Options(
-            shots=1024,
-            compiler_options=None,
-            simulate=None,
-            memory=False,
-            skip_reset=False,
-            meas_level=MeasLevel.CLASSIFIED,
-            meas_return=MeasReturnType.AVERAGE,
-            timeout=60,
-        )
 
     def _populate_target(self) -> None:
         """

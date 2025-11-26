@@ -105,7 +105,7 @@ class IQCCSamplerJob(QMSamplerJob):
         self._program = sampler_prog
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
-        sync_hook_code = generate_sync_hook_sampler(self._pubs, self._backend, self._input_type)
+        sync_hook_code = generate_sync_hook_sampler(self._pubs, param_tables)
 
         # Determine the calling context to get the script file path
         caller_frame = inspect.stack()[-1]

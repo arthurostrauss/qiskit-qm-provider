@@ -10,7 +10,7 @@ from qiskit.primitives.containers import PubResult
 from qm import SimulationConfig, CompilerOptionArguments, QuantumMachinesManager
 from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
-from typing import Optional, Union, List, Dict, Tuple
+from typing import Optional, Union, List, Dict, Tuple, TYPE_CHECKING
 from ..backend import QMBackend
 from ..parameter_table import InputType, ParameterTable
 from .qua_programs import estimator_program
@@ -18,6 +18,10 @@ from .qm_primitive_job import QMPrimitiveJob
 from ..primitives.qm_estimator import QMEstimatorOptions
 from dataclasses import dataclass, field
 from collections import defaultdict
+import os
+import inspect
+if TYPE_CHECKING:
+    from iqcc_cloud_client.qmm_cloud import CloudJob
 
 def generate_qm_estimator_pubs(pubs: List[EstimatorPub], switch_obs_circuit: QuantumCircuit) -> List[EstimatorPub]:
     """
@@ -165,7 +169,7 @@ class QMEstimatorJob(QMPrimitiveJob):
 
     def __init__(self, backend: QMBackend, pubs: List[EstimatorPub], input_type: Optional[InputType], switch_obs_circuit: QuantumCircuit, **kwargs):
         super().__init__(backend, pubs, input_type, **kwargs)
-        self._execution_plans: List[_ExecutionPlan] = [_ExecutionPlan.from_pub(pub, options=self._options) for pub in pubs]
+        self._execution_plans: List[_ExecutionPlan] = [_ExecutionPlan.from_pub(pub, options=QMEstimatorOptions(**kwargs)) for pub in pubs]
         self._switch_obs_circuit: QuantumCircuit = switch_obs_circuit
         self._program = estimator_program(backend, self._execution_plans)
         
@@ -438,3 +442,73 @@ class QMEstimatorJob(QMPrimitiveJob):
 
     def _parse_result(self):
         pass
+
+
+class IQCCEstimatorJob(QMEstimatorJob):
+    """IQCC Primitive Job class for executing QUA programs from PUBs."""
+
+    def submit(self):
+        """Submit the job to the backend."""
+        from .post_hook_estimator import generate_sync_hook_estimator
+        
+        estimator_prog = estimator_program(self._backend, self._execution_plans)
+        self._program = estimator_prog
+        if self._qm_job is not None:
+            raise RuntimeError("IQCC QM job has already been submitted")
+        
+        sync_hook_code = generate_sync_hook_estimator(self._execution_plans)
+
+        # Determine the calling context to get the script file path
+        caller_frame = inspect.stack()[-1]
+        main_script_path = caller_frame.filename
+        main_script_dir = os.path.dirname(os.path.abspath(main_script_path))
+        sync_hook_path = os.path.join(main_script_dir, "sync_hook_estimator.py")
+        with open(sync_hook_path, "w") as f:
+            f.write(sync_hook_code)
+        options = {"timeout": self.metadata.get("timeout", None),
+                   "sync_hook": sync_hook_path}
+        # For IQCC, execute returns CloudJob instead of RunningQmJob
+        self._qm_job = self._backend.qm.execute(  # type: ignore
+            estimator_prog, self._backend.qm_config, options=options if options["timeout"] else {}
+        )
+
+    def _result_function(self, qm_job: "CloudJob") -> PrimitiveResult[PubResult]:  # type: ignore[override]
+        """Get the result from the IQCC QM job."""
+        results_handle = qm_job.result_handles
+        results_handle.wait_for_all_values()
+
+        pub_results = []
+        for i, plan in enumerate(self._execution_plans):
+            # For IQCC, result_handle.get() returns data directly, similar to sampler
+            data = np.array(results_handle.get(f"__c_{i}")).flatten().tolist()
+            
+            num_qubits = plan.pub.circuit.num_qubits
+            shots = plan.shots
+            total_tasks = plan.total_tasks
+            
+            # Reshape data: (total_tasks * shots, num_bits) -> (total_tasks, shots, num_bits)
+            total_shots = len(data) // num_qubits
+            if total_shots != total_tasks * shots:
+                raise ValueError(
+                    f"Expected {total_tasks * shots} bitstrings, got {total_shots}"
+                )
+            bitstrings = np.array(data).reshape(total_tasks, shots, num_qubits)
+            
+            # Compute expectation value map
+            expval_map = self._calc_expval_map(
+                bitstrings, plan.metadata, shots, num_qubits
+            )
+            
+            # Postprocess to get PubResult
+            bc_param_ind, bc_obs = np.broadcast_arrays(plan.param_indices, plan.pub.observables)
+            
+            pub_result = self._postprocess_pub(
+                plan.pub,
+                expval_map,
+                plan.param_indices,
+                bc_obs,
+                shots
+            )
+            pub_results.append(pub_result)
+        
+        return PrimitiveResult(pub_results, metadata={"version": 2})

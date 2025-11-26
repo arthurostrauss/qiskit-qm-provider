@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, Literal, Any, Optional
+from typing import Iterable, Literal, Any, Optional, Union
 
 from qiskit.circuit.classical import types
 from qiskit.primitives import (
@@ -36,7 +36,7 @@ class QMEstimatorOptions:
     Default: True.
     """
 
-    input_type: Optional[InputType] = None
+    input_type: Optional[Union[InputType, Literal["INPUT_STREAM", "IO1", "IO2", "DGX_Q"]]] = None
     """The input mechanism to load the parameter values to the OPX. Choices are:
     - :class:`~.InputType.INPUT_STREAM`: Input stream mechanism.
     - :class:`~.InputType.IO1`: IO1.
@@ -96,10 +96,13 @@ class QMEstimatorV2(BaseEstimatorV2):
         pubs = [EstimatorPub.coerce(pub, precision) for pub in pubs]
         pubs = self.validate_estimator_pubs(pubs)
 
-        from ..job.qm_estimator_job import QMEstimatorJob
-
-        job = QMEstimatorJob(self._backend, pubs, self.options.input_type, switch_obs_circuit=self._switch_obs_circuit, **self.options.as_dict())
-
+        from ..job.qm_estimator_job import QMEstimatorJob, IQCCEstimatorJob
+        from qm import QuantumMachinesManager
+        job_obj = QMEstimatorJob if isinstance(self.backend.qmm, QuantumMachinesManager) else IQCCEstimatorJob
+        job = job_obj(self._backend, pubs, self.options.input_type, switch_obs_circuit=self._switch_obs_circuit,
+         run_options=self.options.run_options, abelian_grouping=self.options.abelian_grouping, default_precision=precision,
+        )
+        
         job.submit()
         return job
 
