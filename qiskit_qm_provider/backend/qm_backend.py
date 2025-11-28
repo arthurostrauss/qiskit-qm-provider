@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 import warnings
 from copy import deepcopy
-from typing import Iterable, List, Dict, Optional, Callable, Union, Tuple, Any, TYPE_CHECKING
+from typing import Iterable, List, Dict, Optional, Callable, Sequence, Union, Tuple, Any, TYPE_CHECKING
 from inspect import Signature, Parameter as sigParam
 
 import numpy as np
@@ -919,7 +919,7 @@ class QMBackend(Backend):
             inputs = {}
             if isinstance(param_table, (ParameterTable, Parameter)):
                 param_table = [param_table]
-            if isinstance(param_table, List):
+            if isinstance(param_table, Sequence):
                 for table in param_table:
                     if not table.is_declared:
                         if isinstance(table, ParameterTable):

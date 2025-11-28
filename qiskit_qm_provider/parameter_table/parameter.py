@@ -319,9 +319,7 @@ class Parameter:
         """
         if self.is_declared:
             raise ValueError("Variable already declared. Cannot declare again.")
-        if self.input_type == InputType.INPUT_STREAM:
-            self._var = declare_input_stream(t=self.type, name=self.name, value=self.value)
-        elif self.input_type == InputType.DGX_Q:
+        if self.input_type == InputType.DGX_Q:
             if self.is_standalone():
                 from qm.qua import declare_struct, declare_external_stream, QuaStreamDirection
 
@@ -344,9 +342,15 @@ class Parameter:
                     f"Please use the parameter table {ParameterPool.get_obj(self.stream_id).name} "
                     f"forming the Struct to declare it."
                 )
-
         else:
-            self._var = declare(t=self.type, value=self.value)
+            args_declare = {'t': self.type, 'name': self.name}
+            if self.value is not None:
+                args_declare['value'] = self.value
+            elif self.length > 1:
+                args_declare['size'] = self.length
+            declare_statement = declare_input_stream if self.input_type == InputType.INPUT_STREAM else declare
+            self._var = declare_statement(**args_declare)
+
         if self.is_array and self.length > 1:
             self._ctr = declare(int)
         if pause_program:

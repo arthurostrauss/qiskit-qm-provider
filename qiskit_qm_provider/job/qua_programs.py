@@ -8,7 +8,7 @@ from qiskit import QuantumCircuit
 from qm import Program
 from qm.qua import *
 from qiskit.primitives.containers.sampler_pub import SamplerPub
-from ..parameter_table import ParameterTable, QUA2DArray
+from ..parameter_table import ParameterTable, QUA2DArray, QUAArray
 from typing import List, Optional, TYPE_CHECKING
 import numpy as np
 if TYPE_CHECKING:
@@ -133,7 +133,7 @@ def _process_observables_with_circuit(
     num_qubits = plan.pub.circuit.num_qubits
     plan.observables_var.declare_variables()
     if plan.observables_var.input_type is None:
-        obs_indices_qua_list = [QUA2DArray(f"obs_indices_{j}", np.array(obs_indices), qua_type=int) for j, obs_indices in enumerate(plan.obs_indices)]
+        obs_indices_qua_list = [QUA2DArray(f"obs_indices_{j}", np.array(obs_indices, dtype=np.int32), qua_type=int) for j, obs_indices in enumerate(plan.obs_indices)]
         for obs_indices_qua_item in obs_indices_qua_list:
             obs_indices_qua_item.declare_variable()
 
@@ -218,7 +218,7 @@ def estimator_program(backend: QMBackend, execution_plans: List[_ExecutionPlan],
         backend.init_macro()
 
         # Loop over each PUB/circuit
-        for i, plan in enumerate(execution_plans):
+        for plan in execution_plans:
             clbits_dict = _process_estimator_pub(
                 plan,
                 backend,

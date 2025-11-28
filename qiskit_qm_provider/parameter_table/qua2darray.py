@@ -92,19 +92,63 @@ class QUA2DArray(Parameter):
 
         return i * self.n_cols + j if self.n_cols != 1 else i + j
 
-    def __getitem__(self, key: Union[ScalarInt, Tuple[ScalarInt, ScalarInt]]):
+    def __getitem__(
+        self, key: Union[ScalarInt, slice, Tuple[Union[ScalarInt, slice], Union[ScalarInt, slice]]]
+    ):
         """
         2D indexing:
          • arr[i, j] → returns the QUA‐VarRef for slot (i,j)
          • arr[i] → returns a RowView so you can do arr[i][j]
+         • arr[i, :] → returns a list of QUA variables for row i
+         • arr[:, j] → returns a list of QUA variables for column j
         """
         if self.var is None:
             raise RuntimeError(f"{self.name} not declared yet")
+        
         if isinstance(key, tuple):
-            i, j = key
-            return self.var[self._flat_index(i, j)]
+            row_spec, col_spec = key
+            
+            # Check if we have slices
+            row_is_slice = isinstance(row_spec, slice)
+            col_is_slice = isinstance(col_spec, slice)
+            
+            if not row_is_slice and not col_is_slice:
+                return self.var[self._flat_index(row_spec, col_spec)]
+            
+            # Handle slicing
+            if row_is_slice:
+                row_indices = range(*row_spec.indices(self.n_rows))
+            else:
+                row_indices = [row_spec]
+                
+            if col_is_slice:
+                col_indices = range(*col_spec.indices(self.n_cols))
+            else:
+                col_indices = [col_spec]
+                
+            # Return lists based on slice structure
+            if row_is_slice and not col_is_slice:
+                # Column extraction: [:, j] -> list of size n_rows
+                return [self.var[self._flat_index(r, col_spec)] for r in row_indices]
+            
+            elif not row_is_slice and col_is_slice:
+                # Row extraction: [i, :] -> list of size n_cols
+                return [self.var[self._flat_index(row_spec, c)] for c in col_indices]
+            
+            else:
+                # 2D slice: [:, :] -> list of lists
+                return [
+                    [self.var[self._flat_index(r, c)] for c in col_indices]
+                    for r in row_indices
+                ]
 
         else:
+            # Single index
+            if isinstance(key, slice):
+                # arr[start:stop] -> returns list of RowViews
+                rows = range(*key.indices(self.n_rows))
+                return [_QUA2DRow(self, r) for r in rows]
+
             # return a small proxy so you can do arr[i][j]
             return _QUA2DRow(self, key)
 
@@ -234,7 +278,11 @@ class _QUA2DRow:
         self._parent = parent
         self._row = row
 
-    def __getitem__(self, col: int):
+    def __getitem__(self, col: Union[ScalarInt, slice]):
+        if isinstance(col, slice):
+            # Support row[:] syntax
+            col_indices = range(*col.indices(self._parent.n_cols))
+            return [self._parent[self._row, c] for c in col_indices]
         return self._parent[self._row, col]
 
     def assign(self, col_or_vals: Union[ScalarInt, Sequence, QuaArrayVariable], val: Scalar = None):

@@ -837,7 +837,7 @@ class ParameterTable:
                 param_list.append(
                     Parameter(
                         parameter.name,
-                        0.0,
+                        qua_type=fixed,
                         input_type=input_type,
                         direction=Direction.OUTGOING,
                     )
@@ -850,7 +850,7 @@ class ParameterTable:
                     param_list.append(
                         Parameter(
                             var.name,
-                            0,
+                            qua_type=int,
                             input_type=input_type,
                             direction=Direction.OUTGOING,
                         )
@@ -859,7 +859,7 @@ class ParameterTable:
                     param_list.append(
                         Parameter(
                             var.name,
-                            False,
+                            qua_type=bool,
                             input_type=input_type,
                             direction=Direction.OUTGOING,
                         )
@@ -868,7 +868,7 @@ class ParameterTable:
                     param_list.append(
                         Parameter(
                             var.name,
-                            0.0,
+                            qua_type=fixed,
                             input_type=input_type,
                             direction=Direction.OUTGOING,
                         )

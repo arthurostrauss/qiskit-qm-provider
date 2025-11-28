@@ -12,7 +12,7 @@ from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
 from typing import Optional, Union, List, Dict, Tuple, TYPE_CHECKING
 from ..backend import QMBackend
-from ..parameter_table import InputType, ParameterTable
+from ..parameter_table import InputType, ParameterTable, ParameterPool
 from .qua_programs import estimator_program
 from .qm_primitive_job import QMPrimitiveJob
 from ..primitives.qm_estimator import QMEstimatorOptions
@@ -169,7 +169,8 @@ class QMEstimatorJob(QMPrimitiveJob):
 
     def __init__(self, backend: QMBackend, pubs: List[EstimatorPub], input_type: Optional[InputType], switch_obs_circuit: QuantumCircuit, **kwargs):
         super().__init__(backend, pubs, input_type, **kwargs)
-        self._execution_plans: List[_ExecutionPlan] = [_ExecutionPlan.from_pub(pub, options=QMEstimatorOptions(**kwargs)) for pub in pubs]
+        ParameterPool.reset()
+        self._execution_plans: List[_ExecutionPlan] = [_ExecutionPlan.from_pub(pub, options=QMEstimatorOptions(input_type=input_type, **kwargs)) for pub in pubs]
         self._switch_obs_circuit: QuantumCircuit = switch_obs_circuit
         self._program = estimator_program(backend, self._execution_plans)
         
@@ -451,25 +452,29 @@ class IQCCEstimatorJob(QMEstimatorJob):
         """Submit the job to the backend."""
         from .post_hook_estimator import generate_sync_hook_estimator
         
-        estimator_prog = estimator_program(self._backend, self._execution_plans)
-        self._program = estimator_prog
+        estimator_prog = self._program
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
         
-        sync_hook_code = generate_sync_hook_estimator(self._execution_plans)
+        if any(plan.param_table is not None and plan.param_table.input_type is not None for plan in self._execution_plans):
+            sync_hook_code = generate_sync_hook_estimator(self._execution_plans)
+        else:
+            sync_hook_code = None
 
         # Determine the calling context to get the script file path
         caller_frame = inspect.stack()[-1]
         main_script_path = caller_frame.filename
         main_script_dir = os.path.dirname(os.path.abspath(main_script_path))
         sync_hook_path = os.path.join(main_script_dir, "sync_hook_estimator.py")
-        with open(sync_hook_path, "w") as f:
-            f.write(sync_hook_code)
-        options = {"timeout": self.metadata.get("timeout", None),
-                   "sync_hook": sync_hook_path}
-        # For IQCC, execute returns CloudJob instead of RunningQmJob
+        if sync_hook_code is not None:
+            with open(sync_hook_path, "w") as f:
+                f.write(sync_hook_code)
+            options = {"sync_hook": sync_hook_path}
+        else:
+            options = {}
+        # # For IQCC, execute returns CloudJob instead of RunningQmJob
         self._qm_job = self._backend.qm.execute(  # type: ignore
-            estimator_prog, self._backend.qm_config, options=options if options["timeout"] else {}
+            estimator_prog, options=options
         )
 
     def _result_function(self, qm_job: "CloudJob") -> PrimitiveResult[PubResult]:  # type: ignore[override]

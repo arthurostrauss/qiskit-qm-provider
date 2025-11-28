@@ -68,6 +68,7 @@ class QMEstimatorV2(BaseEstimatorV2):
     def __init__(self, backend: QMBackend, options: QMEstimatorOptions | dict | None = None):
         self._backend = backend
         self._options = QMEstimatorOptions(**options) if isinstance(options, dict) else options or QMEstimatorOptions()
+        self._job = None
 
         basis = PassManagerConfig.from_backend(backend).basis_gates
         opt1q = Optimize1qGatesDecomposition(basis=basis, target=backend.target)
@@ -102,7 +103,7 @@ class QMEstimatorV2(BaseEstimatorV2):
         job = job_obj(self._backend, pubs, self.options.input_type, switch_obs_circuit=self._switch_obs_circuit,
          run_options=self.options.run_options, abelian_grouping=self.options.abelian_grouping, default_precision=precision,
         )
-        
+        self._job = job
         job.submit()
         return job
 
