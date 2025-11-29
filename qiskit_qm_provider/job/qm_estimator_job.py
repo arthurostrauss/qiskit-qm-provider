@@ -485,7 +485,7 @@ class IQCCEstimatorJob(QMEstimatorJob):
         pub_results = []
         for i, plan in enumerate(self._execution_plans):
             # For IQCC, result_handle.get() returns data directly, similar to sampler
-            data = np.array(results_handle.get(f"__c_{i}")).flatten().tolist()
+            data = np.array(results_handle.get(f"__c_{i}").fetch_all()).flatten().tolist()
             
             num_qubits = plan.pub.circuit.num_qubits
             shots = plan.shots

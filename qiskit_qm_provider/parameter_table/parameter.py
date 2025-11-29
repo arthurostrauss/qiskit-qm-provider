@@ -343,12 +343,16 @@ class Parameter:
                     f"forming the Struct to declare it."
                 )
         else:
-            args_declare = {'t': self.type, 'name': self.name}
+            args_declare = {'t': self.type}
             if self.value is not None:
                 args_declare['value'] = self.value
             elif self.length > 1:
                 args_declare['size'] = self.length
-            declare_statement = declare_input_stream if self.input_type == InputType.INPUT_STREAM else declare
+            if self.input_type == InputType.INPUT_STREAM:
+                args_declare['name'] = self.name
+                declare_statement = declare_input_stream
+            else:
+                declare_statement = declare
             self._var = declare_statement(**args_declare)
 
         if self.is_array and self.length > 1:

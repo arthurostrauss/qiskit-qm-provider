@@ -107,8 +107,7 @@ def sampler_program(
         with stream_processing():
             for i, clbits_dict in enumerate(clbits_dicts):
                 for creg_name, creg_dict in clbits_dict.items():
-                    creg_dict["stream"].save_all(f"{creg_name}_{i}")
-
+                    creg_dict["stream"].buffer(pubs[i].shots).save_all(f"{creg_name}_{i}")
     return sampler_prog
 
 def _process_observables_with_circuit(
@@ -229,7 +228,7 @@ def estimator_program(backend: QMBackend, execution_plans: List[_ExecutionPlan],
         with stream_processing():
             for i, clbits_dict in enumerate(clbits_dicts):
                 for creg_name, creg_dict in clbits_dict.items():
-                    creg_dict["stream"].boolean_to_int().buffer(creg_dict["size"]).save_all(f"{creg_name}_{i}")
+                    creg_dict["stream"].boolean_to_int().buffer(execution_plans[i].shots, creg_dict["size"]).save_all(f"{creg_name}_{i}")
 
     return estimator_prog
 

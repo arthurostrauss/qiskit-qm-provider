@@ -130,8 +130,11 @@ class IQCCSamplerJob(QMSamplerJob):
         for i, pub in enumerate(self._pubs):
             qc_meas_data = {}
             for creg in pub.circuit.cregs:
-                data = np.array(results_handle.get(f"{creg.name}_{i}")).flatten().tolist()
-                bit_array = BitArray.from_samples(data, creg.size).reshape(pub.shape)
+                data = np.array(results_handle.get(f"{creg.name}_{i}").fetch_all()).flatten().tolist()
+                # BitArray.from_samples creates shape=() with num_shots=len(data)
+                # To reshape to pub.shape, we need to include shots: pub.shape + (pub.shots,)
+                # This makes the total size match self.size * self.num_shots
+                bit_array = BitArray.from_samples(data, creg.size).reshape(pub.shape + (pub.shots,))
                 qc_meas_data[creg.name] = bit_array
 
             sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
