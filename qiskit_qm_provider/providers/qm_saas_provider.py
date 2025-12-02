@@ -1,15 +1,18 @@
-import json
-import os
+from __future__ import annotations
 from pathlib import Path
-from typing import Optional
-from qm_saas import QmSaas, QOPVersion, QmSaasInstance
-from ..backend import QMBackend, FluxTunableTransmonBackend
-from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import FluxTunableQuam as Quam
-from qm import QuantumMachinesManager, SimulationConfig
+from typing import Optional, TYPE_CHECKING
 
+from ..backend import QMBackend, FluxTunableTransmonBackend
+
+if TYPE_CHECKING:
+    from qm import SimulationConfig
+    from qm_saas import QmSaas, QOPVersion, QmSaasInstance
+    from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import FluxTunableQuam as Quam
 class QmSaasProvider:
     def __init__(self, email: Optional[str] = None, password: Optional[str] = None, host: Optional[str] = None, version: Optional[str] = None):
+        from qm_saas import QmSaas, QOPVersion
         if email is None or password is None or host is None:
+            import json
             try:
                 path = Path.home() / "qm_saas_config.json"
                 with open(path, "r") as f:
@@ -30,6 +33,7 @@ class QmSaasProvider:
         """
         Get a Quam instance from the QmSaasProvider.
         """
+        from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import FluxTunableQuam as Quam
         if quam_state_folder_path is not None:
             return Quam.load(quam_state_folder_path)
         else:
@@ -39,6 +43,7 @@ class QmSaasProvider:
         """
         Get a QMBackend from the QmSaasProvider.
         """
+        from qm import QuantumMachinesManager, SimulationConfig
         machine = self.get_machine(quam_state_folder_path)
         self.instance.spawn()
         qmm = QuantumMachinesManager(host=self.instance.host, port=self.instance.port, connection_headers=self.instance.default_connection_headers)

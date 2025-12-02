@@ -1,15 +1,19 @@
+from __future__ import annotations
 import json
 import os
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from ..backend.flux_tunable_transmon_backend import FluxTunableTransmonBackend
-from iqcc_cloud_client import IQCC_Cloud
-from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import FluxTunableQuam as Quam
+
+if TYPE_CHECKING:
+    from iqcc_cloud_client import IQCC_Cloud
+    from iqcc_calibration_tools.quam_config.components import Quam as IQCCQuam
 
 def get_machine_from_iqcc(backend_name: str, api_token: Optional[str] = None):
+    from iqcc_cloud_client import IQCC_Cloud
     try:
         from iqcc_calibration_tools.quam_config.components import Quam as IQCCQuam
     except ImportError:
-        IQCCQuam = Quam
+        from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import FluxTunableQuam as IQCCQuam
     iqcc = IQCC_Cloud(quantum_computer_backend=backend_name, api_token=api_token)
 
     # Get the latest state and wiring files
@@ -45,6 +49,7 @@ class IQCCProvider:
         """
         Get a the IQCC Cloud client.
         """
+        from iqcc_cloud_client import IQCC_Cloud
         return IQCC_Cloud(quantum_computer_backend=name, api_token=self.api_token)
 
     
