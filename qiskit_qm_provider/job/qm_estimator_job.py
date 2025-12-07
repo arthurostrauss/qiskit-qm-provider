@@ -1,5 +1,5 @@
 import numpy as np
-from qiskit.circuit import ClassicalRegister, Parameter, QuantumCircuit
+from qiskit.circuit import ClassicalRegister, Parameter, QuantumCircuit, Qubit
 from qiskit.quantum_info import SparsePauliOp, Pauli, PauliList
 from qiskit.primitives import PrimitiveResult
 from qiskit.primitives.backend_estimator_v2 import _measurement_circuit
@@ -12,7 +12,7 @@ from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
 from typing import Optional, Union, List, Dict, Tuple, TYPE_CHECKING
 from ..backend import QMBackend
-from ..parameter_table import InputType, ParameterTable, ParameterPool
+from ..parameter_table import InputType, ParameterTable, ParameterPool, Parameter as QuaParameter
 from .qua_programs import estimator_program
 from .qm_primitive_job import QMPrimitiveJob
 from ..primitives.qm_estimator import QMEstimatorOptions
@@ -23,24 +23,6 @@ import inspect
 if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import CloudJob
 
-def generate_qm_estimator_pubs(pubs: List[EstimatorPub], switch_obs_circuit: QuantumCircuit) -> List[EstimatorPub]:
-    """
-    Generate the QM estimator pubs from the given pubs and switch observation circuit.
-    This pads the circuit with the switch observation circuit for each qubit.
-    """
-    new_pubs = []
-    for pub in pubs:
-        qc = pub.circuit.copy()
-        creg = ClassicalRegister(pub.circuit.num_qubits, name="__c")
-        qc.add_register(creg)
-        for q in range(pub.circuit.num_qubits):
-            qubit = qc.qubits[q]
-            clbit = creg[q]
-            qc.compose(switch_obs_circuit, [qubit], [clbit], inplace=True,
-            var_remap={"obs": f"obs_{q}"})
-        new_pub = EstimatorPub(qc, pub.observables, pub.parameter_values, pub.precision)
-        new_pubs.append(new_pub)
-    return new_pubs
 @dataclass
 class _ExecutionPlan:
     """Holds the pre-computed execution plan for a single EstimatorPub."""
@@ -51,15 +33,18 @@ class _ExecutionPlan:
     obs_indices: List[List[Tuple[int, ...]]]
     observables_var: ParameterTable
     param_table: Optional[ParameterTable]
+    active_qubits: List[Qubit]
 
     @classmethod
     def from_pub(cls, pub: EstimatorPub, options: QMEstimatorOptions):
+        from ..backend.backend_utils import logically_active_qubits, get_non_trivial_observables
         circuit = pub.circuit
         observables = pub.observables
         parameter_values = pub.parameter_values
         param_shape = parameter_values.shape
         param_indices = np.fromiter(np.ndindex(param_shape), dtype=object).reshape(param_shape)
 
+        active_qubits = logically_active_qubits(circuit)
         # 2. Broadcast the parameter indices against the observables.
         bc_param_ind, bc_obs = np.broadcast_arrays(param_indices, observables)
 
@@ -74,7 +59,8 @@ class _ExecutionPlan:
         obs_indices_list = []
         for param_index, pauli_strings in param_obs_map.items():
             meas_paulis = PauliList(sorted(pauli_strings))
-            obs_indices_list.append(observables_to_indices(meas_paulis))
+            meas_paulis_active = get_non_trivial_observables(meas_paulis, [circuit.find_bit(q).index for q in active_qubits])
+            obs_indices_list.append(observables_to_indices(meas_paulis_active))
             if options.abelian_grouping:
                 for obs in meas_paulis.group_commuting(qubit_wise=True):
                     basis = Pauli((np.logical_or.reduce(obs.z), np.logical_or.reduce(obs.x)))
@@ -105,7 +91,7 @@ class _ExecutionPlan:
                     })
         observables_var = ParameterTable.from_qiskit(pub.circuit, input_type=options.input_type, filter_function=lambda p: pub.circuit.has_var(p) and "obs" in p.name, name=f"observables_var_{pub.circuit.name}")
         param_table = ParameterTable.from_qiskit(pub.circuit, input_type=options.input_type, filter_function=lambda p: isinstance(p, Parameter), name=f"param_table_{pub.circuit.name}")
-        return cls(pub, metadata, param_indices, obs_indices_list, observables_var, param_table)
+        return cls(pub, metadata, param_indices, obs_indices_list, observables_var, param_table, active_qubits)
 
     @property
     def total_tasks(self) -> int:
@@ -113,7 +99,15 @@ class _ExecutionPlan:
     
     @property
     def shots(self) -> int:
-        return int(1/self.pub.precision**2)
+        return int(np.ceil(1/self.pub.precision**2))
+
+    @property
+    def num_qubits(self) -> int:
+        return len(self.active_qubits)
+
+    @property
+    def active_qubit_indices(self) -> List[int]:
+        return [self.pub.circuit.find_bit(q).index for q in self.active_qubits]
 
 def observables_to_indices(
     observables: List[SparsePauliOp|Pauli|str] | SparsePauliOp | PauliList | Pauli | str,
@@ -172,7 +166,9 @@ class QMEstimatorJob(QMPrimitiveJob):
         ParameterPool.reset()
         self._execution_plans: List[_ExecutionPlan] = [_ExecutionPlan.from_pub(pub, options=QMEstimatorOptions(input_type=input_type, **kwargs)) for pub in pubs]
         self._switch_obs_circuit: QuantumCircuit = switch_obs_circuit
-        self._program = estimator_program(backend, self._execution_plans)
+        self._obs_length_vars = QuaParameter(name="obs_length_var", value=0, qua_type=int, input_type=input_type)
+        self._program = estimator_program(backend, self._execution_plans, obs_length_var=self._obs_length_vars)
+
         
     def submit(self):
         """Submit the job to the backend after creating an efficient execution plan."""
@@ -195,18 +191,21 @@ class QMEstimatorJob(QMPrimitiveJob):
             plan = self._execution_plans[i]
             param_table = plan.param_table
             observables_var = plan.observables_var
+            
             # Push parameter values if the circuit has them
             if param_table is not None and param_table.input_type is not None:
                 for p, param_value in enumerate(plan.pub.parameter_values.ravel().as_array()):
                     param_dict = {param.name: value for param, value in zip(param_table.parameters, param_value)}
                     param_table.push_to_opx(param_dict, self.qm_job, self._backend.qm)
                     if observables_var.input_type is not None:
-                        for  obs_value in plan.obs_indices[p]:
+                        self._obs_length_vars.push_to_opx(len(plan.obs_indices[p]), self.qm_job, self._backend.qm)
+                        for obs_value in plan.obs_indices[p]:
                             obs_dict = {f"obs_{i}": val for i, val in enumerate(obs_value)}
                             observables_var.push_to_opx(obs_dict, self.qm_job, self._backend.qm)
                 
             # Push observable indices
             elif observables_var.input_type is not None:
+                self._obs_length_vars.push_to_opx(len(plan.obs_indices[0]), self.qm_job, self._backend.qm)
                 for obs_value in plan.obs_indices[0]:
                     obs_dict = {f"obs_{i}": val for i, val in enumerate(obs_value)}
                     observables_var.push_to_opx(obs_dict, self.qm_job, self._backend.qm)
@@ -386,35 +385,11 @@ class QMEstimatorJob(QMPrimitiveJob):
             else:
                 data = results_handle.get(f"__c_{i}").fetch_all()["value"]
             
-            # Convert data to numpy array if needed
-            if not isinstance(data, np.ndarray):
-                data = np.array(data)
-            
-            num_qubits = plan.pub.circuit.num_qubits
+            num_qubits = len(plan.active_qubits)
             shots = plan.shots
             total_tasks = plan.total_tasks
             
-            # Reshape data: (total_tasks * shots, num_bits) -> (total_tasks, shots, num_bits)
-            # The data comes as a flat array of bitstrings from all tasks
-            if data.ndim == 2:
-                # Data is already in (total_shots, num_bits) format
-                total_shots = data.shape[0]
-                if total_shots != total_tasks * shots:
-                    raise ValueError(
-                        f"Expected {total_tasks * shots} bitstrings, got {total_shots}"
-                    )
-                bitstrings = data.reshape(total_tasks, shots, num_qubits)
-            elif data.ndim == 1:
-                # Data is a flat list, need to reshape
-                # Assuming it's organized as [task0_bitstrings..., task1_bitstrings..., ...]
-                total_shots = len(data) // num_qubits
-                if total_shots != total_tasks * shots:
-                    raise ValueError(
-                        f"Expected {total_tasks * shots} bitstrings, got {total_shots}"
-                    )
-                bitstrings = np.array(data).reshape(total_tasks, shots, num_qubits)
-            else:
-                raise ValueError(f"Unexpected data shape: {data.shape}")
+            bitstrings = np.array(data).reshape(total_tasks, shots, num_qubits)
             
             # Compute expectation value map
             expval_map = self._calc_expval_map(
@@ -424,7 +399,7 @@ class QMEstimatorJob(QMPrimitiveJob):
             # Postprocess to get PubResult
             # Convert observables to numpy array for broadcasting
             # plan.pub.observables is an ObservablesArray, we need to broadcast it
-            bc_param_ind, bc_obs = np.broadcast_arrays(plan.param_indices, plan.pub.observables)
+            _, bc_obs = np.broadcast_arrays(plan.param_indices, plan.pub.observables)
             
             pub_result = self._postprocess_pub(
                 plan.pub,
@@ -457,7 +432,7 @@ class IQCCEstimatorJob(QMEstimatorJob):
             raise RuntimeError("IQCC QM job has already been submitted")
         
         if any(plan.param_table is not None and plan.param_table.input_type is not None for plan in self._execution_plans):
-            sync_hook_code = generate_sync_hook_estimator(self._execution_plans)
+            sync_hook_code = generate_sync_hook_estimator(self._execution_plans, obs_length_var=self._obs_length_vars)
         else:
             sync_hook_code = None
 
@@ -485,19 +460,12 @@ class IQCCEstimatorJob(QMEstimatorJob):
         pub_results = []
         for i, plan in enumerate(self._execution_plans):
             # For IQCC, result_handle.get() returns data directly, similar to sampler
-            data = np.array(results_handle.get(f"__c_{i}").fetch_all()).flatten().tolist()
-            
-            num_qubits = plan.pub.circuit.num_qubits
+            data = np.array(results_handle.get(f"__c_{i}").fetch_all())
+            num_qubits = len(plan.active_qubits)
             shots = plan.shots
             total_tasks = plan.total_tasks
             
-            # Reshape data: (total_tasks * shots, num_bits) -> (total_tasks, shots, num_bits)
-            total_shots = len(data) // num_qubits
-            if total_shots != total_tasks * shots:
-                raise ValueError(
-                    f"Expected {total_tasks * shots} bitstrings, got {total_shots}"
-                )
-            bitstrings = np.array(data).reshape(total_tasks, shots, num_qubits)
+            bitstrings = data.reshape((total_tasks, shots, num_qubits))
             
             # Compute expectation value map
             expval_map = self._calc_expval_map(
@@ -505,7 +473,7 @@ class IQCCEstimatorJob(QMEstimatorJob):
             )
             
             # Postprocess to get PubResult
-            bc_param_ind, bc_obs = np.broadcast_arrays(plan.param_indices, plan.pub.observables)
+            _, bc_obs = np.broadcast_arrays(plan.param_indices, plan.pub.observables)
             
             pub_result = self._postprocess_pub(
                 plan.pub,

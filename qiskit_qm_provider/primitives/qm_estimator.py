@@ -16,7 +16,7 @@ from qiskit.circuit import QuantumCircuit, ClassicalRegister
 from ..parameter_table import InputType
 
 from ..backend.qm_backend import QMBackend
-from ..backend.backend_utils import validate_circuits
+from ..backend.backend_utils import validate_circuits, logically_active_qubits
 
 
 @dataclass
@@ -116,21 +116,28 @@ class QMEstimatorV2(BaseEstimatorV2):
 
     def validate_estimator_pubs(self, pubs: list[EstimatorPub]) -> list[EstimatorPub]:
         new_pubs = []
-
         for i, pub in enumerate(pubs):
             if pub.precision <= 0.0:
                 raise ValueError(
                     f"The {i}-th pub has precision less than or equal to 0 ({pub.precision}). ",
                     "But precision should be larger than 0.",
                 )
+            if pub.circuit.num_qubits != self._backend.num_qubits or pub.observables.num_qubits != self._backend.num_qubits:
+                raise ValueError(
+                    f"The {i}-th pub has {pub.circuit.num_qubits} circuit qubits and {pub.observables.num_qubits} observables qubits, but the backend has {self._backend.num_qubits} qubits.",
+                    "Make sure you have transpiled the circuit to the backend's target as well as applied the circuit layout to the observables.",
+                )
+
             qc = pub.circuit.copy()
-            creg = ClassicalRegister(pub.circuit.num_qubits, name="__c")
+            active_qubits = logically_active_qubits(pub.circuit)
+            qubit_indices = [qc.find_bit(q).index for q in active_qubits]
+            num_active_qubits = len(active_qubits)
+            creg = ClassicalRegister(num_active_qubits, name="__c")
             qc.add_register(creg)
-            for q in range(pub.circuit.num_qubits):
-                qubits = [qc.qubits[q]]
-                qc.compose(self._switch_obs_circuit, qubits, inplace=True,
+            for q, qubit in enumerate(active_qubits):
+                qc.compose(self._switch_obs_circuit, [qubit], inplace=True,
                 var_remap={"obs": f"obs_{q}"})
-            qc.measure(qc.qubits, creg)
+            qc.measure(active_qubits, creg)
             qc = validate_circuits(qc)[0]
 
             new_pub = EstimatorPub(qc, pub.observables, pub.parameter_values, pub.precision)

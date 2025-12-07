@@ -90,7 +90,7 @@ parameter_tables = {param_tables_list_str}
 for parameter_value, parameter_table in zip(parameter_values, parameter_tables):
     if parameter_table is not None and parameter_table.input_type is not None:
         for values in parameter_value:
-            param_dict = {{param.name: value for param, value in zip(parameter_table.parameters, values)}}
+            param_dict = {{param.name: float(value) for param, value in zip(parameter_table.parameters, values)}}
             parameter_table.push_to_opx(param_dict, job)
 """
 

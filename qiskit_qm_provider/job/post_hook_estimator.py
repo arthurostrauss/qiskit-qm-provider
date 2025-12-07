@@ -1,6 +1,6 @@
 from typing import List, Optional
 import numpy as np
-from qiskit_qm_provider.parameter_table import InputType, ParameterTable
+from qiskit_qm_provider.parameter_table import InputType, ParameterTable, Parameter as QuaParameter
 from qm.qua import fixed
 from .qm_estimator_job import _ExecutionPlan
 
@@ -82,7 +82,7 @@ def _serialize_obs_indices(obs_indices: List[List[tuple]]) -> str:
     return result
 
 
-def generate_sync_hook_estimator(execution_plans: List[_ExecutionPlan]) -> str:
+def generate_sync_hook_estimator(execution_plans: List[_ExecutionPlan], obs_length_var: QuaParameter) -> str:
     """Generate the sync hook code for the estimator."""
     
     # Extract parameter values for each execution plan
@@ -167,6 +167,7 @@ parameter_values_list = {param_values_list_str}
 obs_indices_list = {obs_indices_list_str}
 param_tables = {param_tables_list_str}
 observables_vars = {observables_vars_list_str}
+obs_length_var = QMParameter(name="obs_length_var", value=0, qua_type=int, input_type='{str(obs_length_var.input_type)}')
 
 for i in range(len(parameter_values_list)):
     param_table = param_tables[i]
@@ -177,14 +178,16 @@ for i in range(len(parameter_values_list)):
     # Push parameter values if the circuit has them
     if param_table is not None and param_table.input_type is not None:
         for p, param_value in enumerate(parameter_values):
-            param_dict = {{param.name: value for param, value in zip(param_table.parameters, param_value)}}
+            param_dict = {{param.name: float(value) for param, value in zip(param_table.parameters, param_value)}}
             param_table.push_to_opx(param_dict, job)
             if observables_var.input_type is not None:
+                obs_length_var.push_to_opx(len(obs_indices[p]), job)
                 for obs_value in obs_indices[p]:
                     obs_dict = {{f"obs_{{q}}": val for q, val in enumerate(obs_value)}}
                     observables_var.push_to_opx(obs_dict, job)
     # Push observable indices
     elif observables_var.input_type is not None:
+        obs_length_var.push_to_opx(len(obs_indices[0]), job)
         for obs_value in obs_indices[0]:
             obs_dict = {{f"obs_{{q}}": val for q, val in enumerate(obs_value)}}
             observables_var.push_to_opx(obs_dict, job)

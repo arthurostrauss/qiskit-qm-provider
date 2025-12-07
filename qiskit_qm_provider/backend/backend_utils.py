@@ -6,6 +6,7 @@ from typing import List, TYPE_CHECKING, Dict, Literal, Type
 from qiskit import QuantumCircuit
 from qiskit.circuit.controlflow import ControlFlowOp, IfElseOp, WhileLoopOp, ForLoopOp, SwitchCaseOp
 from qiskit.circuit.library import get_standard_gate_name_mapping
+from qiskit.quantum_info import Pauli, PauliList
 
 from quam.components import Qubit, QubitPair, BasicQuam
 from quam.utils.qua_types import QuaVariableInt
@@ -79,24 +80,13 @@ def validate_circuits(
                 raise ValueError("Only one register per clbit is supported.")
         if not has_reset_at_boundary(qc) and should_reset:
             qc_reset = qc.copy_empty_like(vars_mode="drop")
-            active_qubits = get_active_qubits(qc)
+            active_qubits = logically_active_qubits(qc)
             qc_reset.reset(active_qubits)
             new_circuits.append(qc.compose(qc_reset, inplace=False, front=True))
         else:
             new_circuits.append(qc)
 
     return new_circuits
-
-def get_active_qubits(qc: QuantumCircuit) -> List[Qubit]:
-    """
-    Get the qubits that are not idle.
-    :param qc: The QuantumCircuit to get the active qubits from.
-    :return: The list of active qubits.
-    """
-    from qiskit.converters.circuit_to_dag import circuit_to_dag
-    dag = circuit_to_dag(qc)
-    active_qubits = [qubit for qubit in qc.qubits if qubit not in dag.idle_wires()]
-    return active_qubits
 
 def has_conflicting_calibrations(circuits: List[QuantumCircuit]) -> bool:
     """
@@ -282,3 +272,39 @@ def get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult, comp
                 ),
             )
     return clbits_dict
+
+def logically_active_qubits(circuit):
+    """
+    Retrieve the qubits that are logically active in the circuit, meaning those that carry any operation other than a delay (related to scheduling passes).
+    """
+
+    active = set()
+
+    for instr, qargs, _ in circuit.data:
+        if instr.name == "delay":
+            continue
+        for q in qargs:
+            active.add(q)
+
+    return sorted(active, key=lambda q: circuit.find_bit(q).index)
+
+def get_non_trivial_observables(observables: PauliList, active_qubit_indices: List[int]) -> PauliList:
+    """
+    Get the non-trivial observables from the observables.
+    :param observables: The observables to get the non-trivial observables from.
+    :param active_qubit_indices: The indices of the active qubits.
+    :return: The non-trivial observables.
+    """
+    new_observables = []
+    for observable in observables:
+        label = observable.to_label()
+        new_pauli_label = ""
+        for j in range(observable.num_qubits):
+            if j in active_qubit_indices:
+                new_pauli_label += label[-j-1]
+        new_observables.append(Pauli(new_pauli_label))
+
+    return PauliList(new_observables)
+
+
+             

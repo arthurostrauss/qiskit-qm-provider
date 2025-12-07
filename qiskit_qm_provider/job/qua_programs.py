@@ -125,10 +125,12 @@ def _process_observables_with_circuit(
         param_table: Optional additional ParameterTable to pass to _process_circuit
         **kwargs: Additional arguments for _process_circuit
     """
-    total_tasks = plan.total_tasks
+    obs_length_var = kwargs.get("obs_length_var", None)
     obs_idx = declare(int)
     num_qubits = plan.pub.circuit.num_qubits
     plan.observables_var.declare_variables()
+    if obs_length_var is not None:
+        obs_length_var.declare_variable()
     if plan.observables_var.input_type is None:
         obs_indices_qua_list = [QUA2DArray(f"obs_indices_{j}", np.array(obs_indices, dtype=np.int32), qua_type=int) for j, obs_indices in enumerate(plan.obs_indices)]
         for obs_indices_qua_item in obs_indices_qua_list:
@@ -147,7 +149,9 @@ def _process_observables_with_circuit(
                     **kwargs,
                 )
     else:
-        with for_(obs_idx, 0, obs_idx < total_tasks, obs_idx + 1):
+        if obs_length_var is not None:
+            obs_length_var.load_input_value()
+        with for_(obs_idx, 0, obs_idx < obs_length_var.var, obs_idx + 1):
             plan.observables_var.load_input_values()
             # Combine param_table and observables_var if param_table is provided
             process_param_table = [plan.param_table, plan.observables_var] if plan.param_table is not None else plan.observables_var
