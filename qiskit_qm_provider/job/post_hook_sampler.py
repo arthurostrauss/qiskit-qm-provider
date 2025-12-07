@@ -7,7 +7,7 @@ from qm.qua import fixed
 def generate_sync_hook_sampler(pubs: List[SamplerPub], parameter_tables: List[ParameterTable]) -> str:
     """Generate the sync hook code for the sampler."""
     
-    parameter_value_dicts = np.array([pub.parameter_values.ravel().as_array([param.name for param in pub.circuit.parameters]) for pub in pubs])
+    parameter_value_dicts = np.array([pub.parameter_values.ravel().as_array() for pub in pubs])
     new_param_table_contents = []
     for parameter_table in parameter_tables:
         if parameter_table is None:
@@ -89,36 +89,9 @@ parameter_tables = {param_tables_list_str}
 
 for parameter_value, parameter_table in zip(parameter_values, parameter_tables):
     if parameter_table is not None and parameter_table.input_type is not None:
-        param_dict = {{param.name: value for param, value in zip(parameter_table.parameters, parameter_value)}}
-        parameter_table.push_to_opx(param_dict, job)
-
-# results_handle = job.result_handles
-# results_handle.wait_for_all_values()
-
-# all_data = []
-# for i, circuit in enumerate(circuits):
-#     qc_meas_data = {{}}
-#     for creg in circuit.cregs:
-#         data = results_handle.get("" + creg.name + "_" + str(i)).fetch_all()["value"]
-#         meas_level = self.metadata.get("meas_level")
-#         if meas_level == "classified":
-#             bit_array = BitArray.from_samples(data.tolist(), creg.size).reshape(pub.shape)
-#             qc_meas_data[creg.name] = bit_array
-#         elif meas_level == "kerneled":
-#             # TODO: Assume that buffering was done like (2, creg.size)
-#             qc_meas_data[creg.name] = np.array([d[0] + 1j * d[1] for d in data], dtype=complex).reshape(
-#                 pub.shape + (pub.shots, creg.size)
-#             )
-#         else:
-#             # TODO: Figure it out
-#             qc_meas_data[creg.name] = np.array([d[0] + 1j * d[1] for d in data], dtype=complex).reshape(
-#                 pub.shape + (pub.shots, creg.size)
-#             )
-
-#     sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
-#     all_data.append(sampler_data)
-
-# result = PrimitiveResult(all_data)
-# print(result)"""
+        for values in parameter_value:
+            param_dict = {{param.name: value for param, value in zip(parameter_table.parameters, values)}}
+            parameter_table.push_to_opx(param_dict, job)
+"""
 
     return sync_hook_code

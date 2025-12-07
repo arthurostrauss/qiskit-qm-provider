@@ -6,9 +6,6 @@ from qiskit.circuit.classical import types
 from qiskit.primitives import (
     BaseEstimatorV2,
     EstimatorPubLike,
-    BasePrimitiveJob,
-    PrimitiveResult,
-    PubResult,
 )
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from dataclasses import asdict, dataclass

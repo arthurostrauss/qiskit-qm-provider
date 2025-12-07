@@ -62,14 +62,14 @@ def _process_sampler_pub(
             **kwargs,
         )
     else:
+        param_table.declare_variables()
         p = declare(int)
-        if param_table.input_type is None:
-            # Declare the parameters at compile time
-            param_values_qua = QUA2DArray("param_values", pub.parameter_values.ravel().as_array())
-            param_values_qua.declare_variable()
 
         with for_(p, 0, p < pub.parameter_values.ravel().size, p + 1):
             if param_table.input_type is None:
+                # Declare the parameters at compile time
+                param_values_qua = QUA2DArray("param_values", pub.parameter_values.ravel().as_array())
+                param_values_qua.declare_variable()
                 param_table.assign_parameters({param.name: param_values_qua[p][i] for i, param in enumerate(param_table.parameters)})
             else:
                 param_table.load_input_values()
@@ -95,8 +95,6 @@ def sampler_program(
         backend.init_macro()
 
         for i in range(num_circuits):
-            if param_tables[i] is not None:
-                param_tables[i].declare_variables()
             clbits_dict = _process_sampler_pub(
                 pubs[i],
                 backend,

@@ -1,5 +1,3 @@
-from qiskit.qasm3 import loads
-from qiskit.circuit import Parameter
 from typing import List, Optional
 import numpy as np
 from qiskit_qm_provider.parameter_table import InputType, ParameterTable

@@ -81,11 +81,11 @@ class QMSamplerJob(QMPrimitiveJob):
         else:
             self._qm_job = self._backend.qm.execute(sampler_prog, compiler_options=compiler_options)
             self._job_id = self._qm_job.id
-            for pub, param_table in zip(self._pubs, param_tables):
+            for pub, param_table in zip(self._pubs, self._param_tables):
                 if param_table is not None and param_table.input_type is not None:
-                    for parameters in pub.parameter_values.ravel().as_array([param.name for param in param_table.parameters]):
+                    for parameters in pub.parameter_values.ravel().as_array():
                         param_dict = {param.name: value for param, value in zip(param_table.parameters, parameters)}
-                        param_table.push_to_opx(param_dict, self.qm_job, self._backend.qm)
+                        param_table.push_to_opx(param_dict, self._qm_job, self._backend.qm)
 
     def result(self) -> PrimitiveResult[SamplerPubResult]:
         """Get the job result."""
@@ -105,7 +105,7 @@ class IQCCSamplerJob(QMSamplerJob):
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
         if any(param_table is not None and param_table.input_type is not None for param_table in param_tables):
-            sync_hook_code = generate_sync_hook_sampler(self._pubs, self._param_tables)
+            sync_hook_code = generate_sync_hook_sampler(self._pubs, param_tables)
         else:
             sync_hook_code = None
         # Determine the calling context to get the script file path
