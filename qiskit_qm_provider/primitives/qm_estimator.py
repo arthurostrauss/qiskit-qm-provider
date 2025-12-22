@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Iterable, Literal, Any, Optional, Union
 
 from qiskit.circuit.classical import types
@@ -97,8 +98,10 @@ class QMEstimatorV2(BaseEstimatorV2):
         from ..job.qm_estimator_job import QMEstimatorJob, IQCCEstimatorJob
         from qm import QuantumMachinesManager
         job_obj = QMEstimatorJob if isinstance(self.backend.qmm, QuantumMachinesManager) else IQCCEstimatorJob
+        backend_options = deepcopy(self.backend.options.__dict__)
+        backend_options.update(self._options.run_options or {})
         job = job_obj(self._backend, pubs, self.options.input_type, switch_obs_circuit=self._switch_obs_circuit,
-         run_options=self.options.run_options, abelian_grouping=self.options.abelian_grouping, default_precision=precision,
+         run_options=backend_options, abelian_grouping=self.options.abelian_grouping, default_precision=precision,
         )
         self._job = job
         job.submit()

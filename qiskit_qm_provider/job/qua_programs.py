@@ -127,7 +127,7 @@ def _process_observables_with_circuit(
     """
     obs_length_var = kwargs.get("obs_length_var", None)
     obs_idx = declare(int)
-    num_qubits = plan.pub.circuit.num_qubits
+    num_qubits = len(plan.active_qubit_indices)
     plan.observables_var.declare_variables()
     if obs_length_var is not None:
         obs_length_var.declare_variable()

@@ -2,11 +2,15 @@ import numpy as np
 from qiskit.circuit import ClassicalRegister, Parameter, QuantumCircuit, Qubit
 from qiskit.quantum_info import SparsePauliOp, Pauli, PauliList
 from qiskit.primitives import PrimitiveResult
-from qiskit.primitives.backend_estimator_v2 import _measurement_circuit
+from qiskit.primitives.backend_estimator_v2 import (
+    _measurement_circuit,
+    _pauli_expval_with_variance,
+)
 from qiskit.primitives.base.base_primitive_job import ResultT
 from qiskit.primitives.containers import DataBin, BitArray
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit.primitives.containers import PubResult
+from qiskit.result import Counts
 from qm import SimulationConfig, CompilerOptionArguments, QuantumMachinesManager
 from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
@@ -212,18 +216,14 @@ class QMEstimatorJob(QMPrimitiveJob):
 
     def _calc_expval_map(
         self,
-        bitstrings: np.ndarray,
+        counts: List[Counts],
         metadata: List[Dict],
-        shots: int,
-        num_qubits: int,
     ) -> Dict[Tuple[Tuple[int, ...], str], Tuple[float, float]]:
-        """Computes the map of expectation values from bitstrings.
+        """Computes the map of expectation values from Counts objects.
 
         Args:
-            bitstrings: Array of bitstrings organized by task, shape (total_tasks, shots, num_bits)
+            counts: List of Counts objects, one per task
             metadata: List of metadata dicts, one per task
-            shots: Number of shots per task
-            num_qubits: Number of qubits
 
         Returns:
             The map of expectation values takes a pair of an index of the bindings array and
@@ -236,60 +236,11 @@ class QMEstimatorJob(QMPrimitiveJob):
             meas_paulis = meta["meas_paulis"]
             param_index = meta["param_index"]
             
-            # Get bitstrings for this task
-            task_bitstrings = bitstrings[task_idx]  # Shape: (shots, num_bits)
+            # Get counts for this task
+            count = counts[task_idx]
             
-            # Convert to BitArray
-            # from_bool_array expects boolean array with last axis as bits
-            # Convert to boolean if needed (QUA might return integers 0/1)
-            task_bitstrings_bool = np.asarray(task_bitstrings, dtype=bool)
-            # Add a leading dimension for the pub shape (single task = shape (1,))
-            task_bitstrings_bool = task_bitstrings_bool[np.newaxis, ...]  # Shape: (1, shots, num_bits)
-            bit_array = BitArray.from_bool_array(task_bitstrings_bool)
-            
-            # meas_paulis are NOT diagonal - they still contain X/Y terms
-            # After basis rotation in the circuit, measuring in Z basis effectively measures
-            # the rotated Pauli. To compute expectation values from bitstrings using BitArray,
-            # we need to convert to diagonal form (I -> I, X/Y -> Z)
-            # This matches the logic in channel_reward.py lines 519-524
-            diag_obs = SparsePauliOp("I" * num_qubits, 0.0)
-            for pauli, coeff in zip(meas_paulis, [1.0] * len(meas_paulis)):
-                diag_label = ""
-                for char in pauli.to_label():
-                    if char == "I":
-                        diag_label += "I"
-                    else:
-                        # X, Y, or Z -> all become Z after basis rotation
-                        diag_label += "Z"
-                diag_obs += SparsePauliOp(diag_label, coeff)
-            diag_obs = diag_obs.simplify()
-            
-            # Compute expectation values using BitArray
-            # BitArray.expectation_values expects a SparsePauliOp or similar
-            # Returns one value per Pauli term in diag_obs
-            expvals = bit_array.expectation_values(diag_obs)
-            
-            # Convert to array and ensure it matches the number of meas_paulis
-            if isinstance(expvals, np.ndarray):
-                expvals = expvals.flatten()
-            else:
-                expvals = np.array([expvals])
-            
-            # Ensure we have the right number of values (one per meas_pauli)
-            num_meas_paulis = len(meas_paulis)
-            if len(expvals) != num_meas_paulis:
-                if len(expvals) == 1:
-                    # Single value - broadcast to all Paulis
-                    expvals = np.full(num_meas_paulis, expvals[0])
-                else:
-                    # Truncate or pad as needed
-                    if len(expvals) > num_meas_paulis:
-                        expvals = expvals[:num_meas_paulis]
-                    else:
-                        expvals = np.pad(expvals, (0, num_meas_paulis - len(expvals)), mode='constant', constant_values=expvals[-1] if len(expvals) > 0 else 0.0)
-            
-            # Compute variances (1 - expval^2 for each Pauli)
-            variances = 1 - expvals**2
+            # Compute expectation values using the same method as backend_estimator_v2
+            expvals, variances = _pauli_expval_with_variance(count, meas_paulis)
             
             # Map back to original Paulis
             # orig_paulis can be a SparsePauliOp (with coefficients) or PauliList
@@ -391,10 +342,22 @@ class QMEstimatorJob(QMPrimitiveJob):
             
             bitstrings = np.array(data).reshape(total_tasks, shots, num_qubits)
             
+            # Convert bitstrings to BitArray and then to Counts objects
+            # Convert to boolean if needed (QUA might return integers 0/1)
+            bitstrings_bool = np.asarray(bitstrings, dtype=bool)
+            # BitArray.from_bool_array expects: (pub_shape..., shots, bits)
+            # Shape: (total_tasks, shots, num_qubits) -> pub_shape=(total_tasks,), shots=shots, bits=num_qubits
+            bit_array = BitArray.from_bool_array(bitstrings_bool)
+            
+            # Get Counts object for each task
+            counts_list = []
+            for task_idx in range(total_tasks):
+                # Get counts for this specific task using loc parameter
+                task_counts_dict = bit_array.get_counts(loc=(task_idx,))
+                counts_list.append(Counts(task_counts_dict))
+            
             # Compute expectation value map
-            expval_map = self._calc_expval_map(
-                bitstrings, plan.metadata, shots, num_qubits
-            )
+            expval_map = self._calc_expval_map(counts_list, plan.metadata)
             
             # Postprocess to get PubResult
             # Convert observables to numpy array for broadcasting
@@ -447,8 +410,9 @@ class IQCCEstimatorJob(QMEstimatorJob):
             options = {"sync_hook": sync_hook_path}
         else:
             options = {}
-        if self.metadata.get("timeout", None) is not None:
-            options["timeout"] = self.metadata.get("timeout")
+        timeout = self.metadata["run_options"].get('timeout', None)
+        if timeout is not None:
+            options["timeout"] = timeout
         # # For IQCC, execute returns CloudJob instead of RunningQmJob
         self._qm_job = self._backend.qm.execute(  # type: ignore
             estimator_prog, options=options
@@ -469,10 +433,22 @@ class IQCCEstimatorJob(QMEstimatorJob):
             
             bitstrings = data.reshape((total_tasks, shots, num_qubits))
             
+            # Convert bitstrings to BitArray and then to Counts objects
+            # Convert to boolean if needed (QUA might return integers 0/1)
+            bitstrings_bool = np.asarray(bitstrings, dtype=bool)
+            # BitArray.from_bool_array expects: (pub_shape..., shots, bits)
+            # Shape: (total_tasks, shots, num_qubits) -> pub_shape=(total_tasks,), shots=shots, bits=num_qubits
+            bit_array = BitArray.from_bool_array(bitstrings_bool)
+            
+            # Get Counts object for each task
+            counts_list = []
+            for task_idx in range(total_tasks):
+                # Get counts for this specific task using loc parameter
+                task_counts_dict = bit_array.get_counts(loc=(task_idx,))
+                counts_list.append(Counts(task_counts_dict))
+            
             # Compute expectation value map
-            expval_map = self._calc_expval_map(
-                bitstrings, plan.metadata, shots, num_qubits
-            )
+            expval_map = self._calc_expval_map(counts_list, plan.metadata)
             
             # Postprocess to get PubResult
             _, bc_obs = np.broadcast_arrays(plan.param_indices, plan.pub.observables)
