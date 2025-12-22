@@ -3,6 +3,7 @@ import warnings
 
 from .qm_backend import QMBackend, requires_qiskit_pulse
 from typing import Iterable, Optional, List, Union, TYPE_CHECKING, Tuple
+from functools import partial
 
 if TYPE_CHECKING:
     from oqc import QubitsMapping
@@ -55,10 +56,11 @@ class FluxTunableTransmonBackend(QMBackend):
         except ImportError:
             warnings.warn("qiskit.pulse is not available, channel mapping will not be set.")
             channel_mapping = {}
+        initialize_qpu = partial(machine.initialize_qpu, target=machine.active_qubits[0])
         super().__init__(
             machine,
             channel_mapping=channel_mapping,
-            init_macro=machine.apply_all_flux_to_joint_idle,
+            init_macro=initialize_qpu,
             qmm=qmm,
             name=name,
             **fields,

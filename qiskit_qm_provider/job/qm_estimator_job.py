@@ -447,6 +447,8 @@ class IQCCEstimatorJob(QMEstimatorJob):
             options = {"sync_hook": sync_hook_path}
         else:
             options = {}
+        if self.metadata.get("timeout", None) is not None:
+            options["timeout"] = self.metadata.get("timeout")
         # # For IQCC, execute returns CloudJob instead of RunningQmJob
         self._qm_job = self._backend.qm.execute(  # type: ignore
             estimator_prog, options=options

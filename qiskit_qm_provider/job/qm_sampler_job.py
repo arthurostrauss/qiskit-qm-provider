@@ -119,6 +119,9 @@ class IQCCSamplerJob(QMSamplerJob):
             options = {"sync_hook": sync_hook_path}
         else:
             options = {}
+        if self.metadata.get("timeout", None) is not None:
+            options["timeout"] = self.metadata.get("timeout")
+
         self._qm_job = self._backend.qm.execute(
             sampler_prog, options=options
         )

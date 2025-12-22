@@ -37,24 +37,27 @@ def get_machine_from_iqcc(backend_name: str, api_token: Optional[str] = None):
 class IQCCProvider:
     def __init__(self, api_token: Optional[str] = None):
         self.api_token = api_token
+        self._cloud_client = None
     
-    def get_machine(self, name: str) -> Quam:
+    def get_machine(self, name: str) -> IQCCQuam:
         """
         Get a the latest Quam state from the IQCC Cloud.
         """
-        machine, _ = get_machine_from_iqcc(name, self.api_token)
+        machine, cloud_client = get_machine_from_iqcc(name, self.api_token)
+        self._cloud_client = cloud_client
         return machine
 
     def get_cloud_client(self, name: str) -> IQCC_Cloud:
         """
         Get a the IQCC Cloud client.
         """
-        from iqcc_cloud_client import IQCC_Cloud
-        return IQCC_Cloud(quantum_computer_backend=name, api_token=self.api_token)
+        if self._cloud_client is None or self._cloud_client.backend != name:
+            from iqcc_cloud_client import IQCC_Cloud
+            self._cloud_client = IQCC_Cloud(quantum_computer_backend=name, api_token=self.api_token)
+        return self._cloud_client
 
     
-    
-    def get_backend(self, name: str|Quam) -> FluxTunableTransmonBackend:
+    def get_backend(self, name: str|IQCCQuam) -> FluxTunableTransmonBackend:
         """
         Get a backend from the IQCC Cloud. For now all backends are assumed to be FluxTunableTransmonBackend.
         """
