@@ -15,7 +15,7 @@ from qm.qua import declare, assign, Cast, declare_stream
 
 if TYPE_CHECKING:
     from oqc import CompilationResult
-
+    from .qm_backend import QMBackend
 try:
     from qiskit.circuit.controlflow import get_control_flow_name_mapping
 
@@ -190,7 +190,7 @@ def binary(val: int, num_bits: int = 0) -> str:
     return bin(val)[2:].zfill(num_bits)
 
 
-def add_basic_macros_to_machine(machine: BasicQuam, reset_type: Literal["active", "thermalize"] = "thermalize"):
+def add_basic_macros_to_machine(machine: BasicQuam|QMBackend, reset_type: Literal["active", "thermalize"] = "thermalize"):
     """
     Add macros to the machine.
     :param machine: The BaseQuam instance to which macros will be added.
@@ -206,6 +206,9 @@ def add_basic_macros_to_machine(machine: BasicQuam, reset_type: Literal["active"
     )
     from quam.components.macro import PulseMacro
     from quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates import CZGate
+    from .qm_backend import QMBackend
+    if isinstance(machine, QMBackend):
+        machine = machine.machine
 
     for qubit in machine.active_qubits:
         x180_pulse = qubit.get_pulse("x180").get_reference()
