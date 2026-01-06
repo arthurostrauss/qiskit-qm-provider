@@ -33,7 +33,7 @@ __all__ = [
     "QMEstimatorV2",
     "QMEstimatorOptions",
     "get_measurement_outcomes",
-    "add_basic_macros_to_machine",
+    "add_basic_macros",
     "IQCCProvider",
     "QMProvider",
     "QmSaasProvider",
