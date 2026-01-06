@@ -8,7 +8,8 @@ from qiskit.circuit.controlflow import ControlFlowOp, IfElseOp, WhileLoopOp, For
 from qiskit.circuit.library import get_standard_gate_name_mapping
 from qiskit.quantum_info import Pauli, PauliList
 
-from quam.components import Qubit, QubitPair, BasicQuam
+from quam.components import Qubit, QubitPair
+from quam.core import QuamRoot
 from quam.utils.qua_types import QuaVariableInt
 from ..additional_gates import CRGate, SYGate, SYdgGate
 from qm.qua import declare, assign, Cast, declare_stream
@@ -45,7 +46,7 @@ oq3_keyword_instructions = (
 _QASM3_DUMP_LOOSE_BIT_PREFIX = "_bit"
 
 
-def validate_machine(machine) -> BasicQuam:
+def validate_machine(machine) -> QuamRoot:
     if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
         raise ValueError("Invalid QuAM instance provided, should have qubits and qubit_pairs attributes")
     if not all(isinstance(qubit, Qubit) for qubit in machine.qubits.values()):
@@ -190,7 +191,7 @@ def binary(val: int, num_bits: int = 0) -> str:
     return bin(val)[2:].zfill(num_bits)
 
 
-def add_basic_macros_to_machine(machine: BasicQuam|QMBackend, reset_type: Literal["active", "thermalize"] = "thermalize"):
+def add_basic_macros(backend: QuamRoot|QMBackend, reset_type: Literal["active", "thermalize"] = "thermalize"):
     """
     Add macros to the machine.
     :param machine: The BaseQuam instance to which macros will be added.
@@ -200,15 +201,15 @@ def add_basic_macros_to_machine(machine: BasicQuam|QMBackend, reset_type: Litera
         ResetMacro,
         VirtualZMacro,
         MeasureMacro,
-        CZMacro,
         DelayMacro,
         IdMacro,
     )
     from quam.components.macro import PulseMacro
     from quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates import CZGate
     from .qm_backend import QMBackend
-    if isinstance(machine, QMBackend):
-        machine = machine.machine
+    if not isinstance(backend, (QuamRoot, QMBackend)):
+        raise ValueError("Backend should be a QuamRoot or QMBackend instance")
+    machine = backend.machine if isinstance(backend, QMBackend) else backend
 
     for qubit in machine.active_qubits:
         x180_pulse = qubit.get_pulse("x180").get_reference()
@@ -249,7 +250,6 @@ def get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult, comp
     clbits_dict = {
         creg.name: {
             "value": result.result_program[creg.name],
-            "state_int": declare(int) if compute_state_int else None,
             "stream": declare_stream(),
             "size": creg.size,
         }
@@ -259,21 +259,17 @@ def get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult, comp
     if num_solo_bits > 0:
         clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX] = {
             "value": [result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"] for i in range(num_solo_bits)],
-            "state_int": declare(int) if compute_state_int else None,
             "stream": declare_stream(),
             "size": num_solo_bits,
         }
-
-    for creg_dict in clbits_dict.values():
-        c_reg_res = creg_dict["value"]
-        if compute_state_int:
-            assign(
-                creg_dict["state_int"],
-                sum(
-                    (((1 << i) * Cast.to_int(c_reg_res[i])) for i in range(1, creg_dict["size"])),
-                    start=Cast.to_int(c_reg_res[0]),
-                ),
-            )
+    if compute_state_int:
+        for creg_dict in clbits_dict.values():
+            c_reg_res = creg_dict["value"]
+            creg_dict["state_int"] = declare(int)
+            assign(creg_dict["state_int"], sum(
+                (((1 << i) * Cast.to_int(c_reg_res[i])) for i in range(1, creg_dict["size"])),
+                start=Cast.to_int(c_reg_res[0]),
+            ))
     return clbits_dict
 
 def logically_active_qubits(circuit):
