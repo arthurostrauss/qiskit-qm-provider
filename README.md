@@ -1,135 +1,253 @@
-Here's the refined README with your detailed specifications included:
-
----
-
 # Qiskit QM Provider
 
-**An interface enabling the compilation and execution of Qiskit workflows on Quantum Machine's Quantum Orchestration Platform.**
-
----
+**A comprehensive interface for tight integration between the Qiskit ecosystem and Quantum Machine's Quantum Orchestration Platform (QOP).**
 
 ## Overview
 
-The `qiskit-qm-provider` repository provides a seamless integration between [Qiskit](https://qiskit.org/), an open-source quantum computing framework, and Quantum Machine's Quantum Orchestration Platform (QOP). This provider allows users to compile and execute quantum workflows on QOP hardware, leveraging its capabilities for efficient quantum experiments and simulations.
+The `qiskit-qm-provider` repository proposes a tight integration between the Qiskit ecosystem and QUA, the proprietary language of quantum machines for the Quantum Orchestration Platform. It is designed to leverage the latest real-time processing features of QOP while maintaining the ease of use of Qiskit for high-level quantum algorithm design.
 
-This backend is specifically designed for users who:
-1. Own a **Quantum Orchestration Platform (OPX+ or OPX1000)**.
-2. Have a readily available **QUAM structure** that implements the device's native gates, as well as operations such as measurement and reset. For more details, refer to the [QUA documentation on gate-level operations](https://qua-platform.github.io/quam/features/gate-level-operations/).
+The goal of this provider is to explain the intended usage of components that bridge the gap between abstract quantum circuits and hardware execution, featuring:
 
-## Features
+1.  **Quam Integration**: A Qiskit backend implementation of the [Quam structure](https://qua-platform.github.io/quam/), enabling automated fetching of basis gates, coupling maps, and other key properties. This facilitates the use of the entire Qiskit transpilation pipeline by breaking down high-level algorithms into circuits readily executable on hardware.
+2.  **Specialized Providers**: Support for three different execution environments (Local, SaaS, IQCC).
+3.  **Real-time Primitives**: Custom implementations of Qiskit Primitives (`Estimator` and `Sampler`) optimized for QOP capabilities like real-time parameter updates and control flow.
 
-- **Integration with Qiskit**: Utilize Qiskit workflows directly with the Quantum Orchestration Platform.
-- **Native Qiskit Compatibility**: Write quantum circuits in Qiskit, transpile them using Qiskit transpiler tools, and execute them on the Quantum Orchestration Platform.
-- **Control Flow & Pulse Calibration Support**: Combine Qiskit control flow statements (e.g., `if-else`, `switch`, `for_loop`, `while_loop`) with custom pulse-level calibrations, seamlessly translated into QUA code for real-time evaluation.
-- **Customizable Primitives**: While custom implementations of primitives such as `Sampler` and `Estimator` are under development, users can import `BackendEstimatorV2` and `SamplerV2` from Qiskit and wrap the backend around them.
-- **QUA Macro Compilation**: The `quantum_circuit_to_qua` function allows users to embed Qiskit circuits containing control flow logic into larger QUA programs, enabling dynamic gate parameters and real-time variable inputs.
+## Providers
+
+We support different integrations available through three different providers:
+
+1.  **QMProvider**: Assumes the experimentalist has a Quantum Orchestration Platform directly accessible on their server and a local Quam instance stored on the computer.
+    ```python
+    from qiskit_qm_provider import QMProvider
+    provider = QMProvider(state_folder_path="/path/to/quam/state")
+    machine = provider.get_machine()
+    backend = provider.get_backend(machine)
+    ```
+
+2.  **QmSaasProvider**: Connects directly to the [QM SaaS platform](https://docs.quantum-machines.co/latest/docs/Guides/qm_saas_guide/).
+    ```python
+    from qiskit_qm_provider import QmSaasProvider
+    provider = QmSaasProvider(email="...", password="...", host="...")
+    backend = provider.get_backend(quam_state_folder_path="...")
+    ```
+
+3.  **IQCCProvider**: Provides access to available devices at the Israeli Quantum Computing Center (IQCC) in Tel Aviv.
+    ```python
+    from qiskit_qm_provider import IQCCProvider
+    provider = IQCCProvider(api_token="...")
+    machine = provider.get_machine("arbel") # Example machine name
+    backend = provider.get_backend(machine)
+    ```
+
+## Qiskit Primitives on QOP
+
+We provide custom implementations of the standard Qiskit Primitives, `QMEstimator` and `QMSampler`, which are straightforward adaptations of the [standard Qiskit primitives](https://quantum.cloud.ibm.com/docs/en/guides/primitives). They leverage the core capabilities of the Quantum Orchestration Platform to optimize execution through:
+
+1.  **Real-time Parameter Adjustment**: The ability to adjust parameter values in real-time and load them asynchronously using **Input Streaming** or **DGX Quantum**.
+2.  **Real-time Control Flow**: The ability to perform real-time control flow to estimate different expectation values seamlessly across a single compilation of a quantum circuit (specifically for the Estimator primitive).
+
+### Usage Example
+
+```python
+from qiskit_qm_provider import QMEstimatorV2, QMEstimatorOptions, InputType
+
+# Initialize Estimator with Input Streaming for real-time parameter updates
+options = QMEstimatorOptions(input_type=InputType.INPUT_STREAM)
+estimator = QMEstimatorV2(backend=backend, options=options)
+
+# Run estimator job
+job = estimator.run([(circuit, observables, parameter_values)])
+result = job.result()
+```
+
+We also implement the traditional `backend.run()` function, which closely mimics the `Sampler` primitive behavior.
+
+## Hybrid QUA and Qiskit Interface
+
+We envision this tool as more than just a Qiskit bridge; it is a new interface to intertwine the power of Qiskit and QUA. You can build QUA programs over many qubits that incorporate the execution of Qiskit quantum circuits as QUA-embedded macros.
+
+This supports **dynamic circuits** and enables users to complement the Qiskit stack with QUA's real-time processing features that are difficult to express in Qiskit alone.
+
+### Example: Embedding Qiskit Circuits in QUA
+
+The `quantum_circuit_to_qua` method allows you to convert a Qiskit circuit into a QUA macro.
+
+```python
+from qm.qua import program
+from qiskit_qm_provider import ParameterTable
+
+# ... Define Qiskit circuit 'qc' ...
+
+with program() as prog:
+    # Embed the Qiskit circuit as a QUA macro
+    # param_table allows passing real-time QUA variables to the circuit parameters
+    backend.quantum_circuit_to_qua(qc, param_table=my_param_table)
+```
+
+### Error Correction and Parameter Table
+
+For scalable error correction workflows, where hybrid classical-quantum computing is essential, we introduce the **Parameter Table**. This module provides a full interface to express parametric programs and seamless communication between a client (or DGX server) and the QUA program.
+
+Below is an example of an error correction workflow where data handling is critical. This showcases how to deal with parameter wake workflows when Qiskit cannot save data on the fly but must store it in new memory slots for each syndrome declaration.
+
+```python
+from qm.qua import *
+from qiskit_qm_provider import Parameter, ParameterTable, ParameterPool, Direction, InputType, QUA2DArray
+from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes
+from qiskit import transpile
+
+# ... (Assume backend, syndrome_circuit, recovery_circuit, encoding_circuit are defined) ...
+
+ParameterPool.reset()
+num_cycles = 2
+memory_exp_length = 50
+d = 3
+input_type = InputType.INPUT_STREAM
+
+# Define parameters and tables
+syndrome_data: Parameter = Parameter("syndrome_data", 0, input_type=input_type, direction=Direction.INCOMING)
+recovery_vars: ParameterTable = ParameterTable.from_qiskit(recovery_circuit, input_type=input_type)
+
+syndrome_circuit = transpile(syndrome_circuit, backend)
+recovery_circuit = transpile(recovery_circuit, backend)
+encoding_circuit = transpile(encoding_circuit, backend)
+
+ancilla_creg = syndrome_circuit.cregs[0]
+
+with program() as qec_prog:
+    state_int = declare(int, value=0)
+    m = declare(int)
+    round = declare(int)
+
+    # Declare variables for parameters
+    recovery_vars.declare_variables()
+    syndrome_data.declare_variable()
+    syndrome_data.declare_stream()
+
+    if backend.init_macro:
+        backend.init_macro()
+
+    with for_(m, 0, m < memory_exp_length, m + 1):
+        with for_(round, 0, round < num_cycles, round + 1):
+            # Execute syndrome measurement circuit converted to QUA
+            syndrome_meas_result = backend.quantum_circuit_to_qua(syndrome_circuit)
+            syndrome_meas_result_meas = get_measurement_outcomes(syndrome_circuit, syndrome_meas_result)
+
+            state_int_val = syndrome_meas_result_meas[ancilla_creg.name]["state_int"]
+
+            # Update syndrome data parameter and stream back
+            syndrome_data.assign(state_int_val)
+            syndrome_data.stream_back(reset=True)
+
+        # Load recovery variables (simulating feedback latency/calculation)
+        recovery_vars.load_input_values()
+        # Execute recovery circuit with updated parameters
+        recovery_circuit_result = backend.quantum_circuit_to_qua(recovery_circuit, recovery_vars)
+
+    if input_type != InputType.DGX_Q:
+        with stream_processing():
+            syndrome_data.stream_processing()
+```
+
+## Parameter Table API Documentation
+
+The `ParameterTable` is a core component for managing real-time parameters.
+
+### `ParameterTable`
+
+Class enabling the mapping of parameters to be updated to their corresponding "to-be-declared" QUA variables.
+
+#### Initialization
+```python
+ParameterTable(parameters_dict, name=None)
+```
+- `parameters_dict`: Dictionary `{ "name": (initial_value, qua_type, input_type, direction) }` or list of `Parameter` objects.
+- `name`: Optional name for the table.
+
+#### Methods
+
+- **`declare_variables(pause_program=False)`**: QUA Macro to declare all QUA variables associated with the table.
+- **`load_input_values(filter_function=None)`**: QUA Macro to load input values from the input stream/IO/DGX.
+- **`push_to_opx(param_dict, job, qm, verbosity)`**: Client function to push values to the OPX.
+- **`fetch_from_opx(job, fetching_index, fetching_size)`**: Client function to fetch values from the OPX.
+- **`stream_back(reset=False)`**: QUA Macro to stream values back to the client/server.
+- **`from_qiskit(qc, input_type, filter_function)`**: Class method to create a table from a Qiskit QuantumCircuit's parameters.
+
+### `Parameter`
+
+Represents a single parameter mapped to a QUA variable.
+
+- **`assign(value)`**: QUA Macro to assign a value to the parameter's QUA variable.
+- **`save_to_stream()`**: QUA Macro to save the current value to its output stream.
+
+## Compatibility and Custom Calibrations
+
+This provider is compatible with both **Qiskit 1.x** and **Qiskit 2.x**.
+
+### Qiskit 1.x (Pulse Support)
+Sticking to Qiskit 1.x enables partial support for **Qiskit Pulse**, allowing custom pulse-level calibrations expressed in Qiskit Pulse to be directly translated into a QUA macro.
+
+### Qiskit 2.x (Qiskit Pulse Deprecation)
+We encourage the adoption of Qiskit 2.0. The novel way to express custom calibrations is through `QMInstructionProperties`. This allows you to specify additional gates in the backend target that contain a customized QUA macro.
+
+#### Example: Parametric CNOT Gate with Custom QUA Macro
+
+This example demonstrates how to add a custom parametric gate to the hardware backend using `QMInstructionProperties`.
+
+```python
+from qiskit.circuit import QuantumCircuit, Parameter as QiskitParameter, Gate
+from qiskit.transpiler import Target
+from qiskit_qm_provider import QMProvider, QMInstructionProperties
+from qm.qua import *
+
+# 1. Define Parametric CNOT gate (Simulation)
+# Noise is embedded in the gate definition as a rotation parameter
+num_params = 1
+θ = [QiskitParameter(f"θ_{i}" if num_params > 1 else "θ") for i in range(num_params)]
+cx_circ = QuantumCircuit(2, name="cx_cal")
+cx_circ.cx(0, 1)  # Ideal gate
+cx_circ.rx(θ[0], 1)  # Coherent noise structure
+
+# Define the custom gate for each CNOT
+θ_list = [[QiskitParameter(f"θ_{i}_{j}" if num_params > 1 else f"θ_{i}") for j in range(num_params)] for i in range(4)]
+cx_gates = {f"cx_{i}": Gate(f"cx_{i}", 2, θ_list[i]) for i in range(4)}
+for i in range(4):
+    cx_gates[f"cx_{i}"].definition = cx_circ.assign_parameters(θ_list[i], inplace=False)
+
+# 2. Setup Provider and Backend
+provider = QMProvider("/path/to/quam/state")
+machine = provider.get_machine()
+backend = provider.get_backend(machine)
+
+# 3. Add Custom Gates to Hardware Backend
+# We inform the transpiler that those custom gates shall be complemented by a specific
+# custom pulse level calibration (QUA macro).
+
+qubit_pairs_indices = list(backend.coupling_map.get_edges())
+instruction_props = {cx: {} for cx in cx_gates}
+
+# In this example, we define a simple parametric macro for demonstration.
+# In a real scenario, this would be a calibrated pulse sequence.
+for i, qubit_pair_index in enumerate(qubit_pairs_indices):
+    qubit_pair = backend.get_qubit_pair(qubit_pair_index)
+    for cx_name in cx_gates:
+        # Define the QUA macro (parametric amplitude for CZ)
+        macro = lambda amp: qubit_pair.apply("cz", amplitude_scale=amp)
+
+        # Create QMInstructionProperties with the QUA macro
+        qm_prop = QMInstructionProperties(qua_pulse_macro=macro)
+
+        # Update the backend target
+        # Note: In a full script you would attach this to the target properly
+        # backend.target.update_instruction_properties(cx_name, qubit_pair_index, qm_prop)
+```
 
 ## Installation
-
-To get started, you can install the package directly from the repository or via PyPI (if available):
 
 ```bash
 pip install qiskit-qm-provider
 ```
 
-Alternatively, clone the repository and install it manually:
-
-```bash
-git clone https://github.com/arthurostrauss/qiskit-qm-provider.git
-cd qiskit-qm-provider
-pip install .
-```
-
-## Usage
-
-Here’s an example of how to get started with the `qiskit-qm-provider`:
-
-### Prerequisites
-1. Ensure you have a **QUAM object** with native gates and operations defined for your device.
-2. Load your QUAM object and pass it to the `QMBackend` object, which serves as a Qiskit wrapper around the QUAM instance.
-
-### Example
-
-```python
-from qiskit import QuantumCircuit, transpile
-from qiskit_qm_provider import QMBackend
-from quam_builder.architecture.superconducting.qpu import FluxTunableQuam # Hypothetical QUAM loader
-
-# Step 1: Load your QUAM object
-machine = FluxTunableQuam.load("your_quam_state")
-
-# Step 2: Initialize the QMBackend with the QUAM object
-backend = QMBackend(machine)
-
-# Step 3: Create a quantum circuit in Qiskit
-qc = QuantumCircuit(2)
-qc.h(0)
-qc.cx(0, 1)
-qc.measure_all()
-
-# Step 4: Transpile the circuit for the backend
-transpiled_qc = transpile(qc, backend=backend)
-
-# Step 5: Execute the circuit on the Quantum Orchestration Platform
-job = backend.run(transpiled_qc)
-result = job.result()
-
-# Step 6: Display the results
-print(result.get_counts())
-```
-
-### Advanced Features
-
-#### Custom Primitives
-To implement custom primitives like `Sampler` and `Estimator`, wrap the backend using `BackendEstimatorV2` and `SamplerV2` from Qiskit:
-
-```python
-from qiskit.primitives import BackendEstimatorV2, BackendSamplerV2
-from qiskit_qm_provider import QMSamplerV2, QMSamplerOptions
-from qiskit_qm_provider import InputType
-
-estimator = BackendEstimatorV2(backend)
-sampler = QMSamplerV2(backend=backend, options=QMSamplerOptions(input_type=InputType.INPUT_STREAM))
-```
-
-
-#### Embedding Circuits into QUA Programs
-The backend provides a `quantum_circuit_to_qua` function, enabling users to embed Qiskit circuits with control flow logic into larger QUA programs. Inputs such as gate parameters, switch cases, or conditional statements can be dynamically adapted in real-time.
-
-```python
-qua_macro = backend.quantum_circuit_to_qua(transpiled_qc)
-# Use qua_macro as part of a larger QUA program
-```
-
-## Documentation
-
-For a deeper dive into the available features, examples, and advanced usage, refer to the [official documentation](#documentation).
-
-## Contributing
-
-We welcome contributions to this project! To contribute:
-
-1. Fork the repository.
-2. Create a new branch for your feature or bug fix.
-3. Commit and push your changes.
-4. Submit a pull request.
-
-Please read our [CONTRIBUTING.md](CONTRIBUTING.md) guide for more details.
-
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
-## Support
-
-For questions, issues, or feature requests, please open an issue in this repository or contact the repository maintainers.
-
----
-
-## Acknowledgments
-
-This project is powered by [Qiskit](https://qiskit.org/) and Quantum Machine's Quantum Orchestration Platform. We thank the contributors and users for their support and feedback.
-
----
-
-Let me know if there’s anything else you’d like me to add or adjust!
+This project is licensed under the MIT License.
