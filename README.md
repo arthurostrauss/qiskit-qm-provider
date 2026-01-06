@@ -14,14 +14,21 @@ The goal of this provider is to explain the intended usage of components that br
 
 ## Providers
 
-We support different integrations available through three different providers:
+We support different integrations available through three different providers. Users can obtain a backend directly from the provider. The underlying Quam instance is accessible via the `backend.machine` attribute.
+
+It is also possible to populate the machine with standard operations (like `x`, `sx`, `rz`, `measure`, `reset`, `cz`) using the `add_basic_macros` utility.
+
+```python
+from qiskit_qm_provider.backend.backend_utils import add_basic_macros
+# After getting backend:
+# add_basic_macros(backend)
+```
 
 1.  **QMProvider**: Assumes the experimentalist has a Quantum Orchestration Platform directly accessible on their server and a local Quam instance stored on the computer.
     ```python
     from qiskit_qm_provider import QMProvider
     provider = QMProvider(state_folder_path="/path/to/quam/state")
-    machine = provider.get_machine()
-    backend = provider.get_backend(machine)
+    backend = provider.get_backend()
     ```
 
 2.  **QmSaasProvider**: Connects directly to the [QM SaaS platform](https://docs.quantum-machines.co/latest/docs/Guides/qm_saas_guide/).
@@ -35,8 +42,7 @@ We support different integrations available through three different providers:
     ```python
     from qiskit_qm_provider import IQCCProvider
     provider = IQCCProvider(api_token="...")
-    machine = provider.get_machine("arbel") # Example machine name
-    backend = provider.get_backend(machine)
+    backend = provider.get_backend("arbel") # Example machine name
     ```
 
 ## Qiskit Primitives on QOP
@@ -66,11 +72,18 @@ We also implement the traditional `backend.run()` function, which closely mimics
 
 We envision this tool as more than just a Qiskit bridge; it is a new interface to intertwine the power of Qiskit and QUA. You can build QUA programs over many qubits that incorporate the execution of Qiskit quantum circuits as QUA-embedded macros.
 
-This supports **dynamic circuits** and enables users to complement the Qiskit stack with QUA's real-time processing features that are difficult to express in Qiskit alone.
+### Workflow: Embedding and Processing
+
+When embedding Qiskit circuits into QUA programs, the typical workflow involves two steps using `backend.quantum_circuit_to_qua()` and `get_measurement_outcomes()`:
+
+1.  **`backend.quantum_circuit_to_qua(qc, ...)`**: This function compiles the Qiskit circuit into QUA instructions and inserts them into the current QUA program context. It returns a result object.
+2.  **`get_measurement_outcomes(qc, result)`**: This utility function takes the circuit and the result from the previous step. It returns a dictionary containing QUA variables corresponding to the measurement outcomes.
+    *   It provides the raw measurement value.
+    *   Crucially, it computes the **`state_int`**, a QUA integer variable representing the measurement result of a classical register.
+
+This `state_int` is essential for **real-time control flow** and **data streaming**, allowing you to use Qiskit for complex circuit definitions while leveraging QUA for fast feedback logic.
 
 ### Example: Embedding Qiskit Circuits in QUA
-
-The `quantum_circuit_to_qua` method allows you to convert a Qiskit circuit into a QUA macro.
 
 ```python
 from qm.qua import program
@@ -88,15 +101,16 @@ with program() as prog:
 
 For scalable error correction workflows, where hybrid classical-quantum computing is essential, we introduce the **Parameter Table**. This module provides a full interface to express parametric programs and seamless communication between a client (or DGX server) and the QUA program.
 
-Below is an example of an error correction workflow where data handling is critical. This showcases how to deal with parameter wake workflows when Qiskit cannot save data on the fly but must store it in new memory slots for each syndrome declaration.
+Below is an example of an error correction workflow where data handling is critical. This showcases how to deal with parameter wake workflows when Qiskit cannot save data on the fly but must store it in new memory slots for each syndrome declaration. Note the use of `get_measurement_outcomes` to extract the syndrome state for feedback.
 
 ```python
 from qm.qua import *
 from qiskit_qm_provider import Parameter, ParameterTable, ParameterPool, Direction, InputType, QUA2DArray
-from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes
+from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes, add_basic_macros
 from qiskit import transpile
 
 # ... (Assume backend, syndrome_circuit, recovery_circuit, encoding_circuit are defined) ...
+add_basic_macros(backend)
 
 ParameterPool.reset()
 num_cycles = 2
@@ -131,8 +145,9 @@ with program() as qec_prog:
         with for_(round, 0, round < num_cycles, round + 1):
             # Execute syndrome measurement circuit converted to QUA
             syndrome_meas_result = backend.quantum_circuit_to_qua(syndrome_circuit)
-            syndrome_meas_result_meas = get_measurement_outcomes(syndrome_circuit, syndrome_meas_result)
 
+            # Extract measurement outcomes for real-time processing
+            syndrome_meas_result_meas = get_measurement_outcomes(syndrome_circuit, syndrome_meas_result)
             state_int_val = syndrome_meas_result_meas[ancilla_creg.name]["state_int"]
 
             # Update syndrome data parameter and stream back
@@ -198,6 +213,7 @@ This example demonstrates how to add a custom parametric gate to the hardware ba
 from qiskit.circuit import QuantumCircuit, Parameter as QiskitParameter, Gate
 from qiskit.transpiler import Target
 from qiskit_qm_provider import QMProvider, QMInstructionProperties
+from qiskit_qm_provider.backend.backend_utils import add_basic_macros
 from qm.qua import *
 
 # 1. Define Parametric CNOT gate (Simulation)
@@ -216,8 +232,10 @@ for i in range(4):
 
 # 2. Setup Provider and Backend
 provider = QMProvider("/path/to/quam/state")
-machine = provider.get_machine()
-backend = provider.get_backend(machine)
+backend = provider.get_backend()
+# Access the machine instance if needed, e.g., to add basic macros
+add_basic_macros(backend)
+
 
 # 3. Add Custom Gates to Hardware Backend
 # We inform the transpiler that those custom gates shall be complemented by a specific
