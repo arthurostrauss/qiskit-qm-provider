@@ -2,6 +2,16 @@
 
 **A comprehensive interface for tight integration between the Qiskit ecosystem and Quantum Machine's Quantum Orchestration Platform (QOP).**
 
+## Installation
+
+```bash
+pip install qiskit-qm-provider
+```
+
+## Documentation
+
+For full API documentation, please refer to the [docs folder](docs/).
+
 ## Overview
 
 The `qiskit-qm-provider` repository proposes a tight integration between the Qiskit ecosystem and QUA, the proprietary language of quantum machines for the Quantum Orchestration Platform. It is designed to leverage the latest real-time processing features of QOP while maintaining the ease of use of Qiskit for high-level quantum algorithm design.
@@ -258,12 +268,6 @@ for i, qubit_pair_index in enumerate(qubit_pairs_indices):
         # Update the backend target
         # Note: In a full script you would attach this to the target properly
         # backend.target.update_instruction_properties(cx_name, qubit_pair_index, qm_prop)
-```
-
-## Installation
-
-```bash
-pip install qiskit-qm-provider
 ```
 
 ## License
