@@ -165,8 +165,8 @@ class Parameter:
         self._length = 0 if not isinstance(value, (List, np.ndarray)) else len(value)
         self._ctr: Optional[QuaScalar[int]] = None  # Counter for QUA array variables
 
-        self._external_stream_in = None
-        self._external_stream_out = None
+        self._qua_external_stream_in = None
+        self._qua_external_stream_out = None
 
         if input_type is not None:
             input_type = InputType(input_type) if isinstance(input_type, str) else input_type
@@ -329,12 +329,12 @@ class Parameter:
                 self._var = declare_struct(dgx_struct)
                 
                 if self.direction == Direction.INCOMING:
-                    self._external_stream_out = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.OUTGOING)
+                    self._qua_external_stream_out = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.OUTGOING)
                 elif self.direction == Direction.OUTGOING:
-                    self._external_stream_in = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.INCOMING)
+                    self._qua_external_stream_in = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.INCOMING)
                 else:
-                    self._external_stream_in = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.INCOMING)
-                    self._external_stream_out = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.OUTGOING)
+                    self._qua_external_stream_in = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.INCOMING)
+                    self._qua_external_stream_out = declare_external_stream(dgx_struct, self.stream_id, QuaStreamDirection.OUTGOING)
 
             else:
                 raise ValueError(
@@ -626,7 +626,7 @@ class Parameter:
             from qm.qua import receive_from_external_stream
 
             if self.is_standalone():
-                receive_from_external_stream(self._external_stream_in, self._var)
+                receive_from_external_stream(self._qua_external_stream_in, self._var)
             else:
                 raise RuntimeError(
                     f"This method should be called from the ParameterTable {ParameterPool.get_obj(self.stream_id).name}"
@@ -773,7 +773,7 @@ class Parameter:
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot send value to outgoing stream.")
 
-            send_to_external_stream(self._external_stream_out, self._var)
+            send_to_external_stream(self._qua_external_stream_out, self._var)
         if reset:
             self.reset_var()
 
@@ -859,8 +859,8 @@ class Parameter:
         self._stream_id = None
         self._ctr = None
         self._dgx_struct = None
-        self._external_stream_incoming = None
-        self._external_stream_outgoing = None
+        self._qua_external_stream_in = None
+        self._qua_external_stream_out = None
         self._index = -1
         self._main_table = None
         self._table_indices = {}
@@ -908,8 +908,8 @@ class Parameter:
         new_param._is_declared = False
         new_param._stream = None
         new_param._ctr = None
-        new_param._external_stream_in = None
-        new_param._external_stream_out = None
+        new_param._qua_external_stream_in = None
+        new_param._qua_external_stream_out = None
 
         # Reset table/DGX specific attributes that will be set by the new table or properties
         new_param._index = -1  # Default for a parameter not (yet) in a table

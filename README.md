@@ -220,56 +220,49 @@ We encourage the adoption of Qiskit 2.0. The novel way to express custom calibra
 This example demonstrates how to add a custom parametric gate to the hardware backend using `QMInstructionProperties`.
 
 ```python
-from qiskit.circuit import QuantumCircuit, Parameter as QiskitParameter, Gate
-from qiskit.transpiler import Target
+from qiskit.circuit import Parameter as QiskitParameter, Gate
 from qiskit_qm_provider import QMProvider, QMInstructionProperties
-from qiskit_qm_provider.backend.backend_utils import add_basic_macros
 from qm.qua import *
 
-# 1. Define Parametric CNOT gate (Simulation)
-# Noise is embedded in the gate definition as a rotation parameter
-num_params = 1
-θ = [QiskitParameter(f"θ_{i}" if num_params > 1 else "θ") for i in range(num_params)]
-cx_circ = QuantumCircuit(2, name="cx_cal")
-cx_circ.cx(0, 1)  # Ideal gate
-cx_circ.rx(θ[0], 1)  # Coherent noise structure
-
-# Define the custom gate for each CNOT
-θ_list = [[QiskitParameter(f"θ_{i}_{j}" if num_params > 1 else f"θ_{i}") for j in range(num_params)] for i in range(4)]
-cx_gates = {f"cx_{i}": Gate(f"cx_{i}", 2, θ_list[i]) for i in range(4)}
-for i in range(4):
-    cx_gates[f"cx_{i}"].definition = cx_circ.assign_parameters(θ_list[i], inplace=False)
-
-# 2. Setup Provider and Backend
+# 1. Set up provider and backend
 provider = QMProvider("/path/to/quam/state")
 backend = provider.get_backend()
-# Access the machine instance if needed, e.g., to add basic macros
-add_basic_macros(backend)
 
+# 2. Define an opaque parametric two-qubit gate at the circuit level
+theta = QiskitParameter("theta")
+cx_cal = Gate("cx_cal", num_qubits=2, params=[theta])  # No logical definition: opaque gate
 
-# 3. Add Custom Gates to Hardware Backend
-# We inform the transpiler that those custom gates shall be complemented by a specific
-# custom pulse level calibration (QUA macro).
+# (Optional) You may instead provide a logical definition for `cx_cal` so that the transpiler
+# can optimize it with other operations; see the Qiskit backend transpiler interface docs:
+# https://quantum.cloud.ibm.com/docs/en/api/qiskit/providers#backends-transpiler-interface
 
-qubit_pairs_indices = list(backend.coupling_map.get_edges())
-instruction_props = {cx: {} for cx in cx_gates}
+# 3. Define the corresponding QUA macro
+def qua_macro(theta_val):
+    # Here you implement the low-level calibrated pulse sequence
+    qubit_pair = backend.get_qubit_pair((0, 1))
+    qubit_pair.apply("cz", amplitude_scale=theta_val)
 
-# In this example, we define a simple parametric macro for demonstration.
-# In a real scenario, this would be a calibrated pulse sequence.
-for i, qubit_pair_index in enumerate(qubit_pairs_indices):
-    qubit_pair = backend.get_qubit_pair(qubit_pair_index)
-    for cx_name in cx_gates:
-        # Define the QUA macro (parametric amplitude for CZ)
-        macro = lambda amp: qubit_pair.apply("cz", amplitude_scale=amp)
+# 4. Register the new instruction in the backend Target
+duration = backend.target["cx"][(0, 1)].duration  # Reuse existing CX duration as a template
+properties = {
+    (0, 1): QMInstructionProperties(
+        duration=duration,
+        qua_pulse_macro=qua_macro,
+    )
+}
 
-        # Create QMInstructionProperties with the QUA macro
-        qm_prop = QMInstructionProperties(qua_pulse_macro=macro)
+# This is the essential part of what a helper such as `add_custom_gate` would do:
+backend.target.add_instruction(cx_cal, properties=properties)
 
-        # Update the backend target
-        # Note: In a full script you would attach this to the target properly
-        # backend.target.update_instruction_properties(cx_name, qubit_pair_index, qm_prop)
+# 5. Synchronize the internal QUA compiler mapping with the modified Target
+backend.update_target()
 ```
 
+**Important:** whenever you manually modify `backend.target` (e.g. by adding or changing instructions or their
+`QMInstructionProperties`), you must call `backend.update_target()` afterwards so that the internal OQ3/QUA
+compiler state inside the backend is synchronized with your updated Target before compiling circuits to QUA. The same method can be used if you are manually adding Quam macros into your machine object dynamically, as the sync goes both ways.
+
+Note: When a gate implementation is updated (e.g. the gate was already existing and had an existing pulse level implementation), it always overrides the previously defined implementation when calling the method.
 ## License
 
 This project is licensed under the MIT License.
