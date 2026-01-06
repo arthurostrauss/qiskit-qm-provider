@@ -15,7 +15,7 @@ from .parameter_table import *
 from .additional_gates import *
 from .primitives.qm_sampler import QMSamplerV2, QMSamplerOptions
 from .primitives.qm_estimator import QMEstimatorV2, QMEstimatorOptions
-from .backend.backend_utils import get_measurement_outcomes, add_basic_macros_to_machine
+from .backend.backend_utils import get_measurement_outcomes, add_basic_macros
 
 __all__ = [
     "QMBackend",
