@@ -170,7 +170,7 @@ class ParameterTable:
             struct_name = f"Packet_{self.name}_{self._id}"
             self._packet_type = qua_struct(type(struct_name, (object,), {"__annotations__": attributes}))
 
-    def declare_variables(self, pause_program=False) -> QuaVariable | List[QuaVariable | QuaArrayVariable]:
+    def declare_variables(self, pause_program=False, declare_streams=True) -> QuaVariable | List[QuaVariable | QuaArrayVariable]:
         """
         QUA Macro to declare all QUA variables associated with the parameter table.
         Should be called at the beginning of the QUA program.
@@ -212,6 +212,8 @@ class ParameterTable:
                 parameter.stream_id = self._id
                 parameter.dgx_struct = self._packet_type
                 parameter._main_table = self
+                if declare_streams:
+                    parameter.declare_stream()
 
                 if parameter.is_array:
                     parameter._ctr = declare(int)
@@ -235,7 +237,7 @@ class ParameterTable:
                 if parameter.is_declared:
                     warnings.warn(f"Variable {parameter.name} already declared.")
                     continue
-                parameter.declare_variable()
+                parameter.declare_variable(declare_stream=declare_streams)
             if pause_program:
                 pause()
             if len(self.variables) == 1:

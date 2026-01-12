@@ -310,7 +310,7 @@ class Parameter:
                     raise ValueError(f"Invalid input. {self.name} should be a single value, not a list.")
                 assign_with_condition(self.var, value, value_cond)
 
-    def declare_variable(self, pause_program=False):
+    def declare_variable(self, pause_program=False, declare_stream=True):
         """
         Declare the QUA variable associated with the parameter.
         Args: pause_program: Boolean indicating if the program should be paused after declaring the variable.
@@ -360,7 +360,8 @@ class Parameter:
         if pause_program:
             pause()
         self._is_declared = True
-        
+        if declare_stream:
+            self.declare_stream()
         return self._var
 
     def declare_stream(self):
@@ -861,9 +862,9 @@ class Parameter:
         self._dgx_struct = None
         self._qua_external_stream_in = None
         self._qua_external_stream_out = None
-        self._index = -1
-        self._main_table = None
-        self._table_indices = {}
+        # self._index = -1
+        # self._main_table = None
+        # self._table_indices = {}
 
     def reset_var(self):
         """
