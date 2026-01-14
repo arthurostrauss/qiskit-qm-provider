@@ -188,10 +188,11 @@ class ParameterPool:
         from .parameter_table import ParameterTable
 
         def check_function(param_table: ParameterTable | Parameter) -> bool:
+            from .input_type import InputType
             return (
-                param_table._usable_for_dgx_communication
+                (param_table._usable_for_dgx_communication
                 if isinstance(param_table, ParameterTable)
-                else param_table.is_standalone()
+                else param_table.is_standalone()) and param_table.input_type == InputType.DGX_Q
             )
 
         param_tables = list(filter(check_function, cls.get_all_objs()))
