@@ -813,6 +813,7 @@ class ParameterTable:
     ) -> Optional["ParameterTable"]:
         """
         Create a ParameterTable object from a QuantumCircuit object (and stores it in circuit metadata).
+        This creates a ParameterTable that jointly encapsulates both symbolic (compile-time) parameters and input real-time variables.
         Returns None if no parameters are found.
         Args:
             qc: QuantumCircuit object to be converted to a ParameterTable object.
@@ -825,17 +826,22 @@ class ParameterTable:
         from qiskit.circuit.classical import types
 
         param_list = []
+        param_vector_set = set()
         for parameter in qc.parameters:
-            if isinstance(parameter, ParameterVectorElement):
-                raise ValueError(
-                    "ParameterVectors are not yet supported "
-                    "(Reason: Qiskit exporter to OpenQASM3 does not "
-                    "support array of parameters specification."
-                    " Please use a list of individual parameters instead."
-                )
             if isinstance(parameter, QiskitParameter):
                 if filter_function is not None and not filter_function(parameter):
                     continue
+                if isinstance(parameter, ParameterVectorElement):
+                    # Qiskit exports vectors as a collection of single parameters, so we need to create a list of parameters for each element of the vector with a unique name.
+                    # Transformation rule: p[i] -> _p_i_ where p is the name of the vector and i is the index of the parameter in the vector.
+                    param_vec = parameter.vector
+                    if param_vec not in param_vector_set:
+                        param_vector_set.add(param_vec)
+                        param_list.extend(Parameter(f"_{param_vec.name}_{i}_", qua_type=fixed, input_type=input_type, direction=Direction.OUTGOING) for i in range(len(param_vec)))
+                        continue
+                    else:
+                        continue
+         
                 param_list.append(
                     Parameter(
                         parameter.name,
