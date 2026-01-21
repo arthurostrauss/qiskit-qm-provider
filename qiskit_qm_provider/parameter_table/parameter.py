@@ -759,9 +759,9 @@ class Parameter:
         Args:
             reset: Whether to reset the parameter to a 0 value (in the appropriate QUA type) after sending it to the client/server side.
         """
-        if self.stream is not None:
+        if self.input_type == InputType.INPUT_STREAM and self.stream is not None:
             self.save_to_stream()
-        if self.input_type == InputType.DGX_Q:
+        elif self.input_type == InputType.DGX_Q:
             from qm.qua import send_to_external_stream
 
             if not self.is_standalone():  # Part of a parameter table
@@ -775,6 +775,17 @@ class Parameter:
                 raise ValueError("Cannot send value to outgoing stream.")
 
             send_to_external_stream(self._qua_external_stream_out, self._var)
+        elif self.input_type in [InputType.IO1, InputType.IO2]:
+            io = IO1 if self.input_type == InputType.IO1 else IO2
+            if self.is_array:
+                for i in range(self.length):
+                    assign(io, self.var[i])
+                    pause()
+                    
+            else:
+                assign(io, self.var)
+                pause()
+                
         if reset:
             self.reset_var()
 
@@ -807,7 +818,7 @@ class Parameter:
         :param time_out: Time in seconds to wait for the job to be paused before fetching data. Defaults to 30 seconds.
         :return: The fetched value depending upon the input type and fetching logic.
         """
-        if self.input_type != InputType.DGX_Q:
+        if self.input_type == InputType.INPUT_STREAM:
             if job is None:
                 raise ValueError("Job object is required to fetch values from the result handles.")
             if verbosity > 1:
@@ -843,7 +854,18 @@ class Parameter:
                 packet = read_packet(self.stream_id, fetching_index + i)
                 packets.append(packet)
             value = np.array([getattr(packet, self.name) for packet in packets])
-
+        elif self.input_type in [InputType.IO1, InputType.IO2]:
+            io_method = "get_io1_value" if self.input_type == InputType.IO1 else "get_io2_value"
+            if self.is_array:
+                value = []
+                for i in range(self.length):
+                    wait_until_job_is_paused(job, time_out)
+                    value.append(getattr(job, io_method)(self.type))
+                    job.resume()
+            else:
+                wait_until_job_is_paused(job, time_out)
+                value = getattr(job, io_method)(self.type)
+                job.resume()
         else:
             raise ValueError("Invalid input type.")
         if verbosity > 1:
