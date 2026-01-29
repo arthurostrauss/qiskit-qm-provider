@@ -759,7 +759,7 @@ class Parameter:
         Args:
             reset: Whether to reset the parameter to a 0 value (in the appropriate QUA type) after sending it to the client/server side.
         """
-        if self.input_type == InputType.INPUT_STREAM and self.stream is not None:
+        if self.input_type in [InputType.INPUT_STREAM, None] and self.stream is not None:
             self.save_to_stream()
         elif self.input_type == InputType.DGX_Q:
             from qm.qua import send_to_external_stream
