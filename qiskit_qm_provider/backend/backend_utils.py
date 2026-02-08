@@ -83,7 +83,7 @@ def validate_circuits(
             qc_reset = qc.copy_empty_like(vars_mode="drop")
             active_qubits = logically_active_qubits(qc)
             qc_reset.reset(active_qubits)
-            new_circuits.append(qc.compose(qc_reset, inplace=False, front=True))
+            new_circuits.append(qc.compose(qc_reset, inplace=False))
         else:
             new_circuits.append(qc)
 
@@ -113,7 +113,7 @@ def has_conflicting_calibrations(circuits: List[QuantumCircuit]) -> bool:
 def look_for_standard_op(op: str):
     op = op.lower()
     mapping = {
-        "cphase": "cz",
+        "cphase": "cp",
         "cnot": "cx",
         "x/2": "sx",
         "x90": "sx",

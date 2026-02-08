@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from qiskit.primitives.containers.estimator_pub import EstimatorPub
-
 from ..backend import QMBackend
 from ..backend.backend_utils import has_conflicting_calibrations, get_measurement_outcomes
 from qiskit import QuantumCircuit
 from qm import Program
 from qm.qua import *
 from qiskit.primitives.containers.sampler_pub import SamplerPub
-from ..parameter_table import ParameterTable, QUA2DArray, QUAArray
+from ..parameter_table import ParameterTable, QUA2DArray
 from typing import List, Optional, TYPE_CHECKING
 import numpy as np
 if TYPE_CHECKING:
