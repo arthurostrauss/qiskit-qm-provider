@@ -1,15 +1,35 @@
-from abc import ABC
+# Copyright 2026 Arthur Strauss
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
+"""Base class for QM primitive jobs (sampler/estimator) executing QUA programs from PUBs.
+
+Author: Arthur Strauss
+Date: 2026-02-08
+"""
+
+from abc import ABC
+from typing import Optional, Union, List, Dict
 from qiskit.primitives.base.base_primitive_job import BasePrimitiveJob
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit.providers import JobStatus
 from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
-from typing import Optional, Union, List, Dict
+from qm import Program
 from ..backend import QMBackend
 from ..parameter_table import InputType
-from qm import Program
+
 Pub = Union[SamplerPub, EstimatorPub]
 
 
@@ -85,3 +105,8 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
     def program(self) -> Optional[Program]:
         """Return the QUA program."""
         return self._program
+
+    @property
+    def pubs(self) -> List[Pub]:
+        """Return the PUBs used in this job."""
+        return self._pubs

@@ -87,9 +87,10 @@ We envision this tool as more than just a Qiskit bridge; it is a new interface t
 When embedding Qiskit circuits into QUA programs, the typical workflow involves two steps using `backend.quantum_circuit_to_qua()` and `get_measurement_outcomes()`:
 
 1.  **`backend.quantum_circuit_to_qua(qc, ...)`**: This function compiles the Qiskit circuit into QUA instructions and inserts them into the current QUA program context. It returns a result object.
-2.  **`get_measurement_outcomes(qc, result)`**: This utility function takes the circuit and the result from the previous step. It returns a dictionary containing QUA variables corresponding to the measurement outcomes.
-    *   It provides the raw measurement value.
-    *   Crucially, it computes the **`state_int`**, a QUA integer variable representing the measurement result of a classical register.
+2.  **`get_measurement_outcomes(qc, result, compute_state_int=True)`**: This utility function takes the circuit and the result from the previous step. It returns a dictionary containing all the circuit classical registers names (as you would collect them from `qc` by doing `[creg.name for creg in qc.cregs]`) as keys and the following dictionaries as values:
+    *   `"value"`: QUA array of boolean variables storing all the measured classical bits included in the `ClassicalRegister` object.
+    *   `"size"`:  The size (Python integer) relative to the `ClassicalRegister` (i.e., its number of bits).
+    *   **`state_int`**, a QUA integer variable representing the integer representation formed by all the bits measured in this register. This can be useful for bitpacking.
 
 This `state_int` is essential for **real-time control flow** and **data streaming**, allowing you to use Qiskit for complex circuit definitions while leveraging QUA for fast feedback logic.
 
@@ -180,7 +181,7 @@ The `ParameterTable` is a core component for managing real-time parameters.
 
 ### `ParameterTable`
 
-Class enabling the mapping of parameters to be updated to their corresponding "to-be-declared" QUA variables.
+Class enabling the mapping of parameters to be updated to their corresponding "to-be-declared" QUA variables. It acts as a single entrypoint to update a parameter from both Python and QUA interface.
 
 #### Initialization
 ```python
@@ -204,6 +205,8 @@ Represents a single parameter mapped to a QUA variable.
 
 - **`assign(value)`**: QUA Macro to assign a value to the parameter's QUA variable.
 - **`save_to_stream()`**: QUA Macro to save the current value to its output stream.
+- Each Parameter stores a **`var`** attribute that corresponds to the QUA variable associated with the parameter. It can be a QUA int, fixed, bool, or a QUA array of those types.
+- We have two special types of Parameters: `QUA2DArray` and `QUAArray`that can be used for multiple indexing as if you were traversing a multi-dimensional array (encoded behind the scens as a single large UQUA array of flattened dimension).
 
 ## Compatibility and Custom Calibrations
 
@@ -265,4 +268,16 @@ compiler state inside the backend is synchronized with your updated Target befor
 Note: When a gate implementation is updated (e.g. the gate was already existing and had an existing pulse level implementation), it always overrides the previously defined implementation when calling the method.
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the Apache 2.0 License.
+
+## Attribution & Provenance
+
+This project was initiated and developed by **Arthur Strauss**
+as part of his PhD research at the **Centre for Quantum Technologies, National University of Singapore**, in collaboration with **Quantum Machines Ltd.**.
+
+The goal of `qiskit-qm-provider` is to bridge Qiskit-level programming
+abstractions (circuits, primitives, and workflows) with the synthesis
+and execution of advanced **QUA-based quantum control programs**.
+
+This repository serves as an open-source foundation for future research
+and industrial developments in hybrid quantum software stacks.

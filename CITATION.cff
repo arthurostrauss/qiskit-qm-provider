@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+title: qiskit-qm-provider
+authors:
+  - given-names: Arthur
+    family-names: Strauss
+    email: arthur.strauss@quantum-machines.co
+year: 2026
+license: Apache-2.0
+repository-code: https://github.com/arthurostrauss/qiskit-qm-provider
+message: >
+  If you use this software in academic or industrial research,
+  please cite it using the following reference.
+type: software
