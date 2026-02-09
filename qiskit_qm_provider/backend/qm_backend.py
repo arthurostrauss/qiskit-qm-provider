@@ -23,7 +23,7 @@ from __future__ import annotations
 import datetime
 import warnings
 from copy import deepcopy
-from typing import Iterable, List, Dict, Optional, Callable, Sequence, Union, Tuple, Any, TYPE_CHECKING
+from typing import Iterable, List, Dict, Optional, Callable, Sequence, Union, Tuple, TYPE_CHECKING
 from inspect import Signature, Parameter as sigParam
 
 import numpy as np
@@ -34,24 +34,15 @@ from qiskit.circuit import (
 )
 from qiskit.circuit.controlflow import CONTROL_FLOW_OP_NAMES
 from qiskit.circuit.classical.expr import Var
-from qiskit.primitives import BitArray, SamplerPubResult, DataBin
 from qiskit.providers import BackendV2 as Backend, QubitProperties, Options
-
-from qiskit.result import Result
-from qiskit.result.models import ExperimentResult, ExperimentResultData, MeasLevel, MeasReturnType
+from qiskit.result.models import MeasLevel, MeasReturnType
 
 from qiskit.transpiler import Target, InstructionProperties, CouplingMap
 from qiskit.qasm3 import Exporter
 from qm.jobs.running_qm_job import RunningQmJob
 
 # QUA and Quam imports
-from qm import (
-    QuantumMachinesManager,
-    Program,
-    DictQuaConfig,
-    QuantumMachine,
-    StreamingResultFetcher,
-)
+from qm import QuantumMachinesManager, DictQuaConfig, QuantumMachine
 from quam.components import Channel as QuAMChannel, QubitPair, Qubit
 
 # OpenQASM3 to QUA compiler
@@ -195,6 +186,21 @@ class QMBackend(Backend):
         self._calibration_operation_mapping_QUA = self._operation_mapping_QUA.copy()
         self._oq3_custom_gates = []
         self._init_macro = init_macro if init_macro is not None else lambda: None
+
+    def __deepcopy__(self, memo):
+        """
+        Custom deepcopy implementation to avoid copying non-picklable resources.
+
+        In particular, the underlying QuAM `machine` and live connection objects
+        (`_qmm`, `_qm`) may contain threading primitives such as RLocks, which
+        are not picklable and cause `copy.deepcopy` (used by Qiskit Runtime's
+        local service) to fail.
+
+        For the purposes of backend options copying, it is sufficient – and
+        typically preferable – to share these resources rather than duplicate
+        them, so we shallow-copy those attributes and deep-copy the rest.
+        """
+        return self
 
     @classmethod
     def _default_options(cls) -> Options:
@@ -566,127 +572,23 @@ class QMBackend(Backend):
 
     def run(self, run_input: QuantumCircuit | List[QuantumCircuit], **options) -> QMJob:
         """
-        Run a QuantumCircuit on the QOP backend (currently not supported)
+        Run one or more ``QuantumCircuit`` objects on the QM backend.
+
+        This method now delegates the heavy lifting (circuit validation,
+        compilation to QUA, job submission and result assembly) to the
+        :class:`QMJob` interface, keeping the public behaviour identical
+        while centralising execution logic in the job layer.
+
         Args:
-            run_input: The QuantumCircuit (or list thereof) to run on the backend. Can
-            also be a Qiskit Pulse Schedule or ScheduleBlock
-            options: The options for the run (can be passed as a dictionary or as keyword arguments). It
-            could contain the following keys:
-                - shots: The number of shots to run the circuit for (default is 1024)
-                - simulate: The simulation configuration to use (if any) on the QOP
-                - compiler_options: The options for the QOP compiler (if any)
+            run_input: The ``QuantumCircuit`` (or list thereof) to run on the backend.
+            options: Backend run options (shots, simulate, compiler options, etc.).
 
         Returns:
-            A QMJob object that can be used to retrieve the results of the job
+            A :class:`QMJob` (or :class:`IQCCJob` for cloud backends) instance.
         """
-        from ..job.qm_job import QMJob, IQCCJob
-        from ..job.qua_programs import get_run_program
+        from ..job.qm_job import QMJob
 
-        options_ = deepcopy(self.options.__dict__)
-        options_.update(options)
-        num_shots = options.get("shots", self.options.shots)
-        skip_reset = options.get("skip_reset", self.options.skip_reset)
-        memory = options.get("memory", self.options.memory)
-        meas_level = options.get("meas_level", self.options.meas_level)
-        meas_return = options.get("meas_return", self.options.meas_return)
-        if not isinstance(run_input, list):
-            run_input = [run_input]
-        new_circuits = validate_circuits(run_input, should_reset=not skip_reset, check_for_params=True)
-        num_circuits = len(new_circuits)
-        self.update_target()
-        if QISKIT_PULSE_AVAILABLE:
-            for qc in new_circuits:
-                self.update_calibrations(qc)
-
-        run_program = get_run_program(self, num_shots, new_circuits)
-        qm = self.qm
-
-        id = "pending"
-        cregs_dicts = [{creg.name: creg.size for creg in qc.cregs} for qc in new_circuits]
-        for i, qc in enumerate(new_circuits):
-            solo_bits = [bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0]
-            if len(solo_bits) > 0:
-                cregs_dicts[i][_QASM3_DUMP_LOOSE_BIT_PREFIX] = len(solo_bits)
-
-        def result_function(qm_job: RunningQmJob | List[RunningQmJob] | CloudJob | Dict) -> Result:
-            is_job_list = isinstance(qm_job, list)
-            if is_job_list:
-                results_handle = [job.result_handles for job in qm_job]
-                for handle in results_handle:
-                    handle.wait_for_all_values()
-            elif isinstance(qm_job, (RunningQmJob, CloudJob)):
-                results_handle = qm_job.result_handles
-                results_handle.wait_for_all_values()
-            else:
-                results_handle = qm_job["result"]
-
-            # Collect all data from stream processing in the correct registers and feed
-            # it to the result object
-            all_data = []
-            for i in range(num_circuits):
-                qc_meas_data = {}
-                for creg, creg_size in cregs_dicts[i].items():
-                    if is_job_list:
-                        data = np.array(results_handle[i].get(f"{creg}_{i}").fetch_all()["value"]).flatten().tolist()
-                    elif isinstance(results_handle, (StreamingResultFetcher, CloudResultHandles)):
-                        data = np.array(results_handle.get(f"{creg}_{i}").fetch_all()["value"]).flatten().tolist()
-                    else:
-                        data = np.array(results_handle.get(f"{creg}_{i}")).flatten().tolist()
-                    # time_stamps = results_handle.get(f'{creg}_{i}').fetch_all()["timestamp"]
-                    if meas_level == MeasLevel.CLASSIFIED:
-                        bit_array = BitArray.from_samples(data, creg_size)
-                        qc_meas_data[creg] = bit_array
-                    elif meas_level == MeasLevel.KERNELED:
-                        if meas_return == MeasReturnType.SINGLE:
-                            qc_meas_data[creg] = np.array([d[0] + 1j * d[1] for d in data], dtype=complex)
-                        elif meas_return == MeasReturnType.AVERAGE:
-                            qc_meas_data[creg] = np.mean([d[0] + 1j * d[1] for d in data])
-
-                sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
-                all_data.append(sampler_data.join_data())
-
-            experiment_data = []
-            for data in all_data:
-                experiment_result = ExperimentResult(
-                    shots=num_shots,
-                    success=True,
-                    data=ExperimentResultData(
-                        data.get_counts(),
-                        memory=data.get_bitstrings() if memory else None,
-                    ),
-                    meas_level=meas_level,
-                    meas_return=meas_return,
-                    status=qm_job.status if isinstance(qm_job, RunningQmJob) else "done",
-                )
-                experiment_data.append(experiment_result)
-
-            result = Result(
-                results=experiment_data if num_circuits > 1 else experiment_data[0],
-                backend_name=self.name,
-                job_id=qm_job.id if hasattr(qm_job, "id") else "unknown",
-                backend_version=2,
-                qobj_id=None,
-                success=True,
-                date=datetime.datetime.now().isoformat(),
-            )
-            return result
-
-        job_obj = QMJob if isinstance(self.qmm, QuantumMachinesManager) else IQCCJob
-        job = job_obj(
-            self,
-            id,
-            qm,
-            run_program,
-            result_function=result_function,
-            config=self.qm_config,
-            **options_,
-        )
-
-        job.submit()
-        # Note: _calibration_operation_mapping_QUA is reset at the start of each run() call via update_target(),
-        # so this reset is redundant but kept for clarity/explicit cleanup
-        self._calibration_operation_mapping_QUA = self._operation_mapping_QUA.copy()
-        return job
+        return QMJob.from_circuits(self, run_input, **options)
 
     @requires_qiskit_pulse
     def schedule_to_qua_macro(
@@ -895,8 +797,6 @@ class QMBackend(Backend):
                     ] = self.schedule_to_qua_macro(schedule, param_table)
 
                     self.add_pulse_operations(schedule, name=schedule.name)
-        else:
-            warnings.warn("No calibrations found in the QuantumCircuit", UserWarning)
 
     def quantum_circuit_to_qua(
         self,

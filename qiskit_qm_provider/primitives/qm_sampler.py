@@ -109,7 +109,8 @@ class QMSamplerV2(BaseSamplerV2):
         backend_options["meas_return_type"] = meas_return_type_dict.get(self._options.meas_level, MeasReturnType.SINGLE)
         backend_options["shots"] = shots
         backend_options.update(self._options.run_options or {})
-
+        # Update Target of backend if needed
+        self.backend.update_target(self.options.input_type)
         job = job_obj(self.backend, coerced_pubs, self.options.input_type, **backend_options)
         job.submit()
         return job

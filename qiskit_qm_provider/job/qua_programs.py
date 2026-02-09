@@ -269,8 +269,7 @@ def get_run_program(backend: QMBackend, num_shots, circuits: List[QuantumCircuit
     clbits_dicts = []
     if not has_conflicting_calibrations(circuits):
         with program() as prog:
-            if backend.init_macro:
-                backend.init_macro()
+            backend.init_macro()
 
             for i, qc in enumerate(circuits):
                 clbits_dict = _process_circuit(

@@ -67,6 +67,11 @@ _QASM3_DUMP_LOOSE_BIT_PREFIX = "_bit"
 
 
 def validate_machine(machine) -> QuamRoot:
+    """
+    Validate the QuAM instance by checking if it has qubits and qubit_pairs attributes and if they are of type Qubit and QubitPair respectively.
+    :param machine: The QuAM instance to be validated.
+    :return: The QuAM instance if it is valid, otherwise raises a ValueError.
+    """
     if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
         raise ValueError("Invalid QuAM instance provided, should have qubits and qubit_pairs attributes")
     if not all(isinstance(qubit, Qubit) for qubit in machine.qubits.values()):
@@ -117,14 +122,14 @@ def has_conflicting_calibrations(circuits: List[QuantumCircuit]) -> bool:
     """
     from oqc import OperationIdentifier
 
-    custom_gates = []
+    custom_gates = set()
     for qc in circuits:
         if hasattr(qc, "calibrations") and qc.calibrations:
             for gate_name, cal_info in qc.calibrations.items():
                 for qubits, parameters in cal_info.keys():
                     op_id = OperationIdentifier(gate_name, len(parameters), qubits)
                     if op_id not in custom_gates:
-                        custom_gates.append(op_id)
+                        custom_gates.add(op_id)
                     else:
                         return True
     return False

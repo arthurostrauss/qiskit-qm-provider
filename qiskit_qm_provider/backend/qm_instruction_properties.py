@@ -21,6 +21,7 @@ Date: 2026-02-08
 from __future__ import annotations
 
 from typing import Callable
+from copy import deepcopy
 
 from qiskit.transpiler import InstructionProperties
 from quam.core.macro import QuamMacro
@@ -71,6 +72,7 @@ class QMInstructionProperties(InstructionProperties):
     @quam_macro.setter
     def quam_macro(self, value: QuamMacro | None):
         self._qua_pulse_macro = value
+
     def __repr__(self):
         return (
             f"QMInstructionProperties(duration={self.duration}, "
@@ -84,3 +86,31 @@ class QMInstructionProperties(InstructionProperties):
     def __setstate__(self, state: tuple):
         super().__setstate__(state[0])
         self._qua_pulse_macro = state[1]
+
+    def __deepcopy__(self, memo):
+        """
+        Custom deepcopy that mirrors Qiskit's InstructionProperties semantics
+        while keeping the same reference to the underlying macro.
+
+        - The numeric fields (duration, error) are copied like a normal
+          InstructionProperties instance.
+        - The `_qua_pulse_macro` / `qua_pulse_macro` attribute is **not**
+          deep-copied; the reference is shared between copies. This avoids
+          attempting to deepcopy or pickle potentially non-picklable QuAM
+          macros, while still allowing Qiskit to deepcopy Targets and their
+          instruction-property maps.
+        """
+        if id(self) in memo:
+            return memo[id(self)]
+
+        # Recreate via __new__ so that the Rust-side base state is initialized correctly,
+        # but pass through the same macro object by reference.
+        cls = self.__class__
+        result = cls.__new__(
+            cls,
+            duration=deepcopy(self.duration, memo),
+            error=deepcopy(self.error, memo),
+            qua_pulse_macro=self._qua_pulse_macro,
+        )
+        memo[id(self)] = result
+        return result

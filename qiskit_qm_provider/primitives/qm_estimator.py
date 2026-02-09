@@ -114,7 +114,8 @@ class QMEstimatorV2(BaseEstimatorV2):
             precision = self.options.default_precision
         pubs = [EstimatorPub.coerce(pub, precision) for pub in pubs]
         pubs = self.validate_estimator_pubs(pubs)
-
+        # Update Target of backend if needed
+        self.backend.update_target(self.options.input_type)
         from ..job.qm_estimator_job import QMEstimatorJob, IQCCEstimatorJob
         from qm import QuantumMachinesManager
         job_obj = QMEstimatorJob if isinstance(self.backend.qmm, QuantumMachinesManager) else IQCCEstimatorJob

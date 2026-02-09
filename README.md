@@ -10,7 +10,7 @@ pip install qiskit-qm-provider
 
 ## Documentation
 
-For full API documentation, please refer to the [docs folder](docs/).
+For full API documentation, please refer to the [docs folder](docs/). Example workflows (primitives, custom gates, calibrations, IQCC + Qiskit Experiments) are in the [examples](examples/) folder.
 
 ## Overview
 
@@ -120,6 +120,32 @@ result = job.result()
 ```
 
 We also implement the traditional `backend.run()` function, which closely mimics the `Sampler` primitive behavior.
+
+### Primitive options (QMSamplerOptions and QMEstimatorOptions)
+
+Both primitives accept an options object that controls how jobs are run and how parameters are loaded on the OPX.
+
+#### QMSamplerOptions
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `default_shots` | `int` | `1024` | Default number of shots per circuit when not specified in `run()`. |
+| `input_type` | `InputType \| None` | `None` | How parameter values are loaded on the OPX: `InputType.INPUT_STREAM`, `InputType.IO1`, `InputType.IO2`, `InputType.DGX_Q`, or `None` (preload at compile time; use only for a small number of parameter sets). |
+| `run_options` | `dict \| None` | `None` | Extra options passed through to the backend’s `run()` method. |
+| `meas_level` | `"classified" \| "kerneled" \| "avg_kerneled"` | `"classified"` | Measurement level: classified (counts), kerneled (raw IQ per shot), or avg_kerneled (averaged). |
+
+#### QMEstimatorOptions
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `default_precision` | `float` | `0.015625` | Default precision for expectation-value estimation when not specified in `run()` (e.g. 1/√4096). |
+| `abelian_grouping` | `bool` | `True` | Whether to group observables into qubit-wise commuting sets. |
+| `input_type` | `InputType \| None` | `None` | Same as for the Sampler: `INPUT_STREAM`, `IO1`, `IO2`, `DGX_Q`, or `None` for compile-time preload. |
+| `run_options` | `dict \| None` | `None` | Extra options passed through to the backend’s `run()` method. |
+
+**InputType** (from `qiskit_qm_provider`): `INPUT_STREAM` (real-time input stream), `IO1`, `IO2` (I/O channels), or `DGX_Q` (DGX Quantum communication). Use `None` to bind all parameter values at compile time.
+
+Standalone examples for the Sampler and Estimator are in the [examples](examples/) folder.
 
 ## Hybrid QUA and Qiskit Interface
 
