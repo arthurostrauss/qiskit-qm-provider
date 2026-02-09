@@ -20,7 +20,7 @@ Date: 2026-02-08
 
 from __future__ import annotations
 
-from typing import Optional, List, Callable, Dict, Sequence, Union, TYPE_CHECKING
+from typing import Optional, List, Callable, Dict, Union, TYPE_CHECKING
 
 from copy import deepcopy
 
@@ -38,7 +38,7 @@ from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qiskit_qm_provider.backend.backend_utils import validate_circuits, _QASM3_DUMP_LOOSE_BIT_PREFIX
 
 if TYPE_CHECKING:
-    from iqcc_cloud_client.qmm_cloud import CloudJob, CloudResultHandles, CloudQuantumMachinesManager
+    from iqcc_cloud_client.qmm_cloud import CloudJob
     from iqcc_cloud_client import IQCC_Cloud
 
 
@@ -78,6 +78,7 @@ class QMJob(JobV1):
         backend: QMBackend,
         num_circuits: int,
         num_shots: int,
+        circuits: List[QuantumCircuit],
         cregs_dicts: List[Dict[str, int]],
         meas_level: MeasLevel,
         meas_return: MeasReturnType,
@@ -147,7 +148,13 @@ class QMJob(JobV1):
                 all_data.append(sampler_data.join_data())
 
             experiment_data = []
-            for data in all_data:
+            for i, data in enumerate(all_data):
+                # Attach circuit-level metadata to the result header so that
+                # qiskit-experiments can recover `datum["metadata"]` for curve analysis.
+                # In particular, experiments such as T1 expect
+                #     circuit.metadata = {"xval": ...}
+                # and look for this via ExperimentResult.header.metadata.
+                circuit_metadata = getattr(circuits[i], "metadata", {}) or {}
                 experiment_result = ExperimentResult(
                     shots=num_shots,
                     success=True,
@@ -157,6 +164,7 @@ class QMJob(JobV1):
                     ),
                     meas_level=meas_level,
                     meas_return=meas_return,
+                    header={"metadata": circuit_metadata},
                     status=getattr(qm_job, "status", "done"),
                 )
                 experiment_data.append(experiment_result)
@@ -229,6 +237,7 @@ class QMJob(JobV1):
             backend=backend,
             num_circuits=num_circuits,
             num_shots=num_shots,
+            circuits=new_circuits,
             cregs_dicts=cregs_dicts,
             meas_level=meas_level,
             meas_return=meas_return,

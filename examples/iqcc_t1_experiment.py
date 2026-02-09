@@ -9,7 +9,7 @@ Requires: qiskit-experiments, iqcc_cloud_client, and IQCC API access.
 from qiskit_qm_provider import IQCCProvider
 
 # Backend name at IQCC (e.g. "qolab", "arbel")
-backend_name = "qolab"
+backend_name = "arbel"
 
 # Get backend from IQCC (option 1: by name; option 2: get_machine then get_backend)
 iqcc_provider = IQCCProvider()  # api_token=... or set IQCC_API_TOKEN
@@ -23,12 +23,12 @@ except ImportError as e:
 
 # Physical qubit(s) to characterize and delay range (seconds)
 physical_qubits = (0,)
-delays = [10e-6, 20e-6, 50e-6, 100e-6]  # Example range; adjust to your backend (min 3 points)
+delays = [5e-6, 10e-6, 20e-6, 30e-6, 40e-6, 50e-6, 60e-6, 70e-6, 80e-6, 90e-6, 100e-6]  # Example range; adjust to your backend (min 3 points)
 
 t1_exp = T1(physical_qubits=physical_qubits, backend=backend, delays=delays)
 
 # Run and analyze
-t1_data = t1_exp.run(backend_run=True)
+t1_data = t1_exp.run()
 print(t1_data)
 result = t1_data.block_for_results()
 
