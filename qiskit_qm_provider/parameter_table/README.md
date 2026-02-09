@@ -1,153 +1,472 @@
-# Parameter and ParameterTable Usage
+# Parameter Table Submodule: In-Depth Guide
 
-This document explains how to use the `Parameter` and `ParameterTable` classes provided in the `rl_qoc.qua.parameter_table` module (or similar path). These classes facilitate the management of dynamic parameters within QUA programs, allowing for easier updates and interactions between Python and the OPX, especially for applications like Reinforcement Learning (RL) or Quantum Optimal Control (QOC), including integration with DGX Quantum via OPNIC.
+This document provides a detailed presentation of the **Parameter**, **ParameterTable**, **QUAArray**, and **QUA2DArray** classes in `qiskit_qm_provider.parameter_table`. These classes manage dynamic parameters in QUA programs, enabling runtime updates from Python, integration with external I/O (OPX IO1/IO2, input streams), and DGX Quantum (OPNIC) communication for Reinforcement Learning, Quantum Optimal Control, and similar workflows.
 
+---
 
-## `Parameter` Class
+## Table of Contents
 
-The `Parameter` class represents a single dynamic parameter that maps to a QUA variable. It handles type inference, declaration within QUA, and mechanisms for updating its value from Python or reading its value back.
+1. [Overview](#overview)
+2. [Parameter](#parameter)
+3. [ParameterTable](#parametertable)
+4. [QUAArray](#quaarray)
+5. [QUA2DArray](#qua2darray)
+6. [InputType and Direction](#inputtype-and-direction)
+7. [ParameterPool and DGX Quantum](#parameterpool-and-dgx-quantum)
+8. [Usage in QUA Programs](#usage-in-qua-programs)
+9. [Python-Side Interaction](#python-side-interaction)
+
+---
+
+## Overview
+
+- **Parameter**: A single named QUA variable (scalar or 1D array) with optional input/output stream configuration. It maps a Python-side value to a QUA variable that can be declared, assigned, and streamed within a QUA program.
+- **ParameterTable**: A named collection of `Parameter` objects sharing the same **input type** (and for DGX Quantum, the same **direction**). It provides bulk declaration, assignment, loading, and streaming, and for `InputType.DGX_Q` it forms a single OPNIC packet.
+- **QUAArray**: A **Parameter** subclass that represents an **N-dimensional** logical view over one underlying 1D QUA array. It supports arbitrary shapes, multi-dimensional indexing, slicing, and sub-array views (`_QUAArrayView`).
+- **QUA2DArray**: A **Parameter** subclass that represents a **2D** view over one 1D QUA array (`n_rows * n_cols` elements). It offers 2D indexing, row/column slicing, row views (`_QUA2DRow`), and row-wise or element-wise assignment.
+
+All of these can be used inside `with program():` blocks and interoperate with `ParameterTable` (e.g., you can put `Parameter`, `QUAArray`, and `QUA2DArray` instances in a table).
+
+---
+
+## Parameter
+
+The **Parameter** class maps one logical parameter (name + optional units) to a single QUA variable—either a scalar or a 1D QUA array—with type inference, optional input/output configuration, and methods for declaration, assignment, streaming, and Python ↔ OPX communication.
 
 ### Initialization
 
-You create a `Parameter` instance by providing a name and an initial value. The QUA type (`fixed`, `int`, `bool`) can be inferred from the value or specified explicitly. You can also specify how the parameter interacts with the outside world using `input_type` and `direction` (for DGX Quantum).
+```python
+Parameter(
+    name: str,
+    value: Optional[Union[int, float, List, np.ndarray]] = None,
+    qua_type: Optional[Union[str, type]] = None,
+    input_type: Optional[InputType | Literal["DGX_Q", "INPUT_STREAM", "IO1", "IO2"]] = None,
+    direction: Optional[Direction | Literal["INCOMING", "OUTGOING", "BOTH"]] = None,
+    units: str = "",
+)
+```
 
+- **name**: Identifier for the parameter (used in QUA and for table access).
+- **value**: Initial value. Can be a scalar (`int`, `float`, `bool`) or a 1D list/array; if omitted, type/length must be set via `qua_type` and (for arrays) by using a subclass like `QUAArray`/`QUA2DArray` that sets length internally.
+- **qua_type**: QUA type: `int`, `fixed`, or `bool`. If `None`, inferred from `value` (float → `fixed`, int → `int`, bool → `bool`; for lists/arrays, element type is used).
+- **input_type**: How this parameter is fed in or out: `InputType.INPUT_STREAM`, `InputType.IO1`, `InputType.IO2`, or `InputType.DGX_Q`. `None` means no external stream (only in-program use and optional QUA stream for saving).
+- **direction**: For `InputType.DGX_Q` only: `Direction.INCOMING` (OPX → DGX), `Direction.OUTGOING` (DGX → OPX), or `Direction.BOTH`. Required when `input_type == InputType.DGX_Q`.
+- **units**: Optional units string (e.g. for display).
 
-## `ParameterTable` Class
+If `value` is a list or 1D numpy array, the parameter is an array of that length; otherwise it is a scalar. Duplicate names in the same `ParameterPool` (e.g. same name in another table) trigger a warning and reuse of the existing parameter.
 
-The `ParameterTable` groups multiple `Parameter` objects, simplifying their management, especially when they share the same `input_type` (like `DGX_Q`).
+### Type inference and QUA types
+
+- **set_type(qua_type)** and **infer_type(value)** (module-level helpers): `set_type` maps Python/string type to QUA type (`fixed`, `int`, `bool`); `infer_type` infers from a scalar or 1D list/array (all elements must share the same type).
+
+### Properties
+
+| Property       | Description |
+|----------------|-------------|
+| `name`         | Parameter name. |
+| `value`        | Initial/value attribute (Python side). |
+| `type`         | QUA type (`int`, `fixed`, `bool`). |
+| `length`       | Number of elements (0 for scalar). |
+| `is_array`     | `True` if `length > 0`. |
+| `is_declared`  | Whether the QUA variable has been declared. |
+| `var`          | The QUA variable (after declaration); for DGX struct, returns the field (scalar or array slice). |
+| `stream`       | Output stream (if declared) for saving. |
+| `input_type`   | `InputType` or `None`. |
+| `direction`    | For DGX Quantum: Stream direction (`Direction.OUTGOING`, `Direction.INCOMING`, `Direction.BOTH`). |
+| `stream_id`    | OPNIC stream ID (DGX Quantum). |
+| `dgx_struct`   | Struct type for DGX Quantum packet (standalone or from table if parameter belongs to a `ParameterTable`). |
+| `main_table`   | `ParameterTable` that declared this parameter (DGX Quantum); `None` if standalone. |
+| `index` / `get_index(table)` | Index in a given `ParameterTable` (useful for `switch_` logic in QUA for deciding which parameter to update). |
+| `tables`       | List of tables that contain this parameter. |
+
+### Declaration (inside QUA)
+
+- **declare_variable(pause_program=False, declare_stream=True)**  
+  Declares the QUA variable (and optionally an output stream). For DGX Quantum, standalone parameters declare their own struct and external stream; parameters that belong to a table must be declared via that table’s `declare_variables()`. Returns the declared variable.
+
+- **declare_stream()**  
+  Declares the output stream for this parameter (used for `save_to_stream` / stream processing).
+
+### Assignment (inside QUA)
+
+- **assign(value, condition=None, value_cond=None)**  
+  Assigns to the parameter’s QUA variable.  
+  - **value**: Python scalar, list, another `Parameter`’s `.var`, or a QUA array variable. For arrays, length must match.  
+  - **condition** / **value_cond**: Optional QUA boolean and else-value; both must be provided together.  
+  For array parameters, assignment can be from a list, a QUA array, or another Parameter; for DGX Quantum struct, assignment is to the struct field.
+
+### Loading input (inside QUA)
+
+- **load_input_value()**  
+  Loads one value from the parameter’s input mechanism: advances `INPUT_STREAM`, reads from IO1/IO2 (with `pause()` and assign), or for DGX Quantum receives from the external stream (standalone only; table parameters use the table’s `load_input_values()`).
+
+### Streaming and saving (inside QUA)
+
+- **stream_back(reset=False)**  
+  Sends the current value to the client: for non-DGX Quantum with a stream, saves to stream; for DGX Quantum with `Direction.INCOMING` or `Direction.BOTH`, sends the struct to the external stream; for IO1/IO2, sends via IO. If `reset=True`, resets the variable to zero (in appropriate QUA type) after sending.
+
+- **save_to_stream()**  
+  Saves the current value to the parameter’s output stream (must be declared).
+
+- **stream_processing(mode="save" | "save_all", buffer="default" | ...)**  
+  Defines how the output stream is processed (e.g. `save` vs `save_all`). For arrays, default buffer is `(length,)`; for scalars, no buffer.
+
+### Utilities (inside QUA)
+
+- **clip(min_val, max_val, is_qua_array=False)**  
+  Clips the QUA variable to `[min_val, max_val]` (element-wise for arrays). Bounds can be scalars or QUA arrays if `is_qua_array=True`.
+
+### Python-side (outside QUA)
+
+- **push_to_opx(value, job=None, qm=None, verbosity=1, time_out=30)**  
+  Sends `value` from Python to the OPX so that the next `load_input_value()` in QUA receives it. Uses input stream, IO1/IO2, or DGX Quantum OPNIC depending on `input_type`.
+
+- **fetch_from_opx(job=None, fetching_index=0, fetching_size=1, verbosity=1, time_out=30)**  
+  Retrieves value(s) from the OPX (IOs, stream processing if `InputType.INPUT_STREAM` or DGX Quantum packet) and returns them (scalar or array).
+
+---
+
+## ParameterTable
+
+A **ParameterTable** groups multiple **Parameter** instances under one name and ensures they share the same **input_type** (and for DGX, the same **direction**). It is the main interface for declaring, assigning, loading, and streaming many parameters at once, and for DGX it defines a single OPNIC packet.
 
 ### Initialization
 
-The user can declare a `ParameterTable` instance by passing in a dictionary of parameters intended to be updated dynamically, or a list of pre-defined `Parameter` objects.
+**From a dictionary**
 
-**Using a Dictionary:**
+```python
+parameters_dict: Dict[str, Union[
+    Tuple[value, qua_type?, input_type?, direction?],  # up to 4 elements
+    value  # scalar or list/array
+]]
+```
 
-The dictionary should be of the form:
-`{'parameter_name': (initial_value, qua_type, input_type, direction)}`
-or simpler forms where types/inputs are inferred or omitted.
+- **value**: Initial value (scalar or 1D list/array).
+- **qua_type**: Optional; inferred from value if omitted.
+- **input_type**: Optional; if present, all parameters in the table must use the same one.
+- **direction**: Required when `input_type == InputType.DGX_Q`; must be the same for all.
 
+**From a list of Parameter objects (Recommended)**
 
-*   `qua_type` can be `bool`, `int`, or `fixed`.
-*   It is possible to provide a list or a 1D numpy array as `initial_value` to create a QUA array.
-*   The optional `input_type` (`InputType.INPUT_STREAM`, `InputType.IO1`, `InputType.IO2`, `InputType.DGX`) specifies how the parameter interacts externally.
-*   The optional `direction` (`Direction.INCOMING`, `Direction.OUTGOING`, `Direction.BOTH`) is required if `input_type` is `DGX_Q`. This indicates the designated direction of communication that should be adopted for the packet associated to the `ParameterTable`. We use the following convention:
-    1. `Direction.INCOMING`: OPX -> DGX (OPX sends data obtained from the QUA program to the server)
-    2. `Direction.OUTGOING`: DGX -> OPX (The server sends parameters that will influence the execution of the QUA program to the OPX)
-    3. `Direction.BOTH`: Both prior directions are supported for the same packet (it can be sent and fetched from both devices).
-*   If only a value is provided, the type is inferred.
+```python
+ParameterTable([param1, param2, ...], name="optional_name")
+```
 
-The declaration of the `ParameterTable` can be done as follows:
+Input type and direction are taken from the parameters; they must all match. The table assigns each parameter an index (0, 1, …) used e.g. for `switch_` in QUA.
 
+**name**: Optional table name; if not set, a unique default is generated.
 
-**Using a List of Parameters:**
+### DGX Quantum packet (InputType.DGX_Q)
 
-This is useful for ensuring consistent `input_type` and `direction`, especially for DGX Quantum.
+When `input_type == InputType.DGX_Q`, the table builds a QUA struct (packet) whose fields are the parameters. All parameters in the table are then represented by that single struct in QUA; declaration uses `declare_struct` and external streams use this packet type.
 
-**Important:** When using `InputType.DGX_Q`, all parameters within a table *must* share the same `direction`.
+### Declaration and streams (inside QUA)
 
-Once this declaration is done, the provided dictionary or list is converted to a `ParameterTable` instance. The `ParameterTable` class serves as an interface between the QUA program and the Python environment, facilitating the declaration and manipulation of QUA variables.
+- **declare_variables(pause_program=False, declare_streams=True)**  
+  Declares all parameters. For DGX, declares the packet struct and external stream(s), and binds each parameter to the packet; for non-DGX, calls `declare_variable()` on each parameter. Returns the declared variable(s) (single var or list; for DGX, the packet).
+
+- **declare_streams()**  
+  Declares output streams for all parameters that do not already have one.
+
+### Assignment (inside QUA)
+
+- **assign_parameters(values: Dict[str | Parameter, value])**  
+  Assigns multiple parameters at once. Keys are names or `Parameter` instances; values are Python literals, QUA expressions, or `Parameter` instances.
+
+- **table[name] = value** or **table.attribute = value**  
+  Assigns to the parameter named `name` (or attribute); equivalent to `table[name].assign(value)`.
+
+### Loading and streaming (inside QUA)
+
+- **load_input_values(filter_function=None)**  
+  For each parameter (optionally filtered), calls `load_input_value()`. For DGX OUTGOING/BOTH, receives one packet into the table’s struct.
+
+- **stream_back(reset=False)**  
+  For each parameter (or for DGX INCOMING, sends the whole packet) streams values out; see Parameter’s `stream_back`. Optionally resets after send.
+
+- **save_to_stream()**  
+  Calls `save_to_stream()` on each parameter.
+
+- **stream_processing(mode="save" | "save_all", buffering="default" | Dict)**  
+  Configures stream processing for all parameters; `buffering` can map parameter name/object to buffer size.
+
+### Accessors
+
+| Method / usage            | Description |
+|---------------------------|-------------|
+| **get_parameter(name \| index \| Parameter)** | Returns the `Parameter` object. |
+| **get_variable(name \| index \| Parameter)** | Returns the QUA variable (after declaration). |
+| **get_index(parameter_name \| Parameter)**   | Returns the parameter’s index in this table. |
+| **get_type(parameter)**   | Returns the QUA type of the parameter. |
+| **has_parameter(name \| index \| Parameter)** | Whether the table contains that parameter. |
+| **table[name]** or **table[index]** (after declare) | Returns the QUA variable. |
+| **table.name** (attribute) | Same as `table["name"]` for existing parameter names. |
+
+### Mutating the table (before declaration)
+
+- **add_parameters(Parameter \| List[Parameter])**  
+  Appends parameter(s); indices are assigned automatically. All must have the same `input_type` (and direction for DGX).
+
+- **remove_parameter(name \| Parameter)**  
+  Removes a parameter.
+
+- **add_table(ParameterTable \| List[ParameterTable])**  
+  Merges another table(s) by adding its parameters.
+
+### Properties
+
+- **parameters**: List of `Parameter` objects.
+- **table** / **parameters_dict**: Name → `Parameter` mapping.
+- **variables**: List of QUA variables (after declaration).
+- **variables_dict**: Name → QUA variable (after declaration).
+- **is_declared**: True if all parameters are declared.
+- **input_type**, **direction**: For DGX tables.
+- **packet**, **dgx_struct**, **stream_id**: DGX-only.
+
+### Creation from Qiskit
+
+- **ParameterTable.from_qiskit(qc, input_type=None, filter_function=None, name=None)**  
+  Builds a `ParameterTable` from a `QuantumCircuit`’s parameters (symbolic and/or classical). Optionally filter parameters and set `input_type` and table name. Returns `None` if no parameters.
+
+### Python-side
+
+- **push_to_opx(param_dict, job=None, qm=None, verbosity=1)**  
+  Pushes a dictionary of name → value (or Parameter → value) to the OPX. For DGX OUTGOING, all packet fields must be provided and one packet is sent.
+
+- **fetch_from_opx(job=None, fetching_index=0, fetching_size=1, verbosity=1, time_out=30)**  
+  Fetches from OPX and returns a dictionary name → value. For DGX INCOMING, reads packet(s) from OPNIC.
+
+---
+
+## QUAArray
+
+**QUAArray** extends **Parameter** to represent an **N-dimensional** logical array stored as one flat 1D QUA array. It supports arbitrary shapes, strides-based indexing, slicing (returning lists or sub-array views), and assignment of elements or full arrays.
+
+### Initialization
+
+```python
+QUAArray(
+    name: str,
+    shape_or_value: Union[Tuple[int, ...], List[Any], np.ndarray],
+    qua_type: Optional[Union[str, type]] = None,
+    input_type=None,
+    direction=None,
+    units: str = "",
+)
+```
+
+- **shape_or_value**:
+  - **Tuple of integers** (e.g. `(3, 4, 5)`): Interpreted as **shape**; backing 1D array is allocated with `prod(shape)` elements (initialized to 0).
+  - **List or ndarray**: Interpreted as **initial values**; shape is taken from the array’s shape and the flattened list is passed to the base `Parameter` as the initial value.
+
+- **qua_type**, **input_type**, **direction**, **units**: Same semantics as `Parameter`.
+
+Internally, the class computes strides from the shape so that a multi-index `(i, j, k, ...)` maps to flat index `sum(i * stride_i, ...)`.
+
+### Indexing and slicing
+
+- **arr[i, j, k, ...]**  
+  If the number of indices equals the number of dimensions, returns the **single QUA variable** at that element (using `_flat_index`).
+
+- **arr[i, ...]** (fewer indices than dimensions)  
+  Returns a **_QUAArrayView** on the remaining dimensions, so you can continue indexing: `arr[i][j, k]`, etc.
+
+- **arr[i, :, j]** (slices in any dimension)  
+  Slices are expanded in Python: the first slice is turned into a range, and the result is a **list** of variables or views (one per slice index). So `arr[i, :, j]` returns a list of elements for that row.
+
+### Assignment
+
+- **assign(value)**  
+  Single argument: assigns to the **whole** array (delegates to base `Parameter.assign` with the flattened value).
+
+- **assign(indices, val)** or **assign((i, j, ...), val)**  
+  Two arguments: assign **one element** at the given full index tuple. For partial indices (sub-array), use a view: `arr[i][j, k].assign(...)` or index then assign.
+
+### _QUAArrayView
+
+Slicing with fewer than N indices returns an **_QUAArrayView** that represents a sub-array:
+
+- **view[key]**  
+  Further indexing is forwarded to the parent with combined indices.
+
+- **view.assign(val)**  
+  Assigns to the view. Fully implemented for **1D views** (e.g. one row): `val` can be a list, numpy 1D array, or QUA array of the same length. Higher-dimensional view assignment may raise `NotImplementedError`.
+
+### Use in ParameterTable
+
+You can put `QUAArray` instances in a `ParameterTable` like any other `Parameter`. Declaration and streaming are inherited; indexing and assignment use the QUAArray API above.
+
+---
+
+## QUA2DArray
+
+**QUA2DArray** is a **Parameter** subclass that provides a **2D** view over one 1D QUA array of length `n_rows * n_cols`. It supports 2D indexing, row/column slicing, row-wise or element-wise assignment, and custom stream processing for 2D data.
+
+### Initialization
+
+```python
+QUA2DArray(
+    name: str,
+    n_rows_or_value: int | List[List[Number]] | np.ndarray,
+    n_cols: Optional[int] = None,
+    qua_type: Optional[Union[str, type]] = None,
+    input_type=None,
+    direction=None,
+    units: str = "",
+)
+```
+
+- **n_rows_or_value**:
+  - **int**: Number of rows; **n_cols** must be given. Backing array is `n_rows * n_cols` zeros.
+  - **2D list of lists** or **2D numpy array**: Shape is taken from the value; backing 1D array is the flattened matrix.
+
+- **n_cols**: Required when first argument is an integer (number of rows).
+
+### Indexing
+
+- **arr[i, j]**  
+  Returns the QUA variable at row `i`, column `j` (flat index `i * n_cols + j`).
+
+- **arr[i]**  
+  Returns a **_QUA2DRow** proxy so that **arr[i][j]** and **arr[i][slice]** work:
+  - **arr[i][j]** → same as **arr[i, j]**.
+  - **arr[i][:]** → list of QUA variables for row `i`.
+
+- **arr[i, :]**  
+  Row slice: list of variables for row `i` (length `n_cols`).
+
+- **arr[:, j]**  
+  Column slice: list of variables for column `j` (length `n_rows`).
+
+- **arr[:, :]**  
+  List of lists (all elements).
+
+- **arr[slice]** (e.g. `arr[1:3]`)  
+  Returns a list of `_QUA2DRow` objects for those row indices.
+
+### Assignment
+
+- **assign(row, col, val)**  
+  Assigns scalar **val** to element `(row, col)`.
+
+- **assign(row, sequence)**  
+  Assigns an **entire row**: **sequence** can be a Python list, 1D numpy array, or a QUA array variable of length `n_cols`. Row index is 0-based.
+
+Example:
+
+```python
+# One element
+arr.assign(0, 0, 1.0)
+# Full row from list
+arr.assign(0, [1.0, 0.0, 1.0, 0.0])
+# Full row from QUA array
+arr.assign(0, other_qua_array)
+```
+
+### _QUA2DRow
+
+- **row_view[j]** or **row_view[:]**  
+  Same as `parent[row, j]` or list for that row.
+
+- **row_view.assign(col_or_vals, val=None)**  
+  Delegates to the parent’s `assign(row, col_or_vals, val)`.
+
+### Stream processing
+
+- **stream_processing(mode="save" | "save_all", buffer=None)**  
+  For 2D arrays, default buffer is `(n_rows, n_cols)`. You can pass a custom buffer (e.g. `(k, n_cols)` for the last k rows). `save` / `save_all` control whether only the last row or all rows are saved.
+
+### Python-side
+
+- **push_to_opx(value, job, verbosity=1, time_out=30)**  
+  **value** must be a 2D array or list of lists of shape `(n_rows, n_cols)`; it is flattened and pushed via the base Parameter’s `push_to_opx`.
+
+---
+
+## InputType and Direction
+
+**InputType** (enum) controls how a parameter (or table) gets values from or sends values to the outside world:
+
+| Value            | Description |
+|------------------|-------------|
+| `INPUT_STREAM`   | QUA input stream; advance with `advance_input_stream`; push from Python via job API. |
+| `IO1` / `IO2`    | OPX physical IO channels; program pauses, reads value, assigns to variable; Python uses `set_io_values` when job is paused. |
+| `DGX_Q`          | DGX Quantum (OPNIC): external stream with a packet struct; direction is given by **Direction**. |
+
+**Direction** (enum, used with `InputType.DGX_Q`):
+
+| Value      | Meaning |
+|------------|---------|
+| `INCOMING` | OPX → DGX (OPX sends data to the server). |
+| `OUTGOING` | DGX → OPX (server sends parameters to the OPX). |
+| `BOTH`     | Bidirectional (separate streams for in/out). |
+
+For a **ParameterTable** with `InputType.DGX_Q`, every parameter must share the same **direction**.
+
+---
+
+## ParameterPool and DGX Quantum
+
+**ParameterPool** manages unique IDs for objects that need OPNIC stream IDs (e.g. DGX Quantum parameter tables and standalone DGX Quantum parameters). It also tracks which objects are registered and supports OPNIC wrapper patching and configuration.
+
+- **get_id(obj)**  
+  Returns a new unique ID and optionally registers `obj`.
+
+- **get_obj(id)**  
+  Returns the object registered for that ID.
+
+- **get_all_objs()**  
+  Returns all registered objects.
+
+- **initialize_streams()** / **close_streams()**  
+  Used for DGX Quantum: patch and configure OPNIC, then close when done.
+
+- **configured()** / **patched()**  
+  State flags for OPNIC.
+
+Typical DGX workflow:
+
+1. Define parameters/tables with `input_type=InputType.DGX_Q` and the correct **direction** (they register with the pool).
+2. Call **ParameterPool.initialize_streams()** before running the QUA program.
+3. In QUA: **declare_variables()**, **load_input_values()** (for OUTGOING tables), **stream_back()** (for INCOMING).
+4. From Python: **push_to_opx()** (OUTGOING) or **fetch_from_opx()** (INCOMING).
+5. When finished, **ParameterPool.close_streams()**.
+
+---
 
 ## Usage in QUA Programs
 
-The `Parameter` and `ParameterTable` classes provide methods (QUA macros) to interact with the parameters within a `with program():` block.
+1. **Declare**  
+   Call **ParameterTable.declare_variables()** (or **Parameter.declare_variable()** for standalone parameters) at the start of the program. Use **declare_streams=True** if you want to save results to streams.
 
-### Declaring Variables
+2. **Load input**  
+   Where the program should read new values, call **load_input_values()** on the table (or **load_input_value()** on a parameter). For DGX OUTGOING, this receives one packet.
 
-Variables must be declared before use.
+3. **Assign**  
+   Use **assign** / **assign_parameters** or **table[name] = value** to set variables inside the program. For **QUAArray** / **QUA2DArray**, use their indexing and **assign** methods.
 
-**For `ParameterTable`:**
-Use `declare_variables()` to declare all parameters in the table. This method should ideally be called at the beginning of the QUA program scope.
-*   `declare_variables(pause_program=False, declare_streams=True)`:
-    *   `pause_program`: If `True`, pauses the QUA program immediately after declaration.
-    *   `declare_streams`: If `True` (default), declares a standard QUA `stream` for each parameter for saving results.
-    *   **Returns:** A tuple of the declared QUA variables, or the declared QUA struct if it's a DGX table.
+4. **Stream back / save**  
+   Use **stream_back()** to send data to the client (and optionally reset). Use **save_to_stream()** and **stream_processing()** for standard QUA result streams.
 
-**For individual `Parameter`:**
-Use `declare_variable()`.
-*   `declare_variable(pause_program=False, declare_stream=True)`: Arguments and return value are similar to the table version, but for a single parameter.
+5. **Switch by index**  
+   Use **parameter.get_index(table)** or table’s **get_index(parameter)** to get the parameter index and drive **switch_** logic in QUA.
 
-### Assigning Values within QUA
+---
 
-You can change parameter values directly within the QUA program.
+## Python-Side Interaction
 
-**For `ParameterTable`:**
-Use `assign_parameters()` for multiple assignments or standard dictionary/attribute assignment for single parameters.
-*   `assign_parameters(values: Dict[Union[str, Parameter], ...])`: Assigns multiple values specified in the dictionary.
+- **push_to_opx**  
+  Parameter: `param.push_to_opx(value, job=..., qm=..., ...)`.  
+  Table: `table.push_to_opx({name: value, ...}, job=..., qm=..., ...)`.  
+  For DGX OUTGOING tables, the dict must contain all parameters of the packet.
 
-**For individual `Parameter`:**
-Use `assign_value()`.
-*   `assign_value(value, is_qua_array=False, condition=None, value_cond=None)`:
-    *   `value`: The new value (literal, QUA variable/expression, list, or QUA array).
-    *   `condition`: A QUA boolean expression. Assignment only happens if `True`.
-    *   `value_cond`: The value assigned if `condition` is `False`. Must be provided if `condition` is provided.
+- **fetch_from_opx**  
+  Parameter: `value = param.fetch_from_opx(job=..., fetching_index=..., fetching_size=..., ...)`.  
+  Table: `param_dict = table.fetch_from_opx(...)` returns `{parameter_name: value}`.  
+  **fetching_index** and **fetching_size** are used to navigate data saved with **save_all** in stream processing (e.g. iterative workloads); the user must track indices. DGX INCOMING reads one packet per call (or multiple if you use fetching_size and the OPNIC API accordingly).
 
-Note that if the provided value is a QUA Array, it is assumed that it has a length that is equal or higher than the current QUA array variable present in the `Parameter`. The assignment of the array is then done with a QUA `for_` loop that iterates over the length of the initial array length and assigns indices based on that. We hence strongly recommend to always use this array assignment with QUA arrays that strictly have the same length as the `Parameter.var` array variable.
+These calls must match the QUA side: each **load_input_value()** / **load_input_values()** is paired with a **push_to_opx** from Python, and each **stream_back()** / stream save is paired with **fetch_from_opx** or result processing on the Python side.
 
-### Loading Input Values from Python/External Sources
+---
 
-Use `load_input_values()` (for Table) or `load_input_value()` (for Parameter) to update parameters from their defined input source (`INPUT_STREAM`, `IO1`, `IO2`, `DGX_Q`).
-*   `load_input_values()` (Table): Calls `load_input_value()` for each parameter with an `input_type` (unless filtered). For DGX Q OUTGOING/ BOTH tables, receives the packet.
-*   `load_input_value()` (Parameter): Behavior depends on `Parameter.input_type`.
-
-### Streaming back QUA values to Python/External Sources
-
-Use `stream_back()` to make the parameter's current value available externally (via IO, DGX_Q, or standard QUA stream).
-*   `stream_back()` (Table/Parameter): Behavior depends on `Parameter.input_type`. For DGX_Q INCOMING tables, sends the packet.
-`stream_back` has an optional `reset` argument (defaulting to False) that can reset the associated QUA variable/packet to a 0 value in the relevant type of the QUA variable (e.g. 0 for int, 0. for fixed and False for bool).
-If input_type is `INPUT_STREAM`, `IO1`or `IO2`, we just use the stream processing, while `DGX_Q`sends the packet to the external stream.
-
-### Saving to QUA Streams
-
-Explicitly save parameter values to standard QUA streams for later retrieval using result analysis tools.
-*   `save_to_stream()` (Table/Parameter): Saves current value(s) to associated stream(s).
-*   `stream_processing()` (Table/Parameter): Defines how stream data is handled (e.g., `save`, `save_all`).
-
-### Accessing Parameters and Variables
-
-There are methods to access the underlying `Parameter` objects or their QUA variables. Each `Parameter` within a `ParameterTable` also holds an `index` attribute corresponding to its position in the table (starting from 0). This index is particularly useful within QUA for conditional logic, such as selecting which parameter to update using a `switch_` statement.
-*   `get_parameter(parameter: Union[str, int]) -> Parameter`: Returns the `Parameter` object by name or index.
-*   `parameter_table[key]` or `parameter_table.attribute`: Accesses the QUA variable directly within QUA (after declaration).
-*   `parameter.var`: Accesses the QUA variable of a `Parameter` object within QUA (after declaration).
-*   `parameter.index`: Returns the integer index of the `Parameter` within the `ParameterTable`. Useful for `switch_` statements in QUA.
-
-## Interaction from Python (Outside QUA)
-
-Use these methods in your Python script to interact with the running QUA program.
-
-### Pushing Values to OPX (`push_to_opx`)
-
-Send data *from* Python *to* the OPX, corresponding to a `load_input_value()` or `load_input_values()` call in QUA.
-*   `push_to_opx(value_or_dict, job, verbosity=1)`:
-    *   For `Parameter`: `value` is the value/sequence to send.
-    *   For `ParameterTable`: `param_dict` maps names to values. For DGX OUTGOING, *all* parameters must be in the dict.
-    *   `job`: The `RunningQmJob` object.
-
-### Fetching Values from OPX (`fetch_from_opx`)
-
-Retrieve data *from* the OPX *to* Python, corresponding to `stream_back()` (for IO/DGX_Q) or stream saving (INPUT_STREAM).
-*   `fetch_from_opx(job: Optional[RunningQmJob | JobApi] = None,
-        fetching_index: int = 0,
-        fetching_size: int = 1,
-        verbosity: int = 1,
-        time_out=30)`:
-    *   For `Parameter`: Fetches value based on `input_type`.
-    *   For `ParameterTable`: Fetches values based on `input_type`. 
-    * `fetching_size` and `fetching_index` can be used to navigate through the data saved in the stream processing with the `save_all` method to facilitate fetching of a particular slice of data. For iterative workloads, we currently require the user to keep track of the indices and fetching size based on the needs of the algorithm (currently no support for backwards navigation in the stream processing).
-    Warning: This behavior was not tested with DGX Quantum.
-    For DGX_Q INCOMING, reads one packet.
-    *   **Returns:** The fetched value/sequence (Parameter) or a dictionary (Table).
-
-
-## DGX Quantum Integration (`ParameterPool`)
-
-When using `InputType.DGX_Q`, the `Parameter` and `ParameterTable` classes interact with the `ParameterPool`. This pool manages unique stream IDs required for OPNIC communication and handles the necessary patching and configuration of the underlying `opnic_wrapper`.
-
-### Typical Workflow
-
-1.  **Define Parameters/Tables:** Create your `Parameter` or `ParameterTable` instances with `input_type=InputType.DGX_Q` and the correct `direction`. This automatically registers them with the `ParameterPool`.
-2.  **Initialize Streams:** Before running the QUA program, call `ParameterPool.initialize_streams()`. This patches the wrapper code and configures the OPNIC streams.
-3.  **Execute QUA Job:** Run the QUA program containing `declare_variables()`, `load_input_values()` (for OUTGOING tables), and `send_to_python()` (for INCOMING tables).
-4.  **Python Interaction:** Use `table.push_to_opx()` (OUTGOING) or `table.fetch_from_opx()` (INCOMING) in your Python script.
-5.  **Close Streams:** After interaction, call `ParameterPool.close_streams()`.
-
-These classes provide a structured and flexible way to handle dynamic parameters in QUA, streamlining the process of updating variables from Python and integrating external hardware like DGX. Remember to manage the lifecycle of DGX streams using DGXParameterPool when applicable.
+This submodule provides a structured way to handle scalar and array parameters, 1D/2D/N-D views, and external I/O (streams, IO, DGX) in QUA programs while keeping a clear contract between the QUA program and the Python client.
