@@ -831,7 +831,7 @@ class Parameter:
         :param time_out: Time in seconds to wait for the job to be paused before fetching data. Defaults to 30 seconds.
         :return: The fetched value depending upon the input type and fetching logic.
         """
-        if self.input_type == InputType.INPUT_STREAM:
+        if self.input_type == InputType.INPUT_STREAM or self.input_type is None:
             if job is None:
                 raise ValueError("Job object is required to fetch values from the result handles.")
             if verbosity > 1:

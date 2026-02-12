@@ -8,19 +8,17 @@ the backend picks up these calibrations and translates them to QUA.
 Requires Qiskit 1.x for full Qiskit Pulse support (DriveChannel, Schedule, etc.).
 """
 
-from qiskit.circuit import QuantumCircuit
+from qiskit.circuit import QuantumCircuit, Gate, Parameter
 from qiskit import transpile
+from qiskit_qm_provider import IQCCProvider
+backend = IQCCProvider().get_backend("qolab")
 
 # Assume backend is obtained from a provider and supports Pulse (e.g. FluxTunableTransmonBackend)
-# backend = provider.get_backend(...)
-
-# Optional: add standard macros if your Quam machine does not have them yet
-# from qiskit_qm_provider.backend.backend_utils import add_basic_macros
-# add_basic_macros(backend)
 
 # Build a circuit that uses a gate we will calibrate
 qc = QuantumCircuit(1)
-qc.x(0)  # We will attach a custom pulse schedule to "x" on qubit 0
+rx_gate = Gate("rx", 1, [Parameter("theta")])
+qc.append(rx_gate, [0])
 qc.measure_all()
 
 # Build a Qiskit Pulse Schedule for the "x" gate on qubit 0
@@ -32,12 +30,11 @@ try:
     duration = 64
     sigma = duration / 4
     amp = 0.5
-    x_schedule = Schedule()
-    x_schedule.append(
-        Play(Gaussian(duration, amp, sigma), DriveChannel(0)),
-        channel=DriveChannel(0),
+    rx_schedule = Schedule()
+    rx_schedule.append(
+        Play(Gaussian(duration, amp, sigma), DriveChannel(0))
     )
-    qc.add_calibration("x", (0,), x_schedule)
+    qc.add_calibration(rx_gate, (0,), rx_schedule)
 except ImportError:
     # Qiskit 2.x: Pulse is deprecated; use QMInstructionProperties for custom gates (see custom_gate.py)
     raise ImportError("This example requires Qiskit 1.x with Pulse support.")
