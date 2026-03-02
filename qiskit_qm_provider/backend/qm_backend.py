@@ -39,7 +39,6 @@ from qiskit.result.models import MeasLevel, MeasReturnType
 
 from qiskit.transpiler import Target, InstructionProperties, CouplingMap
 from qiskit.qasm3 import Exporter
-from qm.jobs.running_qm_job import RunningQmJob
 
 # QUA and Quam imports
 from qm import QuantumMachinesManager, DictQuaConfig, QuantumMachine

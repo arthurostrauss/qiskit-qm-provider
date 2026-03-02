@@ -113,6 +113,18 @@ def infer_type(value: Optional[Union[int, float, List, np.ndarray]] = None):
 
     raise ValueError("Value must be bool, int, float or array")
 
+def reset_var(var: QuaScalar, type: Union[str, type]):
+    """
+    Reset the QUA variable to a 0 value (in the appropriate QUA type).
+    """
+    if type == int:
+        assign(var, 0)
+    elif type == fixed:
+        assign(var, 0.0)
+    elif type == bool:
+        assign(var, False)
+    else:
+        raise ValueError("Invalid QUA type. Please use 'int', 'fixed' or 'bool'.")
 
 class Parameter:
     """
@@ -522,17 +534,12 @@ class Parameter:
         """Output stream associated with the parameter."""
         return self._stream
 
-    def save_to_stream(self):
+    def save_to_stream(self, reset: bool = False):
         """
         Save the QUA variable to the output stream.
 
         Args:
-            variable: Optional external QUA variable to save to the stream.
-            This is useful when the variable to be saved is not the one declared in the parameter but
-            that should be saved to the same stream (It can be used as a shortcut to assign the variable to
-            the parameter variable before saving).
-             The variable should be of the same type as the parameter's QUA variable and should be of the same length
-             if it is an array.
+            reset: Whether to reset the parameter to a 0 value (in the appropriate QUA type) after saving it to the stream.
         Raises:
             ValueError: If the output stream is not declared, or if the variable is not declared.
         """
@@ -540,8 +547,12 @@ class Parameter:
             if self.is_array:
                 with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
                     save(self.var[self._ctr], self.stream)
+                    if reset:
+                        reset_var(self.var[self._ctr], self.type)
             else:
                 save(self.var, self.stream)
+                if reset:
+                    reset_var(self.var, self.type)
         else:
             raise ValueError("Output stream or variable itself not declared.")
 
@@ -773,7 +784,7 @@ class Parameter:
             reset: Whether to reset the parameter to a 0 value (in the appropriate QUA type) after sending it to the client/server side.
         """
         if self.input_type in [InputType.INPUT_STREAM, None] and self.stream is not None:
-            self.save_to_stream()
+            self.save_to_stream(reset)
         elif self.input_type == InputType.DGX_Q:
             from qm.qua import send_to_external_stream
 
@@ -788,19 +799,23 @@ class Parameter:
                 raise ValueError("Cannot send value to outgoing stream.")
 
             send_to_external_stream(self._qua_external_stream_out, self._var)
+            self.reset_var()
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io = IO1 if self.input_type == InputType.IO1 else IO2
             if self.is_array:
-                for i in range(self.length):
+                i = self._ctr
+                with for_(i, 0, i < self.length, i + 1):
                     assign(io, self.var[i])
+                    if reset:
+                        reset_var(self.var[i], self.type)
                     pause()
                     
             else:
                 assign(io, self.var)
+                if reset:
+                    reset_var(self.var, self.type)
                 pause()
                 
-        if reset:
-            self.reset_var()
 
     def fetch_from_opx(
         self,
@@ -907,19 +922,9 @@ class Parameter:
         """
         if self.is_array:
             with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
-                if self.type == int:
-                    assign(self.var[self._ctr], 0)
-                elif self.type == fixed:
-                    assign(self.var[self._ctr], 0.0)
-                elif self.type == bool:
-                    assign(self.var[self._ctr], False)
+                reset_var(self.var[self._ctr], self.type)
         else:
-            if self.type == int:
-                assign(self.var, 0)
-            elif self.type == fixed:
-                assign(self.var, 0.0)
-            elif self.type == bool:
-                assign(self.var, False)
+            reset_var(self.var, self.type)
 
     def __deepcopy__(self, memodict=None):
         if memodict is None:
