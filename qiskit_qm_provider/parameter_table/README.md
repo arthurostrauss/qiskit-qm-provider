@@ -128,7 +128,7 @@ If `value` is a list or 1D numpy array, the parameter is an array of that length
 
 ## ParameterTable
 
-A **ParameterTable** groups multiple **Parameter** instances under one name and ensures they share the same **input_type** (and for DGX, the same **direction**). It is the main interface for declaring, assigning, loading, and streaming many parameters at once, and for DGX it defines a single OPNIC packet.
+A **ParameterTable** groups multiple **Parameter** instances under one name and ensures they share the same **input_type** (and for DGX Quantum, the same **direction**). It is the main interface for declaring, assigning, loading, and streaming many parameters at once, and for DGX Quantum it defines a single OPNIC packet.
 
 ### Initialization
 
@@ -184,11 +184,12 @@ When `input_type == InputType.DGX_Q`, the table builds a QUA struct (packet) who
 - **stream_back(reset=False)**  
   For each parameter (or for DGX INCOMING, sends the whole packet) streams values out; see Parameter’s `stream_back`. Optionally resets after send.
 
-- **save_to_stream()**  
-  Calls `save_to_stream()` on each parameter.
+- **save_to_stream(reset=False)**  
+  Calls `save_to_stream()` on each parameter. Optionally resets after saving.
 
 - **stream_processing(mode="save" | "save_all", buffering="default" | Dict)**  
-  Configures stream processing for all parameters; `buffering` can map parameter name/object to buffer size.
+  Configures stream processing for all parameters; `buffering` can map parameter name/object to buffer size. By default, 
+  buffering for each Parameter in the table will result in a buffering corresponding to the length of the QUA array (if Parameter refers to an array) or no buffering if single variable.
 
 ### Accessors
 
@@ -205,7 +206,7 @@ When `input_type == InputType.DGX_Q`, the table builds a QUA struct (packet) who
 ### Mutating the table (before declaration)
 
 - **add_parameters(Parameter \| List[Parameter])**  
-  Appends parameter(s); indices are assigned automatically. All must have the same `input_type` (and direction for DGX).
+  Appends parameter(s); indices are assigned automatically. All must have the same `input_type` (and direction for DGX Quantum).
 
 - **remove_parameter(name \| Parameter)**  
   Removes a parameter.

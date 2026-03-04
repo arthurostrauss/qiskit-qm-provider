@@ -5,7 +5,7 @@ description = "Provider for running Qiskit circuits and pulses on Quantum Machin
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
-    { name = "Arthur Strauss", email = "arthur.strauss@quantum-machines.co" }
+    { name = "Arthur Strauss", email = "arthur.strauss@u.nus.edu" }
 ]
 license = { text = "Apache License 2.0" }
 classifiers=[
