@@ -118,9 +118,9 @@ class QMBackend(Backend):
     def __init__(
         self,
         machine: Quam,
-        channel_mapping: Optional[Dict[QiskitChannel, QuAMChannel]] = None,
+        channel_mapping: Dict[QiskitChannel, QuAMChannel] | None = None,
         init_macro: Optional[Callable] = None,
-        qmm: Optional[QuantumMachinesManager] = None,
+        qmm: QuantumMachinesManager | CloudQuantumMachinesManager | None = None,
         name: Optional[str] = None,
         **fields,
     ):
@@ -156,10 +156,10 @@ class QMBackend(Backend):
         self.machine = validate_machine(machine)
         self._qmm: Optional[QuantumMachinesManager] = qmm
         self._qm: Optional[QuantumMachine] = None
-        self.channel_mapping: Dict[QiskitChannel, QuAMChannel] = channel_mapping
-        self.reverse_channel_mapping: Dict[QuAMChannel, QiskitChannel] = (
-            {v: k for k, v in channel_mapping.items()} if channel_mapping is not None else {}
-        )
+        self.channel_mapping: Dict[QiskitChannel, QuAMChannel] = channel_mapping or {}
+        self.reverse_channel_mapping: Dict[QuAMChannel, QiskitChannel] = {
+            v: k for k, v in self.channel_mapping.items()
+        }
         self._qubit_dict = {qubit.name: i for i, qubit in enumerate(machine.active_qubits)}
         self._qubit_pair_dict = {
             qubit_pair.name: (
@@ -227,7 +227,7 @@ class QMBackend(Backend):
         return self._target
 
     @property
-    def custom_instructions(self):
+    def custom_instructions(self) -> Dict[str, Instruction]:
         """
         Get the custom instructions for the backend (those that are part of the target but not in the
         standard Qiskit gate set, inferred from the available macros)
@@ -235,14 +235,14 @@ class QMBackend(Backend):
         return self._custom_instructions
 
     @property
-    def qubit_dict(self):
+    def qubit_dict(self) -> Dict[str, int]:
         """
         Get the qubit dictionary for the backend
         """
         return self._qubit_dict
 
     @property
-    def qubit_pair_dict(self):
+    def qubit_pair_dict(self) -> Dict[str, Tuple[int, int]]:
         """
         Get the qubit pair dictionary for the backend
         """
@@ -320,7 +320,7 @@ class QMBackend(Backend):
         return {i: qubit for i, qubit in enumerate(self.machine.active_qubits)}
 
     @property
-    def qmm(self) -> Union[QuantumMachinesManager, CloudQuantumMachinesManager, IQCC_Cloud]:
+    def qmm(self) -> QuantumMachinesManager | CloudQuantumMachinesManager:
         """
         Returns the QuantumMachinesManager instance. This is a property that reopens a QuantumMachinesManager each time
         it is called for the underlying configuration might have changed between two calls
@@ -330,7 +330,7 @@ class QMBackend(Backend):
         return self._qmm
 
     @qmm.setter
-    def qmm(self, qmm: Union[QuantumMachinesManager, CloudQuantumMachinesManager]):
+    def qmm(self, qmm: QuantumMachinesManager | CloudQuantumMachinesManager):
         """
         Set the QuantumMachinesManager instance. This is a property that reopens a QuantumMachinesManager each time
         it is called for the underlying configuration might have changed between two calls
@@ -338,21 +338,13 @@ class QMBackend(Backend):
         self._qmm = qmm
 
     @property
-    def qm(self) -> Union[QuantumMachine, CloudQuantumMachine, IQCC_Cloud]:
+    def qm(self) -> QuantumMachine | CloudQuantumMachine:
         """
         Returns the QuantumMachine instance. This is a property that reopens a QuantumMachine each time
         it is called for the underlying configuration might have changed between two calls
         """
-        try:
-            from iqcc_cloud_client.qmm_cloud import CloudQuantumMachinesManager
-        except ImportError:
-            CloudQuantumMachinesManager = None
         if self._qm is None:
-            if isinstance(self.qmm, (QuantumMachinesManager, CloudQuantumMachinesManager)):
-                self._qm = self.qmm.open_qm(self.qm_config, close_other_machines=True)
-            else:
-                self._qm = self.qmm
-
+            self._qm = self.qmm.open_qm(self.qm_config, close_other_machines=True)
         return self._qm
 
     def close_all_qms(self):
