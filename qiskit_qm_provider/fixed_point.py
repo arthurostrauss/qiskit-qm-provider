@@ -42,8 +42,14 @@ class FixedPoint:
         elif isinstance(other, int):
             result = self.value + (other << self.fractional_bits)
         else:
-            raise TypeError("Unsupported operand type(s) for +: 'FixedPoint' and '{}'".format(type(other).__name__))
-        return FixedPoint(self._saturate(result) / self.scale, self.fractional_bits, self.bit_width)
+            raise TypeError(
+                "Unsupported operand type(s) for +: 'FixedPoint' and '{}'".format(
+                    type(other).__name__
+                )
+            )
+        return FixedPoint(
+            self._saturate(result) / self.scale, self.fractional_bits, self.bit_width
+        )
 
     def __sub__(self, other):
         if isinstance(other, FixedPoint):
@@ -51,8 +57,14 @@ class FixedPoint:
         elif isinstance(other, int):
             result = self.value - (other << self.fractional_bits)
         else:
-            raise TypeError("Unsupported operand type(s) for -: 'FixedPoint' and '{}'".format(type(other).__name__))
-        return FixedPoint(self._saturate(result) / self.scale, self.fractional_bits, self.bit_width)
+            raise TypeError(
+                "Unsupported operand type(s) for -: 'FixedPoint' and '{}'".format(
+                    type(other).__name__
+                )
+            )
+        return FixedPoint(
+            self._saturate(result) / self.scale, self.fractional_bits, self.bit_width
+        )
 
     def __mul__(self, other):
         if isinstance(other, FixedPoint):
@@ -60,8 +72,14 @@ class FixedPoint:
         elif isinstance(other, int):
             result = self.value * other
         else:
-            raise TypeError("Unsupported operand type(s) for *: 'FixedPoint' and '{}'".format(type(other).__name__))
-        return FixedPoint(self._saturate(result) / self.scale, self.fractional_bits, self.bit_width)
+            raise TypeError(
+                "Unsupported operand type(s) for *: 'FixedPoint' and '{}'".format(
+                    type(other).__name__
+                )
+            )
+        return FixedPoint(
+            self._saturate(result) / self.scale, self.fractional_bits, self.bit_width
+        )
 
     def __truediv__(self, other):
         if isinstance(other, FixedPoint):
@@ -69,16 +87,26 @@ class FixedPoint:
         elif isinstance(other, int):
             result = self.value // other
         else:
-            raise TypeError("Unsupported operand type(s) for /: 'FixedPoint' and '{}'".format(type(other).__name__))
-        return FixedPoint(self._saturate(result) / self.scale, self.fractional_bits, self.bit_width)
+            raise TypeError(
+                "Unsupported operand type(s) for /: 'FixedPoint' and '{}'".format(
+                    type(other).__name__
+                )
+            )
+        return FixedPoint(
+            self._saturate(result) / self.scale, self.fractional_bits, self.bit_width
+        )
 
     def __lshift__(self, other):
         result = self.value << other
-        return FixedPoint(self._saturate(result) / self.scale, self.fractional_bits, self.bit_width)
+        return FixedPoint(
+            self._saturate(result) / self.scale, self.fractional_bits, self.bit_width
+        )
 
     def __rshift__(self, other):
         result = self.value >> other
-        return FixedPoint(self._saturate(result) / self.scale, self.fractional_bits, self.bit_width)
+        return FixedPoint(
+            self._saturate(result) / self.scale, self.fractional_bits, self.bit_width
+        )
 
     def __and__(self, other):
         if isinstance(other, FixedPoint):
@@ -86,7 +114,11 @@ class FixedPoint:
         elif isinstance(other, int):
             result = self.value & other
         else:
-            raise TypeError("Unsupported operand type(s) for &: 'FixedPoint' and '{}'".format(type(other).__name__))
+            raise TypeError(
+                "Unsupported operand type(s) for &: 'FixedPoint' and '{}'".format(
+                    type(other).__name__
+                )
+            )
         return FixedPoint(result / self.scale, self.fractional_bits, self.bit_width)
 
     def __or__(self, other):
@@ -95,7 +127,11 @@ class FixedPoint:
         elif isinstance(other, int):
             result = self.value | other
         else:
-            raise TypeError("Unsupported operand type(s) for |: 'FixedPoint' and '{}'".format(type(other).__name__))
+            raise TypeError(
+                "Unsupported operand type(s) for |: 'FixedPoint' and '{}'".format(
+                    type(other).__name__
+                )
+            )
         return FixedPoint(result / self.scale, self.fractional_bits, self.bit_width)
 
     def __repr__(self):

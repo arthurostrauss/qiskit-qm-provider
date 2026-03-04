@@ -19,11 +19,25 @@ backend = iqcc_provider.get_backend(backend_name)
 try:
     from qiskit_experiments.library import T1
 except ImportError as e:
-    raise ImportError("This example requires qiskit-experiments: pip install qiskit-experiments") from e
+    raise ImportError(
+        "This example requires qiskit-experiments: pip install qiskit-experiments"
+    ) from e
 
 # Physical qubit(s) to characterize and delay range (seconds)
 physical_qubits = (0,)
-delays = [5e-6, 10e-6, 20e-6, 30e-6, 40e-6, 50e-6, 60e-6, 70e-6, 80e-6, 90e-6, 100e-6]  # Example range; adjust to your backend (min 3 points)
+delays = [
+    5e-6,
+    10e-6,
+    20e-6,
+    30e-6,
+    40e-6,
+    50e-6,
+    60e-6,
+    70e-6,
+    80e-6,
+    90e-6,
+    100e-6,
+]  # Example range; adjust to your backend (min 3 points)
 
 t1_exp = T1(physical_qubits=physical_qubits, backend=backend, delays=delays)
 

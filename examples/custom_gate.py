@@ -15,10 +15,13 @@ backend = provider.get_backend()
 
 # 2. Define an opaque parametric two-qubit gate at the circuit level
 theta = QiskitParameter("theta")  # Use ASCII names
-cx_cal = Gate("cx_cal", num_qubits=2, params=[theta])  # No logical definition: opaque gate
+cx_cal = Gate(
+    "cx_cal", num_qubits=2, params=[theta]
+)  # No logical definition: opaque gate
 
 # (Optional) You may instead provide a logical definition for cx_cal so that the
 # transpiler can optimize it; see the Qiskit backend transpiler interface docs.
+
 
 # 3. Define the corresponding QUA macro
 def qua_macro(theta_val):
@@ -26,8 +29,11 @@ def qua_macro(theta_val):
     qubit_pair = backend.get_qubit_pair((0, 1))
     qubit_pair.apply("cz", amplitude_scale=theta_val)
 
+
 # 4. Register the new instruction in the backend Target
-duration = backend.target["cx"][(0, 1)].duration  # Reuse existing CX duration as template
+duration = backend.target["cx"][
+    (0, 1)
+].duration  # Reuse existing CX duration as template
 properties = {
     (0, 1): QMInstructionProperties(
         duration=duration,

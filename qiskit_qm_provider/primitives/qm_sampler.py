@@ -44,7 +44,10 @@ meas_level_dict = {
     "kerneled": MeasLevel.KERNELED,
     "avg_kerneled": MeasLevel.KERNELED,
 }
-meas_return_type_dict = {"kerneled": MeasReturnType.SINGLE, "avg_kerneled": MeasReturnType.AVERAGE}
+meas_return_type_dict = {
+    "kerneled": MeasReturnType.SINGLE,
+    "avg_kerneled": MeasReturnType.AVERAGE,
+}
 
 
 @dataclass
@@ -75,17 +78,27 @@ class QMSamplerOptions:
         if isinstance(self.input_type, str):
             self.input_type = InputType(self.input_type)
         if self.input_type is not None and not isinstance(self.input_type, InputType):
-            raise TypeError(f"input_type must be of type InputType, got {type(self.input_type)}")
+            raise TypeError(
+                f"input_type must be of type InputType, got {type(self.input_type)}"
+            )
         if self.run_options is not None and not isinstance(self.run_options, dict):
-            raise TypeError(f"run_options must be a dictionary, got {type(self.run_options)}")
+            raise TypeError(
+                f"run_options must be a dictionary, got {type(self.run_options)}"
+            )
 
 
 class QMSamplerV2(BaseSamplerV2):
     """QM Sampler class."""
 
-    def __init__(self, backend: QMBackend, options: QMSamplerOptions | dict | None = None):
+    def __init__(
+        self, backend: QMBackend, options: QMSamplerOptions | dict | None = None
+    ):
         self._backend = backend
-        self._options = QMSamplerOptions(**options) if isinstance(options, dict) else options or QMSamplerOptions()
+        self._options = (
+            QMSamplerOptions(**options)
+            if isinstance(options, dict)
+            else options or QMSamplerOptions()
+        )
 
     @property
     def options(self) -> QMSamplerOptions:
@@ -97,21 +110,31 @@ class QMSamplerV2(BaseSamplerV2):
         """Return the backend"""
         return self._backend
 
-    def run(self, pubs: Iterable[SamplerPubLike], *, shots: int | None = None) -> QMSamplerJob:
+    def run(
+        self, pubs: Iterable[SamplerPubLike], *, shots: int | None = None
+    ) -> QMSamplerJob:
         if shots is None:
             shots = self._options.default_shots
         coerced_pubs = [SamplerPub.coerce(pub, shots) for pub in pubs]
         coerced_pubs = self._validate_pubs(coerced_pubs)
-        job_obj = QMSamplerJob if isinstance(self.backend.qmm, QuantumMachinesManager) else IQCCSamplerJob
+        job_obj = (
+            QMSamplerJob
+            if isinstance(self.backend.qmm, QuantumMachinesManager)
+            else IQCCSamplerJob
+        )
         backend_options = deepcopy(self.backend.options.__dict__)
 
         backend_options["meas_level"] = meas_level_dict[self._options.meas_level]
-        backend_options["meas_return_type"] = meas_return_type_dict.get(self._options.meas_level, MeasReturnType.SINGLE)
+        backend_options["meas_return_type"] = meas_return_type_dict.get(
+            self._options.meas_level, MeasReturnType.SINGLE
+        )
         backend_options["shots"] = shots
         backend_options.update(self._options.run_options or {})
         # Update Target of backend if needed
         self.backend.update_target(self.options.input_type)
-        job = job_obj(self.backend, coerced_pubs, self.options.input_type, **backend_options)
+        job = job_obj(
+            self.backend, coerced_pubs, self.options.input_type, **backend_options
+        )
         job.submit()
         return job
 

@@ -92,12 +92,10 @@ class QMSaveOpenQASM3Serializer(OpenQASM3Serializer):
         tag = annotation.tag
         # Build a compact representation
         # example: qm.save:{"m":"register","ls":["creg"],"t":"shot"}
-        esc = lambda s: s.replace("\\", "\\\\").replace("\"", "\\\"")
-        labels_part = ",".join(f"\"{esc(x)}\"" for x in labels)
-        tag_part = f"\"{esc(tag)}\"" if tag is not None else "null"
-        payload = (
-            f'{annotation.namespace}:{{"m":"{esc(mode)}","ls":[{labels_part}],"t":{tag_part}}}'
-        )
+        esc = lambda s: s.replace("\\", "\\\\").replace('"', '\\"')
+        labels_part = ",".join(f'"{esc(x)}"' for x in labels)
+        tag_part = f'"{esc(tag)}"' if tag is not None else "null"
+        payload = f'{annotation.namespace}:{{"m":"{esc(mode)}","ls":[{labels_part}],"t":{tag_part}}}'
         return payload
 
     def load(self, namespace: str, payload: str):
@@ -109,7 +107,7 @@ class QMSaveOpenQASM3Serializer(OpenQASM3Serializer):
         try:
             right = payload
             if right.startswith("qm.save:"):
-                right = right[len("qm.save:"):]
+                right = right[len("qm.save:") :]
             # Simple hand-rolled parse for the limited schema
             # Format: {"m":"<mode>","ls":["a","b"],"t":null|"..."}
             # We'll use json if available; fall back to eval-safe literal.

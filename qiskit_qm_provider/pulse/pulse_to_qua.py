@@ -65,7 +65,9 @@ def frame_rotation_matrix(angle, amp=1.0):
 
 
 def get_amp_matrix(amp=None, angle=None):
-    new_ref = 1.0 / _ref_amp  # Recover the reference amplitude from the reference value of 0.1
+    new_ref = (
+        1.0 / _ref_amp
+    )  # Recover the reference amplitude from the reference value of 0.1
     if amp is not None and angle is not None:
         amp_matrix = qua_amp(*frame_rotation_matrix(angle, amp * new_ref))
     elif amp is not None:
@@ -164,7 +166,9 @@ class QuaShiftFrequencyMacro(QuaPulseMacro):
         """
 
         def shift_frequency_macro(frequency: ScalarFloat):
-            self.channel.update_frequency(frequency + self.channel.intermediate_frequency)
+            self.channel.update_frequency(
+                frequency + self.channel.intermediate_frequency
+            )
 
         return shift_frequency_macro
 

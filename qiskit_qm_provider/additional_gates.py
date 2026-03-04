@@ -20,7 +20,9 @@ Date: 2026-02-08
 
 from qiskit.circuit import QuantumCircuit, Gate
 import numpy as np
-from qiskit.circuit.library.standard_gates import get_standard_gate_name_mapping as gate_map
+from qiskit.circuit.library.standard_gates import (
+    get_standard_gate_name_mapping as gate_map,
+)
 
 __all__ = [
     "SYGate",

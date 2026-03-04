@@ -36,12 +36,16 @@ Pub = Union[SamplerPub, EstimatorPub]
 class QMPrimitiveJob(BasePrimitiveJob, ABC):
     """QM Primitive Job class for executing QUA programs from PUBs."""
 
-    def __init__(self, backend: QMBackend, pubs: List[Pub], input_type: InputType, **kwargs):
+    def __init__(
+        self, backend: QMBackend, pubs: List[Pub], input_type: InputType, **kwargs
+    ):
         super().__init__(job_id="pending", **kwargs)
         self._backend = backend
         self._pubs = pubs
         self._input_type = input_type
-        self._qm_job: Optional[Union[RunningQmJob, QmPendingJob, List[QmPendingJob]]] = None
+        self._qm_job: Optional[
+            Union[RunningQmJob, QmPendingJob, List[QmPendingJob]]
+        ] = None
         self._program = None
 
     def status(self) -> JobStatus:
@@ -96,11 +100,13 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         """
 
         return {
-            "pubs": [(pub.circuit, pub.parameter_values, pub.shots) for pub in self._pubs],
+            "pubs": [
+                (pub.circuit, pub.parameter_values, pub.shots) for pub in self._pubs
+            ],
             "input_type": self._input_type,
             "metadata": self.metadata,
         }
-    
+
     @property
     def program(self) -> Optional[Program]:
         """Return the QUA program."""

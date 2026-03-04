@@ -32,5 +32,7 @@ transpiled_circuits = transpile(qc, backend, initial_layout=[0])
 sampler = QMSamplerV2(backend, options=QMSamplerOptions(input_type=None))
 job = sampler.run([(transpiled_circuits,)])
 result = job.result()
-counts = result[0].data.meas.get_counts()  # meas is the name of the DataBin (classical register associated with the measurement)
+counts = result[
+    0
+].data.meas.get_counts()  # meas is the name of the DataBin (classical register associated with the measurement)
 print(counts)

@@ -25,10 +25,16 @@ from .qm_backend import QMBackend, requires_qiskit_pulse
 from typing import Iterable, Optional, List, Union, TYPE_CHECKING, Tuple
 
 if TYPE_CHECKING:
-    from oqc import QubitsMapping
-    from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import FluxTunableQuam as Quam
-    from quam_builder.architecture.superconducting.qubit.flux_tunable_transmon import FluxTunableTransmon as Transmon
-    from quam_builder.architecture.superconducting.qubit_pair.flux_tunable_transmon_pair import FluxTunableTransmonPair as TransmonPair
+    from qm_qasm import QubitsMapping
+    from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import (
+        FluxTunableQuam as Quam,
+    )
+    from quam_builder.architecture.superconducting.qubit.flux_tunable_transmon import (
+        FluxTunableTransmon as Transmon,
+    )
+    from quam_builder.architecture.superconducting.qubit_pair.flux_tunable_transmon_pair import (
+        FluxTunableTransmonPair as TransmonPair,
+    )
     from qm import QuantumMachinesManager
     from qiskit.pulse import ControlChannel
 
@@ -52,20 +58,30 @@ class FluxTunableTransmonBackend(QMBackend):
 
         """
         if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
-            raise ValueError("Invalid QuAM instance provided, should have qubits and qubit_pairs attributes")
+            raise ValueError(
+                "Invalid QuAM instance provided, should have qubits and qubit_pairs attributes"
+            )
         try:
             from qiskit.pulse import DriveChannel, MeasureChannel, ControlChannel
-            from ..pulse.quam_qiskit_pulse import FluxChannel
 
-            drive_channel_mapping = {DriveChannel(i): qubit.xy for i, qubit in enumerate(machine.active_qubits)}
-            flux_channel_mapping = {ControlChannel(i): qubit.z for i, qubit in enumerate(machine.active_qubits)}
+            drive_channel_mapping = {
+                DriveChannel(i): qubit.xy
+                for i, qubit in enumerate(machine.active_qubits)
+            }
+            flux_channel_mapping = {
+                ControlChannel(i): qubit.z
+                for i, qubit in enumerate(machine.active_qubits)
+            }
             readout_channel_mapping = {
-                MeasureChannel(i): qubit.resonator for i, qubit in enumerate(machine.active_qubits)
+                MeasureChannel(i): qubit.resonator
+                for i, qubit in enumerate(machine.active_qubits)
             }
             control_channel_mapping = {
-                ControlChannel(i+len(machine.active_qubits)): qubit_pair.coupler for i, qubit_pair in enumerate(machine.active_qubit_pairs) if qubit_pair.coupler is not None
+                ControlChannel(i + len(machine.active_qubits)): qubit_pair.coupler
+                for i, qubit_pair in enumerate(machine.active_qubit_pairs)
+                if qubit_pair.coupler is not None
             }
-            
+
             channel_mapping = {
                 **drive_channel_mapping,
                 **flux_channel_mapping,
@@ -73,7 +89,9 @@ class FluxTunableTransmonBackend(QMBackend):
                 **readout_channel_mapping,
             }
         except ImportError:
-            warnings.warn("qiskit.pulse is not available, channel mapping will not be set.")
+            warnings.warn(
+                "qiskit.pulse is not available, channel mapping will not be set."
+            )
             channel_mapping = {}
         super().__init__(
             machine,
@@ -90,7 +108,8 @@ class FluxTunableTransmonBackend(QMBackend):
         Retrieve the qubit to quantum elements mapping for the backend.
         """
         return {
-            i: (qubit.xy.name, qubit.z.name, qubit.resonator.name) for i, qubit in enumerate(self.machine.active_qubits)
+            i: (qubit.xy.name, qubit.z.name, qubit.resonator.name)
+            for i, qubit in enumerate(self.machine.active_qubits)
         }
 
     @property
@@ -99,18 +118,6 @@ class FluxTunableTransmonBackend(QMBackend):
         Retrieve the measurement map for the backend.
         """
         return [[i] for i in range(len(self.machine.active_qubits))]
-
-    @requires_qiskit_pulse
-    def flux_channel(self, qubit: int):
-        """
-        Retrieve the flux channel for the given qubit.
-        """
-        try:
-            from .quam_qiskit_pulse import FluxChannel
-
-            return FluxChannel(qubit)
-        except ImportError:
-            raise ImportError("Qiskit Pulse is not available, cannot retrieve flux channel.")
 
     @requires_qiskit_pulse
     def control_channel(self, qubits: Iterable[int]) -> List[ControlChannel]:
@@ -133,19 +140,21 @@ class FluxTunableTransmonBackend(QMBackend):
         """
         qubits = tuple(qubits)
         if len(qubits) > 2 or len(qubits) < 1:
-            raise ValueError("Control channel should be defined for a qubit pair or a single qubit.")
+            raise ValueError(
+                "Control channel should be defined for a qubit pair or a single qubit."
+            )
         if len(qubits) == 2:
             qubit_pair = self.get_qubit_pair(qubits)
             if qubit_pair.coupler is not None:
                 return [self.get_pulse_channel(qubit_pair.coupler)]
             else:
-                return [] # no control channel for the qubit pair
+                return []  # no control channel for the qubit pair
         elif len(qubits) == 1:
             qubit = self.get_qubit(qubits[0])
             if qubit.z is not None:
                 return [self.get_pulse_channel(qubit.z)]
             else:
-                return [] # no control channel for the qubit
+                return []  # no control channel for the qubit
 
     @property
     def qubits(self) -> List[Transmon]:
@@ -165,7 +174,9 @@ class FluxTunableTransmonBackend(QMBackend):
         """
         return super().get_qubit(qubit)
 
-    def get_qubit_pair(self, qubits: Tuple[int | str | Transmon, int | str | Transmon]) -> TransmonPair:
+    def get_qubit_pair(
+        self, qubits: Tuple[int | str | Transmon, int | str | Transmon]
+    ) -> TransmonPair:
         """
         Retrieve a Transmon pair by its indices or names.
 

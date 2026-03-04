@@ -37,14 +37,18 @@ class QMInstructionProperties(InstructionProperties):
                 else:
                     pulse = qua_pulse_macro.pulse
                 duration = pulse.length * 1e-9  # Convert to seconds
-        if error is None and hasattr(qua_pulse_macro, "fidelity") and isinstance(qua_pulse_macro.fidelity, float):
+        if (
+            error is None
+            and hasattr(qua_pulse_macro, "fidelity")
+            and isinstance(qua_pulse_macro.fidelity, float)
+        ):
             error = 1 - qua_pulse_macro.fidelity
         if duration == "#./inferred_duration":
             try:
                 duration = qua_pulse_macro.inferred_duration
             except ValueError:
                 duration = None
-                
+
         self = super().__new__(cls, duration=duration, error=error, *args, **kwargs)
         self._qua_pulse_macro = qua_pulse_macro
         return self
@@ -59,7 +63,11 @@ class QMInstructionProperties(InstructionProperties):
 
     @property
     def qua_pulse_macro(self) -> Callable | None:
-        return self._qua_pulse_macro.apply if isinstance(self._qua_pulse_macro, QuamMacro) else self._qua_pulse_macro
+        return (
+            self._qua_pulse_macro.apply
+            if isinstance(self._qua_pulse_macro, QuamMacro)
+            else self._qua_pulse_macro
+        )
 
     @qua_pulse_macro.setter
     def qua_pulse_macro(self, value: Callable | QuamMacro | None):
@@ -67,7 +75,11 @@ class QMInstructionProperties(InstructionProperties):
 
     @property
     def quam_macro(self) -> QuamMacro | None:
-        return self._qua_pulse_macro if isinstance(self._qua_pulse_macro, QuamMacro) else None
+        return (
+            self._qua_pulse_macro
+            if isinstance(self._qua_pulse_macro, QuamMacro)
+            else None
+        )
 
     @quam_macro.setter
     def quam_macro(self, value: QuamMacro | None):

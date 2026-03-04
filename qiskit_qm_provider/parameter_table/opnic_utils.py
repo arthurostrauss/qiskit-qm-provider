@@ -49,11 +49,13 @@ def make_cpp_packet_definition(
     """Constructs the C++ code defining the QM packet structure."""
     packet_definition = f"struct Internal{direction}Packet {{ "
 
-    parameters = param_table.parameters if isinstance(param_table, ParameterTable) else [param_table]
+    parameters = (
+        param_table.parameters
+        if isinstance(param_table, ParameterTable)
+        else [param_table]
+    )
     for i, parameter in enumerate(parameters):
-        packet_definition += (
-            f"qm::Value<{get_cpp_type(parameter)}, {parameter.length if parameter.is_array else 1}> {parameter.name}; "
-        )
+        packet_definition += f"qm::Value<{get_cpp_type(parameter)}, {parameter.length if parameter.is_array else 1}> {parameter.name}; "
 
     packet_definition += f"QM_DECLARE_PACKET(Internal{direction}Packet, "
     for i, parameter in enumerate(parameters):
@@ -73,9 +75,15 @@ def make_i_packet_definition(
     struct_name = f"{direction}Packet"
     packet_definition = f"extern struct {struct_name} " + "{ "
 
-    parameters = param_table.parameters if isinstance(param_table, ParameterTable) else [param_table]
+    parameters = (
+        param_table.parameters
+        if isinstance(param_table, ParameterTable)
+        else [param_table]
+    )
     for parameter in parameters:
-        packet_definition += f"std::vector<{get_cpp_type(parameter)}> {parameter.name}; "
+        packet_definition += (
+            f"std::vector<{get_cpp_type(parameter)}> {parameter.name}; "
+        )
 
     if direction == "Incoming":
         # Add default constructor signature
@@ -87,16 +95,16 @@ def make_i_packet_definition(
         for i, parameter in enumerate(parameters):
             if parameter.is_array:
                 for j in range(parameter.length):
-                    packet_definition += f"{get_cpp_type(parameter)} _{parameter.name}_{j}"
+                    packet_definition += (
+                        f"{get_cpp_type(parameter)} _{parameter.name}_{j}"
+                    )
                     if not (i == len(parameters) - 1 and j == parameter.length - 1):
                         packet_definition += ", "
             else:
                 packet_definition += f"{get_cpp_type(parameter)} _{parameter.name}"
                 if i != len(parameters) - 1:
                     packet_definition += ", "
-            packet_definition += (
-                f"{get_cpp_type(parameter)} _{parameter.name}[{parameter.length if parameter.is_array else 1}]"
-            )
+            packet_definition += f"{get_cpp_type(parameter)} _{parameter.name}[{parameter.length if parameter.is_array else 1}]"
             if i != len(parameters) - 1:
                 packet_definition += ", "
         packet_definition += "); "
@@ -114,9 +122,15 @@ def make_h_packet_definition(
     struct_name = f"{direction}Packet"
     packet_definition = f"struct {struct_name} " + "{ "
 
-    parameters = param_table.parameters if isinstance(param_table, ParameterTable) else [param_table]
+    parameters = (
+        param_table.parameters
+        if isinstance(param_table, ParameterTable)
+        else [param_table]
+    )
     for parameter in parameters:
-        packet_definition += f"std::vector<{get_cpp_type(parameter)}> {parameter.name}{{}}; "
+        packet_definition += (
+            f"std::vector<{get_cpp_type(parameter)}> {parameter.name}{{}}; "
+        )
 
     if direction == "Incoming":
         pass
@@ -125,7 +139,9 @@ def make_h_packet_definition(
         for i, parameter in enumerate(parameters):
             if parameter.is_array:
                 for j in range(parameter.length):
-                    packet_definition += f"{get_cpp_type(parameter)} _{parameter.name}_{j}"
+                    packet_definition += (
+                        f"{get_cpp_type(parameter)} _{parameter.name}_{j}"
+                    )
                     if not (i == len(parameters) - 1 and j == parameter.length - 1):
                         packet_definition += ", "
             else:
@@ -138,7 +154,9 @@ def make_h_packet_definition(
         for i, parameter in enumerate(parameters):
             if parameter.is_array:
                 for j in range(parameter.length):
-                    packet_definition += f"{parameter.name}.push_back(_{parameter.name}_{j}); "
+                    packet_definition += (
+                        f"{parameter.name}.push_back(_{parameter.name}_{j}); "
+                    )
             else:
                 packet_definition += f"{parameter.name}.push_back(_{parameter.name}); "
 
@@ -152,7 +170,11 @@ def make_h_packet_definition(
 def make_outgoing_packet_typecast(param_table: Union[ParameterTable, Parameter]) -> str:
     """const InternalOutgoingPacket out_packet{qm::Value<double, 10>(packet.data)};"""
     definition = "const InternalOutgoingPacket out_packet{ "
-    parameters = param_table.parameters if isinstance(param_table, ParameterTable) else [param_table]
+    parameters = (
+        param_table.parameters
+        if isinstance(param_table, ParameterTable)
+        else [param_table]
+    )
 
     for i, parameter in enumerate(parameters):
         definition += f"qm::Value<{get_cpp_type(parameter)},{parameter.length if parameter.is_array else 1}>(packet.{parameter.name})"
@@ -174,7 +196,11 @@ def make_ingoing_packet_typecast(param_table: Union[ParameterTable, Parameter]) 
     """
 
     definition = "IncomingPacket result; "
-    parameters = param_table.parameters if isinstance(param_table, ParameterTable) else [param_table]
+    parameters = (
+        param_table.parameters
+        if isinstance(param_table, ParameterTable)
+        else [param_table]
+    )
 
     for parameter in parameters:
         definition += f"for (int i = 0; i < {parameter.length if parameter.is_array else 1}; ++i) incoming_packet.{parameter.name}.push_back(packet.{parameter.name}[i]);"
@@ -209,7 +235,9 @@ def patch_opnic_wrapper(
 ) -> None:
     """Modifies the source code of the OPNIC wrapper, appending new definitions only if they are not already present."""
     path_to_python_wrapper = (
-        Path(path_to_python_wrapper) if isinstance(path_to_python_wrapper, str) else path_to_python_wrapper
+        Path(path_to_python_wrapper)
+        if isinstance(path_to_python_wrapper, str)
+        else path_to_python_wrapper
     )
     paths = {
         "cpp": path_to_python_wrapper / "wrapper/wrapper.cpp",
@@ -234,14 +262,22 @@ def patch_opnic_wrapper(
             else make_ingoing_packet_typecast(param_table)
         )
 
-        replacements_ = [[f"s/struct Internal{direction_}.*/{cpp_packet}/g", str(paths["cpp"])]]
+        replacements_ = [
+            [f"s/struct Internal{direction_}.*/{cpp_packet}/g", str(paths["cpp"])]
+        ]
         if direction == "Outgoing":
-            replacements_.append([f"s/const Int.* out_packet.*/{typecast}/g", str(paths["cpp"])])
+            replacements_.append(
+                [f"s/const Int.* out_packet.*/{typecast}/g", str(paths["cpp"])]
+            )
         else:
-            replacements_.append([f"s/IncomingPacket incoming_packet.*/{typecast}/g", str(paths["cpp"])])
+            replacements_.append(
+                [f"s/IncomingPacket incoming_packet.*/{typecast}/g", str(paths["cpp"])]
+            )
 
         replacements_.append([f"s/struct {direction_}.*/{h_packet}/g", str(paths["h"])])
-        replacements_.append([f"s/.*struct {direction_}.*/{i_packet}/g", str(paths["i"])])
+        replacements_.append(
+            [f"s/.*struct {direction_}.*/{i_packet}/g", str(paths["i"])]
+        )
         replacements.extend(replacements_)
 
     modified_count = sum(run_sed_and_check_for_changes(args) for args in replacements)

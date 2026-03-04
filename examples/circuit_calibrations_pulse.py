@@ -11,6 +11,7 @@ Requires Qiskit 1.x for full Qiskit Pulse support (DriveChannel, Schedule, etc.)
 from qiskit.circuit import QuantumCircuit, Gate, Parameter
 from qiskit import transpile
 from qiskit_qm_provider import IQCCProvider
+
 backend = IQCCProvider().get_backend("qolab")
 
 # Assume backend is obtained from a provider and supports Pulse (e.g. FluxTunableTransmonBackend)
@@ -31,9 +32,7 @@ try:
     sigma = duration / 4
     amp = 0.5
     rx_schedule = Schedule()
-    rx_schedule.append(
-        Play(Gaussian(duration, amp, sigma), DriveChannel(0))
-    )
+    rx_schedule.append(Play(Gaussian(duration, amp, sigma), DriveChannel(0)))
     qc.add_calibration(rx_gate, (0,), rx_schedule)
 except ImportError:
     # Qiskit 2.x: Pulse is deprecated; use QMInstructionProperties for custom gates (see custom_gate.py)

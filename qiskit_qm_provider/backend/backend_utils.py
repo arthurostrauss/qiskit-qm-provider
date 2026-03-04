@@ -24,7 +24,13 @@ import warnings
 from typing import List, TYPE_CHECKING, Dict, Literal, Type
 
 from qiskit import QuantumCircuit
-from qiskit.circuit.controlflow import ControlFlowOp, IfElseOp, WhileLoopOp, ForLoopOp, SwitchCaseOp
+from qiskit.circuit.controlflow import (
+    ControlFlowOp,
+    IfElseOp,
+    WhileLoopOp,
+    ForLoopOp,
+    SwitchCaseOp,
+)
 from qiskit.circuit.library import get_standard_gate_name_mapping
 from qiskit.quantum_info import Pauli, PauliList
 
@@ -35,7 +41,7 @@ from ..additional_gates import CRGate, SYGate, SYdgGate
 from qm.qua import declare, assign, Cast, declare_stream
 
 if TYPE_CHECKING:
-    from oqc import CompilationResult
+    from qm_qasm import CompilationResult
     from .qm_backend import QMBackend
 try:
     from qiskit.circuit.controlflow import get_control_flow_name_mapping
@@ -52,7 +58,7 @@ except ImportError:
         "switch_case": SwitchCaseOp,
     }
 
-oq3_keyword_instructions = (
+qasm3_keyword_instructions = (
     "measure",
     "reset",
     "delay",
@@ -73,17 +79,23 @@ def validate_machine(machine) -> QuamRoot:
     :return: The QuAM instance if it is valid, otherwise raises a ValueError.
     """
     if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
-        raise ValueError("Invalid QuAM instance provided, should have qubits and qubit_pairs attributes")
+        raise ValueError(
+            "Invalid QuAM instance provided, should have qubits and qubit_pairs attributes"
+        )
     if not all(isinstance(qubit, Qubit) for qubit in machine.qubits.values()):
         raise ValueError("All qubits should be of type Qubit")
-    if not all(isinstance(qubit_pair, QubitPair) for qubit_pair in machine.qubit_pairs.values()):
+    if not all(
+        isinstance(qubit_pair, QubitPair) for qubit_pair in machine.qubit_pairs.values()
+    ):
         raise ValueError("All qubit pairs should be of type QubitPair")
 
     return machine
 
 
 def validate_circuits(
-    circuits: QuantumCircuit | List[QuantumCircuit], should_reset: bool = True, check_for_params: bool = False
+    circuits: QuantumCircuit | List[QuantumCircuit],
+    should_reset: bool = True,
+    check_for_params: bool = False,
 ) -> List[QuantumCircuit]:
     """
     Validate the circuits to be compiled. The circuits should be a list of QuantumCircuits.
@@ -114,13 +126,14 @@ def validate_circuits(
 
     return new_circuits
 
+
 def has_conflicting_calibrations(circuits: List[QuantumCircuit]) -> bool:
     """
     Check if the circuits have conflicting calibrations.
     :param circuits: List of QuantumCircuits to be checked.
     :return: True if there are conflicting calibrations, False otherwise.
     """
-    from oqc import OperationIdentifier
+    from qm_qasm import OperationIdentifier
 
     custom_gates = set()
     for qc in circuits:
@@ -190,16 +203,16 @@ def has_reset_at_boundary(circuit: QuantumCircuit) -> bool:
             qubit_instructions[q].append(inst)
 
     # Check each qubit's first and last operations
-    for qubit, qubit_insts in qubit_instructions.items():
+    for qubit_insts in list(qubit_instructions.values()):
         if not qubit_insts:
             continue  # No instructions means qubit remained in reset state
-            
+
         # Check first operation on this qubit
         has_start_reset = qubit_insts[0].operation.name == "reset"
-        
+
         # Check last operation on this qubit
         has_end_reset = qubit_insts[-1].operation.name == "reset"
-        
+
         if not (has_start_reset or has_end_reset):
             return False
 
@@ -216,7 +229,10 @@ def binary(val: int, num_bits: int = 0) -> str:
     return bin(val)[2:].zfill(num_bits)
 
 
-def add_basic_macros(backend: QuamRoot|QMBackend, reset_type: Literal["active", "thermalize"] = "thermalize"):
+def add_basic_macros(
+    backend: QuamRoot | QMBackend,
+    reset_type: Literal["active", "thermalize"] = "thermalize",
+):
     """
     Add macros to the machine.
     :param machine: The BaseQuam instance to which macros will be added.
@@ -230,8 +246,11 @@ def add_basic_macros(backend: QuamRoot|QMBackend, reset_type: Literal["active", 
         IdMacro,
     )
     from quam.components.macro import PulseMacro
-    from quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates import CZGate
+    from quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates import (
+        CZGate,
+    )
     from .qm_backend import QMBackend
+
     if not isinstance(backend, (QuamRoot, QMBackend)):
         raise ValueError("Backend should be a QuamRoot or QMBackend instance")
     machine = backend.machine if isinstance(backend, QMBackend) else backend
@@ -248,7 +267,9 @@ def add_basic_macros(backend: QuamRoot|QMBackend, reset_type: Literal["active", 
         qubit.macros["sy"] = PulseMacro(pulse=y90_pulse)
         qubit.macros["sydg"] = PulseMacro(pulse=my90_pulse)
         qubit.macros["measure"] = MeasureMacro(pulse=readout_pulse)
-        qubit.macros["reset"] = ResetMacro(reset_type=reset_type, pi_pulse=x180_pulse, readout_pulse=readout_pulse)
+        qubit.macros["reset"] = ResetMacro(
+            reset_type=reset_type, pi_pulse=x180_pulse, readout_pulse=readout_pulse
+        )
         qubit.macros["delay"] = DelayMacro()
         qubit.macros["id"] = IdMacro()
 
@@ -256,14 +277,19 @@ def add_basic_macros(backend: QuamRoot|QMBackend, reset_type: Literal["active", 
         try:
             qubit_pair.macros["cz"] = None
             qubit_pair.macros["cz"] = CZGate(
-                flux_pulse_control=qubit_pair.qubit_control.z.operations["const"].get_reference(),
+                flux_pulse_control=qubit_pair.qubit_control.z.operations[
+                    "const"
+                ].get_reference(),
             )
         except ValueError as e:
-            warnings.warn(f"Could not add default two qubit gates. Add it manually if necessary. Error: {e}")
+            warnings.warn(
+                f"Could not add default two qubit gates. Add it manually if necessary. Error: {e}"
+            )
 
 
-
-def get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult, compute_state_int: bool = True) -> dict[str, dict[str, QuaVariableInt]]:
+def get_measurement_outcomes(
+    qc: QuantumCircuit, result: CompilationResult, compute_state_int: bool = True
+) -> dict[str, dict[str, QuaVariableInt]]:
     """
     Get the measurement outcomes resulting from the execution of the QuantumCircuit.
     This is returned as a dictionary of the form {creg_name: {"value": [outcome_values], "state_int": state_int, "size": size}}, where state_int is a QUA variable that contains the integer representation of each ClassicalRegister belonging to the QuantumCircuit and size is the size of the ClassicalRegister.
@@ -280,10 +306,15 @@ def get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult, comp
         }
         for creg in qc.cregs
     }
-    num_solo_bits = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
+    num_solo_bits = len(
+        [bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0]
+    )
     if num_solo_bits > 0:
         clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX] = {
-            "value": [result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"] for i in range(num_solo_bits)],
+            "value": [
+                result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"]
+                for i in range(num_solo_bits)
+            ],
             "stream": declare_stream(),
             "size": num_solo_bits,
         }
@@ -291,11 +322,18 @@ def get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult, comp
         for creg_dict in clbits_dict.values():
             c_reg_res = creg_dict["value"]
             creg_dict["state_int"] = declare(int)
-            assign(creg_dict["state_int"], sum(
-                (((1 << i) * Cast.to_int(c_reg_res[i])) for i in range(1, creg_dict["size"])),
-                start=Cast.to_int(c_reg_res[0]),
-            ))
+            assign(
+                creg_dict["state_int"],
+                sum(
+                    (
+                        ((1 << i) * Cast.to_int(c_reg_res[i]))
+                        for i in range(1, creg_dict["size"])
+                    ),
+                    start=Cast.to_int(c_reg_res[0]),
+                ),
+            )
     return clbits_dict
+
 
 def logically_active_qubits(circuit):
     """
@@ -312,7 +350,10 @@ def logically_active_qubits(circuit):
 
     return sorted(active, key=lambda q: circuit.find_bit(q).index)
 
-def get_non_trivial_observables(observables: PauliList, active_qubit_indices: List[int]) -> PauliList:
+
+def get_non_trivial_observables(
+    observables: PauliList, active_qubit_indices: List[int]
+) -> PauliList:
     """
     Get the non-trivial observables from the observables.
     :param observables: The observables to get the non-trivial observables from.
@@ -325,10 +366,7 @@ def get_non_trivial_observables(observables: PauliList, active_qubit_indices: Li
         new_pauli_label = ""
         for j in range(observable.num_qubits):
             if j in active_qubit_indices:
-                new_pauli_label += label[-j-1]
+                new_pauli_label += label[-j - 1]
         new_observables.append(Pauli(new_pauli_label))
 
     return PauliList(new_observables)
-
-
-             

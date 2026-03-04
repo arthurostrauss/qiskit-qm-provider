@@ -20,7 +20,11 @@ Date: 2026-02-08
 
 from typing import List, Optional
 import numpy as np
-from qiskit_qm_provider.parameter_table import InputType, ParameterTable, Parameter as QuaParameter
+from qiskit_qm_provider.parameter_table import (
+    InputType,
+    ParameterTable,
+    Parameter as QuaParameter,
+)
 from qm.qua import fixed
 from .qm_estimator_job import _ExecutionPlan
 
@@ -29,7 +33,7 @@ def _serialize_parameter_table(parameter_table: Optional[ParameterTable]) -> str
     """Serialize a ParameterTable to a string representation for redeclaration."""
     if parameter_table is None:
         return "None"
-    
+
     # Generate Parameter initialization strings for each parameter in the table
     param_init_strings = []
     for param in parameter_table.parameters:
@@ -46,7 +50,7 @@ def _serialize_parameter_table(parameter_table: Optional[ParameterTable]) -> str
             value_str = repr(param.value)
         else:
             value_str = repr(param.value)
-        
+
         # Serialize qua_type
         if param.type == int:
             qua_type_str = "int"
@@ -56,32 +60,34 @@ def _serialize_parameter_table(parameter_table: Optional[ParameterTable]) -> str
             qua_type_str = "bool"
         else:
             qua_type_str = "None"
-        
+
         # Serialize input_type
         if param.input_type is None:
             input_type_str = "None"
         else:
-            input_type_str = f'InputType.{param.input_type.name}'
-        
+            input_type_str = f"InputType.{param.input_type.name}"
+
         # Serialize direction
         if param.input_type is None or param.input_type != InputType.DGX_Q:
             direction_str = "None"
         elif param.direction is None:
             direction_str = "None"
         else:
-            direction_str = f'Direction.{param.direction.name}'
-        
+            direction_str = f"Direction.{param.direction.name}"
+
         # Serialize units
         units_str = repr(param.units) if param.units else '""'
-        
+
         # Build Parameter initialization string
         param_init = f"QMParameter(name={repr(param.name)}, value={value_str}, qua_type={qua_type_str}, input_type={input_type_str}, direction={direction_str}, units={units_str})"
         param_init_strings.append(param_init)
-    
+
     # Build ParameterTable initialization string
     table_name = repr(parameter_table.name)
     param_list_str = "[" + ", ".join(param_init_strings) + "]"
-    table_init_str = f"ParameterTable(parameters_dict={param_list_str}, name={table_name})"
+    table_init_str = (
+        f"ParameterTable(parameters_dict={param_list_str}, name={table_name})"
+    )
     return table_init_str
 
 
@@ -102,15 +108,17 @@ def _serialize_obs_indices(obs_indices: List[List[tuple]]) -> str:
     return result
 
 
-def generate_sync_hook_estimator(execution_plans: List[_ExecutionPlan], obs_length_var: QuaParameter) -> str:
+def generate_sync_hook_estimator(
+    execution_plans: List[_ExecutionPlan], obs_length_var: QuaParameter
+) -> str:
     """Generate the sync hook code for the estimator."""
-    
+
     # Extract parameter values for each execution plan
     parameter_values_list = []
     obs_indices_list = []
     param_table_contents = []
     observables_var_contents = []
-    
+
     for plan in execution_plans:
         # Serialize parameter values
         if plan.param_table is not None and len(plan.param_table.parameters) > 0:
@@ -120,17 +128,17 @@ def generate_sync_hook_estimator(execution_plans: List[_ExecutionPlan], obs_leng
         else:
             # No parameters, use empty list
             parameter_values_list.append([])
-        
+
         # Serialize obs_indices
         obs_indices_list.append(plan.obs_indices)
-        
+
         # Serialize parameter tables
         param_table_str = _serialize_parameter_table(plan.param_table)
         param_table_contents.append(param_table_str)
-        
+
         observables_var_str = _serialize_parameter_table(plan.observables_var)
         observables_var_contents.append(observables_var_str)
-    
+
     # Format parameter_values list for insertion into sync_hook_code
     param_values_list_str = "["
     for i, param_values in enumerate(parameter_values_list):
@@ -145,13 +153,15 @@ def generate_sync_hook_estimator(execution_plans: List[_ExecutionPlan], obs_leng
                 if j > 0:
                     param_values_str += ", "
                 if isinstance(pv, np.ndarray):
-                    param_values_str += f"np.array({np.array2string(pv, separator=', ')})"
+                    param_values_str += (
+                        f"np.array({np.array2string(pv, separator=', ')})"
+                    )
                 else:
                     param_values_str += repr(pv)
             param_values_str += "]"
             param_values_list_str += param_values_str
     param_values_list_str += "]"
-    
+
     # Format obs_indices list
     obs_indices_list_str = "["
     for i, obs_indices in enumerate(obs_indices_list):
@@ -159,7 +169,7 @@ def generate_sync_hook_estimator(execution_plans: List[_ExecutionPlan], obs_leng
             obs_indices_list_str += ", "
         obs_indices_list_str += _serialize_obs_indices(obs_indices)
     obs_indices_list_str += "]"
-    
+
     # Format param_tables list
     param_tables_list_str = "["
     for i, table_str in enumerate(param_table_contents):
@@ -167,7 +177,7 @@ def generate_sync_hook_estimator(execution_plans: List[_ExecutionPlan], obs_leng
             param_tables_list_str += ", "
         param_tables_list_str += table_str
     param_tables_list_str += "]"
-    
+
     # Format observables_vars list
     observables_vars_list_str = "["
     for i, table_str in enumerate(observables_var_contents):
@@ -175,7 +185,7 @@ def generate_sync_hook_estimator(execution_plans: List[_ExecutionPlan], obs_leng
             observables_vars_list_str += ", "
         observables_vars_list_str += table_str
     observables_vars_list_str += "]"
-    
+
     sync_hook_code = f"""from iqcc_cloud_client.runtime import get_qm_job
 from qiskit_qm_provider.parameter_table import ParameterTable, InputType, Parameter as QMParameter, Direction
 from qm.qua import fixed
@@ -241,4 +251,3 @@ for i in range(len(parameter_values_list)):
 """
 
     return sync_hook_code
-

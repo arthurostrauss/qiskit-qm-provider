@@ -196,7 +196,9 @@ class ParameterPool:
 
     @classmethod
     def patch_opnic_wrapper(
-        cls, path_to_python_wrapper: Union[str, Path], force_recompile_python_wrapper: bool = False
+        cls,
+        path_to_python_wrapper: Union[str, Path],
+        force_recompile_python_wrapper: bool = False,
     ):
         """
         Patch the OPNIC wrapper.
@@ -209,14 +211,17 @@ class ParameterPool:
 
         def check_function(param_table: ParameterTable | Parameter) -> bool:
             from .input_type import InputType
+
             return (
-                (param_table._usable_for_dgx_communication
+                param_table._usable_for_dgx_communication
                 if isinstance(param_table, ParameterTable)
-                else param_table.is_standalone()) and param_table.input_type == InputType.DGX_Q
-            )
+                else param_table.is_standalone()
+            ) and param_table.input_type == InputType.DGX_Q
 
         param_tables = list(filter(check_function, cls.get_all_objs()))
-        patch_opnic_wrapper(param_tables, path_to_python_wrapper, force_recompile_python_wrapper)
+        patch_opnic_wrapper(
+            param_tables, path_to_python_wrapper, force_recompile_python_wrapper
+        )
         cls._patched = True
 
     @classmethod
@@ -236,7 +241,11 @@ class ParameterPool:
         from .input_type import Direction
 
         for obj in cls.get_all_objs():
-            direction = Direction_INCOMING if obj.direction == Direction.INCOMING else Direction_OUTGOING
+            direction = (
+                Direction_INCOMING
+                if obj.direction == Direction.INCOMING
+                else Direction_OUTGOING
+            )
             configure_stream(obj.stream_id, direction)
         cls._configured = True
 

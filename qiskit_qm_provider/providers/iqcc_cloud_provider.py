@@ -28,12 +28,16 @@ if TYPE_CHECKING:
     from iqcc_cloud_client import IQCC_Cloud
     from iqcc_calibration_tools.quam_config.components import Quam as IQCCQuam
 
+
 def get_machine_from_iqcc(backend_name: str, api_token: Optional[str] = None):
     from iqcc_cloud_client import IQCC_Cloud
+
     try:
         from iqcc_calibration_tools.quam_config.components import Quam as IQCCQuam
     except ImportError:
-        from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import FluxTunableQuam as IQCCQuam
+        from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import (
+            FluxTunableQuam as IQCCQuam,
+        )
     iqcc = IQCC_Cloud(quantum_computer_backend=backend_name, api_token=api_token)
 
     # Get the latest state and wiring files
@@ -53,12 +57,13 @@ def get_machine_from_iqcc(backend_name: str, api_token: Optional[str] = None):
     machine = IQCCQuam.load()
 
     return machine, iqcc
-    
+
+
 class IQCCProvider:
     def __init__(self, api_token: Optional[str] = None):
         self.api_token = api_token
         self._cloud_client = None
-    
+
     def get_machine(self, name: str) -> IQCCQuam:
         """
         Get a the latest Quam state from the IQCC Cloud.
@@ -73,11 +78,13 @@ class IQCCProvider:
         """
         if self._cloud_client is None or self._cloud_client.backend != name:
             from iqcc_cloud_client import IQCC_Cloud
-            self._cloud_client = IQCC_Cloud(quantum_computer_backend=name, api_token=self.api_token)
+
+            self._cloud_client = IQCC_Cloud(
+                quantum_computer_backend=name, api_token=self.api_token
+            )
         return self._cloud_client
 
-    
-    def get_backend(self, name: str|IQCCQuam) -> FluxTunableTransmonBackend:
+    def get_backend(self, name: str | IQCCQuam) -> FluxTunableTransmonBackend:
         """
         Get a backend from the IQCC Cloud. For now all backends are assumed to be FluxTunableTransmonBackend.
         """
@@ -85,7 +92,5 @@ class IQCCProvider:
             machine = self.get_machine(name)
         else:
             machine = name
-     
-        return FluxTunableTransmonBackend(machine, provider=self)
 
-    
+        return FluxTunableTransmonBackend(machine, provider=self)

@@ -24,4 +24,3 @@ __all__ = [
     "QMSaveAnnotation",
     "QMSaveOpenQASM3Serializer",
 ]
-
