@@ -258,6 +258,40 @@ class QMBackend(Backend):
         Get the qubit pair dictionary for the backend
         """
         return self._qubit_pair_dict
+    
+    def get_qubit_index(self, qubit: str | Qubit) -> int:
+        """
+        Get the index of the given qubit or qubit name in Quam.
+        
+        Args:
+            qubit: The qubit or qubit name
+
+        Returns:
+            The index of the given qubit or qubit name in Quam
+        """
+        if isinstance(qubit, str):
+            return self.qubit_dict[qubit]
+        elif isinstance(qubit, Qubit):
+            return self.qubit_dict[qubit.name]
+        else:
+            raise ValueError("Qubit should be a string name or a Qubit object")
+    
+    def get_qubit_pair_indices(self, qubit_pair: str | QubitPair) -> Tuple[int, int]:
+        """
+        Get the indices of the given qubit pair or qubit pair name in Quam.
+        
+        Args:
+            qubit_pair: The qubit pair or qubit pair name
+
+        Returns:
+            The indices of the given qubit pair or qubit pair name in Quam
+        """
+        if isinstance(qubit_pair, str):
+            return self.qubit_pair_dict[qubit_pair]
+        elif isinstance(qubit_pair, QubitPair):
+            return self.qubit_pair_dict[qubit_pair.name]
+        else:
+            raise ValueError("Qubit pair should be a string name or a QubitPair object")
 
     def get_qubit(self, qubit: int | str) -> Qubit:
         """
@@ -637,6 +671,7 @@ class QMBackend(Backend):
         sched: Schedule,
         param_table: Optional[ParameterTable] = None,
         input_type: Optional[InputType] = None,
+        gate_param_names: Optional[Sequence[str]] = None,
     ) -> Callable:
         """
         Convert a Qiskit Pulse Schedule to a QUA macro
@@ -646,6 +681,8 @@ class QMBackend(Backend):
             param_table: The parameter table to use for the conversion of parameterized pulses to QUA variables
             input_type: The input type to use for the conversion of parameterized pulses to QUA variables.
                 Should be specified only if the schedule is parameterized and the parameter table is not provided.
+            gate_param_names: Optional sequence of parameter names for gate-level parameters when the schedule
+                is not parameterized; used so the macro signature matches the gate arity expected by the QM compiler.
 
         Returns:
             The QUA macro corresponding to the Qiskit Pulse Schedule
@@ -653,7 +690,9 @@ class QMBackend(Backend):
 
         from ..pulse import schedule_to_qua_macro
 
-        return schedule_to_qua_macro(self, sched, param_table, input_type)
+        return schedule_to_qua_macro(
+            self, sched, param_table, input_type, gate_param_names=gate_param_names
+        )
 
     @requires_qiskit_pulse
     def add_pulse_operations(
@@ -787,20 +826,29 @@ class QMBackend(Backend):
 
                     sched = validate_schedule(properties.calibration)
                     num_params = len(sched.parameters)
+                    gate_param_names = None
+                    if num_params == 0:
+                        gate_map = get_extended_gate_name_mapping()
+                        gate = gate_map.get(op_name)
+                        if gate is not None and getattr(gate, "params", None):
+                            num_params = len(gate.params)
+                            gate_param_names = [
+                                getattr(p, "name", f"param_{i}")
+                                for i, p in enumerate(gate.params)
+                            ]
                     op_id = OperationIdentifier(op_name, num_params, qubits)
 
-                    if num_params > 0:
+                    if num_params > 0 and sched.is_parameterized():
                         param_table = ParameterTable.from_qiskit(
                             sched,
                             input_type=input_type,
                             name=sched.name + "_param_table",
                         )
-
                     else:
                         param_table = None
                     # Overwrite existing entry if present (Target takes precedence over machine macros)
                     self._operation_mapping_QUA[op_id] = self.schedule_to_qua_macro(
-                        sched, param_table
+                        sched, param_table, gate_param_names=gate_param_names
                     )
 
         # Step 3: Update calibration mapping
@@ -861,13 +909,18 @@ class QMBackend(Backend):
                             schedule, param_table
                         )
 
+                    gate_param_names = [
+                        getattr(p, "name", f"param_{i}") for i, p in enumerate(parameters)
+                    ]
                     self._calibration_operation_mapping_QUA[
                         OperationIdentifier(
                             gate_name,
                             len(parameters),
                             qubits,
                         )
-                    ] = self.schedule_to_qua_macro(schedule, param_table)
+                    ] = self.schedule_to_qua_macro(
+                        schedule, param_table, gate_param_names=gate_param_names
+                    )
 
                     self.add_pulse_operations(schedule, name=schedule.name)
 

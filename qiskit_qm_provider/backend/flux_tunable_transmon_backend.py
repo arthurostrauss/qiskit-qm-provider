@@ -19,7 +19,6 @@ Date: 2026-02-08
 """
 
 from __future__ import annotations
-import warnings
 
 from .qm_backend import QMBackend, requires_qiskit_pulse
 from typing import Iterable, Optional, List, Union, TYPE_CHECKING, Tuple
@@ -89,9 +88,8 @@ class FluxTunableTransmonBackend(QMBackend):
                 **readout_channel_mapping,
             }
         except ImportError:
-            warnings.warn(
-                "qiskit.pulse is not available, channel mapping will not be set."
-            )
+            import logging
+            logging.info("qiskit.pulse is not available, channel mapping will not be set.")
             channel_mapping = {}
         super().__init__(
             machine,

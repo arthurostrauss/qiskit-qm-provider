@@ -27,7 +27,7 @@ from quam.components import Channel as QuAMChannel
 from .sympy_to_qua import sympy_to_qua
 from qiskit.circuit.parameterexpression import ParameterExpression
 from ..parameter_table import ParameterTable, Parameter as QuaParameter, InputType
-from typing import Dict, Optional, Callable, TYPE_CHECKING
+from typing import Dict, Optional, Callable, Sequence, TYPE_CHECKING
 from inspect import Signature, Parameter as sigParam
 from qm.qua import switch_, case_
 
@@ -247,9 +247,14 @@ def schedule_to_qua_macro(
     sched: Schedule,
     param_table: Optional[ParameterTable] = None,
     input_type: Optional[InputType] = None,
+    gate_param_names: Optional[Sequence[str]] = None,
 ) -> Callable:
     sig = Signature()
     if sched.is_parameterized():
+        if gate_param_names and len(gate_param_names) != len(sched.parameters):
+            raise ValueError(
+                "Number of gate parameters does not match number of schedule parameters"
+            )
         if param_table is None:
             param_table = ParameterTable.from_qiskit(
                 sched, name=sched.name + "_param_table", input_type=input_type
@@ -262,6 +267,13 @@ def schedule_to_qua_macro(
         params = [
             sigParam(param, sigParam.POSITIONAL_OR_KEYWORD)
             for param in involved_parameters
+        ]
+        sig = Signature(params)
+    elif gate_param_names:
+        # Schedule has no parameters but gate has; align signature for QM OpenQASM compiler
+        params = [
+            sigParam(name, sigParam.POSITIONAL_OR_KEYWORD)
+            for name in gate_param_names
         ]
         sig = Signature(params)
 

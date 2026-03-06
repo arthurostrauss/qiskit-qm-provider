@@ -273,7 +273,7 @@ class QMJob(JobV1):
             job_cls: type[QMJob] = QMJob
         else:
             job_cls = IQCCJob
-        print("job_cls: ", job_cls)
+
         job = job_cls(
             backend,
             job_id,
