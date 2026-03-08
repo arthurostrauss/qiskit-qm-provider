@@ -41,7 +41,7 @@ dependencies = [
 iqcc = [
     "iqcc-cloud-client"
 ]
-qm_saas = [
+qm-saas = [
     "qm-saas"
 ]
 [tool.uv]
