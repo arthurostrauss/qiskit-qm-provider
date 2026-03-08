@@ -3,7 +3,7 @@ title: qiskit-qm-provider
 authors:
   - given-names: Arthur
     family-names: Strauss
-    email: arthur.strauss@quantum-machines.co
+    email: arthur.strauss@u.nus.edu
 year: 2026
 license: Apache-2.0
 repository-code: https://github.com/arthurostrauss/qiskit-qm-provider
