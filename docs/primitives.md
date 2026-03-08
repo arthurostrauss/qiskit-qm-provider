@@ -1,6 +1,7 @@
 ---
 title: Primitives
 nav_order: 4
+parent: Home
 ---
 
 # Primitives

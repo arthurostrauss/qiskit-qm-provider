@@ -1,6 +1,7 @@
 ---
 title: Parameter Table
 nav_order: 5
+parent: Home
 ---
 
 # Parameter Table

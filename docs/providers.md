@@ -1,6 +1,7 @@
 ---
 title: Providers
 nav_order: 2
+parent: Home
 ---
 
 # Providers
