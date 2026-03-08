@@ -3,7 +3,7 @@ name = "qiskit-qm-provider"
 version = "0.1.0"
 description = "Provider for running Qiskit circuits and pulses on Quantum Machines' Quantum Orchestration Platform"
 readme = "README.md"
-requires-python = ">=3.9,<3.13"
+requires-python = ">=3.10,<3.13"
 authors = [
     { name = "Arthur Strauss", email = "arthur.strauss@u.nus.edu" }
 ]
@@ -17,7 +17,6 @@ classifiers=[
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -26,7 +25,7 @@ classifiers=[
 ]
 
 dependencies = [
-    "qiskit @ git+https://github.com/arthurostrauss/qiskit.git@dynamic_range_expr",
+    "qiskit",
     "qualang-tools>=0.16.0",
     "quam >=0.4.1",
     "sympy>=1.14.0",
