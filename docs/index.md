@@ -15,7 +15,7 @@ Thanks to Qiskit's fully integrated stack, and our close integration with QOP's 
 
 - **A bridge between abstractions**: from Qiskit circuits, primitives, and (where applicable) Pulse, down to QUA programs and QuAM‑defined hardware.
 - **Minimal friction between layers**: reuse the same circuits and observables across:
-  - standard Qiskit workflows (`backend.run()`, `QMSampler`, `QMEstimator`)
+  - standard Qiskit workflows (`backend.run()`, `QMSamplerV2`, `QMEstimatorV2`)
   - real‑time QUA programs with streaming parameters and control flow.
 - **Customizable hardware model**: bring your own `QuamRoot` subclass and `QMBackend` subclass, or start from the provided `FluxTunableTransmonBackend`.
 
@@ -104,3 +104,19 @@ the full power of QOP and QUA underneath.
 If that describes you, start with **Providers** and **Backend & Utilities** in the sidebar,
 then move on to **Primitives** and **Parameter Table** as you begin to build more advanced
 hybrid programs.
+
+## Experimental project — feedback welcome
+
+This provider is **experimental by design**: it explores how far we can go in smoothing the
+transition between Qiskit‑level abstractions and QUA/QOP‑level control, and we fully expect the
+best ideas to come from real users and real workloads.
+
+If you try this toolbox and have:
+
+- suggestions on APIs or ergonomics,
+- use cases that feel close but not quite supported,
+- or issues integrating with your specific hardware setup,
+
+please reach out directly to **Arthur Strauss** at **arthur.strauss@u.nus.edu**.
+Feedback, bug reports, and design discussions are all very welcome — they are what will turn this
+experimental project into a mature, community‑driven tool.
