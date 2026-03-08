@@ -11,6 +11,9 @@ Welcome — this project is a **toolbox for crossing abstraction layers** betwee
 
 Thanks to Qiskit's fully integrated stack, and our close integration with QOP's latest real‑time capabilities, this provider is meant to **push state‑of‑the‑art use cases**: hybrid programs that combine classical and quantum workloads, while staying in familiar Qiskit terms.
 
+**Author:** Arthur Strauss — *Centre for Quantum Technologies, National University of Singapore, in collaboration with Quantum Machines Ltd.*  
+**License:** Apache 2.0 (see the `LICENSE.md` file in the repository).
+
 ## What this toolbox gives you
 
 - **A bridge between abstractions**: from Qiskit circuits, primitives, and (where applicable) Pulse, down to QUA programs and QuAM‑defined hardware.
