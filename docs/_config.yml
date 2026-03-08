@@ -1,0 +1,23 @@
+# GitHub Pages / Jekyll config for qiskit-qm-provider documentation
+# Site is built from the 'docs' folder when GitHub Pages source is set to this branch + /docs
+
+title: Qiskit QM Provider
+description: "API documentation for the Qiskit–Quantum Machines provider: backends, primitives, and providers for QOP."
+remote_theme: just-the-docs/just-the-docs
+
+# Optional: link to repo in header
+aux_links:
+  Repository: https://github.com/arthurostrauss/qiskit-qm-provider
+
+# Sidebar navigation (order of pages)
+nav_order: 1
+nav_external_links:
+  - title: GitHub
+    url: https://github.com/arthurostrauss/qiskit-qm-provider
+
+# List pages explicitly so they appear in the sidebar in this order
+just_the_docs:
+  nav_fold: true
+
+# Exclude from Jekyll processing (optional)
+exclude: []

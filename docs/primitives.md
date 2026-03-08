@@ -1,3 +1,8 @@
+---
+title: Primitives
+nav_order: 4
+---
+
 # Primitives
 
 ## QMEstimatorV2
