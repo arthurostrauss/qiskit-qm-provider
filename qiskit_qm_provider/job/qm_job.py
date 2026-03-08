@@ -107,14 +107,25 @@ class QMJob(JobV1):
         def result_function(
             qm_job: RunningQmJob | List[RunningQmJob] | CloudJob | Dict,
         ) -> Result:
-            from iqcc_cloud_client.qmm_cloud import CloudJob, CloudResultHandles  # type: ignore[import]
+            try:
+                from iqcc_cloud_client.qmm_cloud import CloudJob, CloudResultHandles  # type: ignore[import]
+            except ImportError:
+                CloudJob = None
+                CloudResultHandles = None
 
             is_job_list = isinstance(qm_job, list)
+            running_job_types = (RunningQmJob,)
+            if CloudJob is not None:
+                running_job_types = (RunningQmJob, CloudJob)
+            result_handle_types = (StreamingResultFetcher,)
+            if CloudResultHandles is not None:
+                result_handle_types = (StreamingResultFetcher, CloudResultHandles)
+
             if is_job_list:
                 results_handle = [job.result_handles for job in qm_job]  # type: ignore[attr-defined]
                 for handle in results_handle:
                     handle.wait_for_all_values()
-            elif isinstance(qm_job, (RunningQmJob, CloudJob)):
+            elif isinstance(qm_job, running_job_types):
                 results_handle = qm_job.result_handles
                 results_handle.wait_for_all_values()
             else:
@@ -131,9 +142,7 @@ class QMJob(JobV1):
                             .flatten()
                             .tolist()
                         )
-                    elif isinstance(
-                        results_handle, (StreamingResultFetcher, CloudResultHandles)
-                    ):
+                    elif isinstance(results_handle, result_handle_types):
                         data = (
                             np.array(results_handle.get(f"{creg}_{i}").fetch_all())  # type: ignore[index]
                             .flatten()
@@ -213,7 +222,10 @@ class QMJob(JobV1):
         - result object construction from streamed data,
         - and submission of either a local ``QMJob`` or cloud ``IQCCJob``.
         """
-        from iqcc_cloud_client.qmm_cloud import CloudQuantumMachinesManager  # type: ignore[import]
+        try:
+            from iqcc_cloud_client.qmm_cloud import CloudQuantumMachinesManager  # type: ignore[import]
+        except ImportError:
+            CloudQuantumMachinesManager = None
         from .qua_programs import get_run_program
 
         # Merge explicit options into backend defaults (preserving current behaviour)
@@ -267,9 +279,10 @@ class QMJob(JobV1):
         )
 
         # Decide between local QM job and IQCCCloud job
-        if isinstance(
-            backend.qmm, (QuantumMachinesManager, CloudQuantumMachinesManager)
-        ):
+        qmm_types = (QuantumMachinesManager,)
+        if CloudQuantumMachinesManager is not None:
+            qmm_types = (QuantumMachinesManager, CloudQuantumMachinesManager)
+        if isinstance(backend.qmm, qmm_types):
             job_cls: type[QMJob] = QMJob
         else:
             job_cls = IQCCJob

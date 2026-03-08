@@ -28,30 +28,63 @@ from quam.core.macro import QuamMacro
 
 
 class QMInstructionProperties(InstructionProperties):
+    """Qiskit instruction properties enriched with a QUA pulse macro.
+
+    ``qua_pulse_macro`` accepts two forms:
+
+    * A :class:`~quam.core.macro.QuamMacro` instance -- a structured QuAM
+      component whose attributes (``duration``, ``fidelity``, ``pulse``, …)
+      are declared following the `QuAM documentation
+      <https://qua-platform.github.io/quam/>`_.  When this form is used,
+      ``duration`` and ``error`` are automatically inferred from the macro's
+      attributes unless explicitly provided.
+    * A plain **callable** -- a bare QUA macro function with no QuAM
+      attributes.  In this case ``duration`` and ``error`` must be supplied
+      explicitly if they are needed.
+
+    The two forms are transparently unified through the :pyattr:`qua_pulse_macro`
+    and :pyattr:`quam_macro` properties.
+    """
+
     def __new__(cls, duration=None, error=None, qua_pulse_macro=None, *args, **kwargs):
-        if duration is None and hasattr(qua_pulse_macro, "duration"):
-            duration = qua_pulse_macro.duration
-            if duration is None and hasattr(qua_pulse_macro, "pulse"):
-                if isinstance(qua_pulse_macro.pulse, str):
-                    pulse = qua_pulse_macro.qubit.get_pulse(qua_pulse_macro.pulse)
-                else:
-                    pulse = qua_pulse_macro.pulse
-                duration = pulse.length * 1e-9  # Convert to seconds
-        if (
-            error is None
-            and hasattr(qua_pulse_macro, "fidelity")
-            and isinstance(qua_pulse_macro.fidelity, float)
-        ):
-            error = 1 - qua_pulse_macro.fidelity
-        if duration == "#./inferred_duration":
-            try:
-                duration = qua_pulse_macro.inferred_duration
-            except ValueError:
-                duration = None
+        if qua_pulse_macro is not None:
+            if duration is None:
+                duration = cls._infer_duration(qua_pulse_macro)
+            if error is None:
+                fidelity = getattr(qua_pulse_macro, "fidelity", None)
+                if isinstance(fidelity, float):
+                    error = 1.0 - fidelity
 
         self = super().__new__(cls, duration=duration, error=error, *args, **kwargs)
         self._qua_pulse_macro = qua_pulse_macro
         return self
+
+    @staticmethod
+    def _infer_duration(macro) -> float | None:
+        """Try to derive a duration (in seconds) from macro attributes.
+
+        Resolution order:
+        1. ``macro.duration`` -- used directly if it is numeric.
+        2. If ``macro.duration`` is a QuAM string reference (e.g.
+           ``"#./inferred_duration"``), resolve via ``macro.inferred_duration``.
+        3. Fall back to ``macro.pulse.length * 1e-9`` when available.
+        """
+        duration = getattr(macro, "duration", None)
+
+        if isinstance(duration, str):
+            try:
+                duration = macro.inferred_duration
+            except (ValueError, AttributeError):
+                duration = None
+
+        if duration is None:
+            pulse = getattr(macro, "pulse", None)
+            if pulse is not None:
+                if isinstance(pulse, str):
+                    pulse = macro.qubit.get_pulse(pulse)
+                duration = pulse.length * 1e-9
+
+        return duration
 
     def __init__(
         self,
@@ -59,15 +92,32 @@ class QMInstructionProperties(InstructionProperties):
         error: float | None = None,
         qua_pulse_macro: Callable | QuamMacro | None = None,
     ):
+        """Create a new ``QMInstructionProperties``.
+
+        Args:
+            duration: Gate duration in seconds.  Inferred from ``qua_pulse_macro``
+                when a :class:`~quam.core.macro.QuamMacro` is provided and this
+                is left as ``None``.
+            error: Gate error rate.  Inferred as ``1 - fidelity`` from a
+                :class:`~quam.core.macro.QuamMacro` when left as ``None``.
+            qua_pulse_macro: Either a :class:`~quam.core.macro.QuamMacro`
+                (structured QuAM component with declarative attributes) or a
+                plain callable (bare QUA macro function).
+        """
         super().__init__()
 
     @property
     def qua_pulse_macro(self) -> Callable | None:
-        return (
-            self._qua_pulse_macro.apply
-            if isinstance(self._qua_pulse_macro, QuamMacro)
-            else self._qua_pulse_macro
-        )
+        """The QUA macro as a callable.
+
+        If the underlying object is a :class:`~quam.core.macro.QuamMacro`,
+        its ``.apply`` method is returned so that callers always receive a
+        uniform callable interface.  For a plain callable, it is returned
+        as-is.
+        """
+        if isinstance(self._qua_pulse_macro, QuamMacro):
+            return self._qua_pulse_macro.apply
+        return self._qua_pulse_macro
 
     @qua_pulse_macro.setter
     def qua_pulse_macro(self, value: Callable | QuamMacro | None):
@@ -75,11 +125,16 @@ class QMInstructionProperties(InstructionProperties):
 
     @property
     def quam_macro(self) -> QuamMacro | None:
-        return (
-            self._qua_pulse_macro
-            if isinstance(self._qua_pulse_macro, QuamMacro)
-            else None
-        )
+        """The underlying :class:`~quam.core.macro.QuamMacro`, or ``None``.
+
+        Returns the original :class:`~quam.core.macro.QuamMacro` instance when
+        one was provided, giving access to its full attribute set (``duration``,
+        ``fidelity``, ``pulse``, etc.).  Returns ``None`` when the macro was
+        supplied as a plain callable.
+        """
+        if isinstance(self._qua_pulse_macro, QuamMacro):
+            return self._qua_pulse_macro
+        return None
 
     @quam_macro.setter
     def quam_macro(self, value: QuamMacro | None):

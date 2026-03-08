@@ -89,7 +89,10 @@ class FluxTunableTransmonBackend(QMBackend):
             }
         except ImportError:
             import logging
-            logging.info("qiskit.pulse is not available, channel mapping will not be set.")
+
+            logging.info(
+                "qiskit.pulse is not available, channel mapping will not be set."
+            )
             channel_mapping = {}
         super().__init__(
             machine,

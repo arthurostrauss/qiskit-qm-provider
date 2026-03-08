@@ -3,7 +3,7 @@ name = "qiskit-qm-provider"
 version = "0.1.0"
 description = "Provider for running Qiskit circuits and pulses on Quantum Machines' Quantum Orchestration Platform"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.13"
 authors = [
     { name = "Arthur Strauss", email = "arthur.strauss@u.nus.edu" }
 ]
@@ -34,9 +34,15 @@ dependencies = [
     "qm-qua >=1.2.3",
     "openqasm3",
     "qiskit_qasm3_import",
-    "iqcc-cloud-client",
-    "qm-saas",
-    "qm-qasm"
+    "qm-qasm>=1.7.7"
+]
+
+[project.optional-dependencies]
+iqcc = [
+    "iqcc-cloud-client"
+]
+qm_saas = [
+    "qm-saas"
 ]
 [tool.uv]
 prerelease = "allow"

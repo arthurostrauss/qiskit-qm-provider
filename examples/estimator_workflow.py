@@ -10,9 +10,11 @@ from qiskit.quantum_info import SparsePauliOp
 from qiskit_qm_provider import QMEstimatorV2, QMEstimatorOptions, InputType
 from qiskit import transpile
 import numpy as np
+
 # Get a backend (example: IQCC; or use QMProvider, QmSaasProvider)
 from qiskit_qm_provider import IQCCProvider
-backend = IQCCProvider().get_backend("qolab")  # Replace with your backend name
+
+backend = IQCCProvider().get_backend("arbel")  # Replace with your backend name
 
 # Build a parametric circuit and observables
 theta = Parameter("theta")  # Use ASCII names
@@ -20,7 +22,7 @@ circuit = QuantumCircuit(1)
 circuit.rx(theta, 0)
 
 observables = SparsePauliOp(["Z"])
-parameter_values =  np.linspace(0, np.pi, 10) # Values for theta per run
+parameter_values = np.linspace(0, np.pi, 10)  # Values for theta per run
 
 # Transpile to backend
 circuit = transpile(circuit, backend)

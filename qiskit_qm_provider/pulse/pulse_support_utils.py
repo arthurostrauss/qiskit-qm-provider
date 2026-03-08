@@ -272,8 +272,7 @@ def schedule_to_qua_macro(
     elif gate_param_names:
         # Schedule has no parameters but gate has; align signature for QM OpenQASM compiler
         params = [
-            sigParam(name, sigParam.POSITIONAL_OR_KEYWORD)
-            for name in gate_param_names
+            sigParam(name, sigParam.POSITIONAL_OR_KEYWORD) for name in gate_param_names
         ]
         sig = Signature(params)
 

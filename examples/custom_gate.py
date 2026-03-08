@@ -9,6 +9,7 @@ use your QUA macro. After modifying the target, call backend.update_target().
 from qiskit.circuit import Parameter as QiskitParameter, Gate
 from qiskit_qm_provider import QMProvider, QMInstructionProperties
 from quam.components import QubitPair
+
 # 1. Set up provider and backend (use your Quam state path or another provider)
 provider = QMProvider("/path/to/quam/state")
 backend = provider.get_backend()
@@ -27,16 +28,18 @@ cx_cal = Gate(
 def cx_macro(qubit_pair: QubitPair):
     def qua_macro(theta_val):
         qubit_pair.apply("cx", amplitude_scale=theta_val)
+
     return qua_macro
+
 
 # 4. Register the new instruction in the backend Target
 
 # 4.1 Choose physical qubits to define the macro for
 physical_qubits = [(0, 1), (1, 2)]
-properties = {} # Dictionary to store the properties for each physical qubit pair
+properties = {}  # Dictionary to store the properties for each physical qubit pair
 for qubit_pair_indices in physical_qubits:
     duration = backend.target["cx"][qubit_pair_indices].duration
-    qubit_pair = backend.get_qubit_pair(qubit_pair_indices) # Get the qubit pair object
+    qubit_pair = backend.get_qubit_pair(qubit_pair_indices)  # Get the qubit pair object
     properties[qubit_pair_indices] = QMInstructionProperties(
         duration=duration,
         qua_pulse_macro=cx_macro(qubit_pair),

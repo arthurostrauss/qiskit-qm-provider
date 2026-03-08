@@ -49,6 +49,7 @@ from qiskit.qasm3 import Exporter
 # QUA and Quam imports
 from qm import QuantumMachinesManager, DictQuaConfig, QuantumMachine
 from quam.components import Channel as QuAMChannel, QubitPair, Qubit
+from quam.core import QuamRoot
 
 # OpenQASM3 to QUA compiler
 
@@ -56,14 +57,10 @@ if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import (
         CloudQuantumMachine,
         CloudQuantumMachinesManager,
-        CloudJob,
-        CloudResultHandles,
     )
-    from iqcc_cloud_client import IQCC_Cloud
-    from qm_qasm import QubitsMapping, Compiler, CompilationResult, OperationIdentifier
+    from qm_qasm import QubitsMapping, Compiler, CompilationResult
     from quam.utils.qua_types import Scalar
-    from ..job.qm_job import QMJob, IQCCJob
-    from quam_builder.architecture.superconducting.qpu.base_quam import BaseQuam as Quam
+    from ..job.qm_job import QMJob
 
 # Helper modules
 from ..parameter_table import ParameterTable, InputType, Parameter
@@ -93,7 +90,6 @@ try:  # Importing Qiskit Pulse components
         SymbolicPulse,
     )
     from qiskit.pulse.channels import Channel as QiskitChannel
-    from qiskit.pulse.library import Pulse as QiskitPulse
 
     QISKIT_PULSE_AVAILABLE = True
 except ImportError:
@@ -123,9 +119,42 @@ def requires_qiskit_pulse(func):
 
 
 class QMBackend(Backend):
+    """
+    QMBackend class for Quantum Machines.
+
+    This backend is used to represent at Qiskit level all available operations
+    and qubit properties of a Quantum Abstract Machine (Quam) instance.
+    To use it, you need to ensure that the Quam instance has the following attributes:
+    - active_qubits: A list of Qubit objects
+    - active_qubit_pairs: A list of QubitPair objects
+    - macros: A dictionary of macros for all the qubits and qubit pairs
+
+    Args:
+        machine: The Quam instance
+        channel_mapping: Optional mapping of Qiskit Pulse Channels
+        (e.g. DriveChannel, ControlChannel, MeasureChannel)
+        to QuAM Channels. This mapping enables the conversion of Qiskit Pulse schedules
+        into parametric QUA macros. Note: This requires Qiskit to be of version < 2.0 to work.
+        Additionally, the Schedules created must have deterministic durations at this point.
+        init_macro: Optional macro to be called at the beginning of the QUA program to initialize the QPU.
+        qmm: Optional QuantumMachinesManager or CloudQuantumMachinesManager instance. If not provided, inferred from the machine
+        name: Optional name of the backend
+        fields: Optional kwargs for the values to use to override the default
+            options. The options are:
+            - shots: The number of shots to run the circuit for (default is 1024)
+            - compiler_options: The options for the QOP compiler (if any)
+            - simulate: The simulation configuration to use (if any) on the QOP
+            - memory: Whether to save each shot in memory (default is False)
+            - skip_reset: Whether to skip the reset of the qubits at the beginning of the circuit (default is False)
+            - meas_level: The measurement level to use (default is MeasLevel.CLASSIFIED)
+            - meas_return: The measurement return to use (default is MeasReturnType.AVERAGE)
+            - timeout: The timeout for the circuit execution (default is 60 seconds)
+
+    """
+
     def __init__(
         self,
-        machine: Quam,
+        machine: QuamRoot,
         channel_mapping: Dict[QiskitChannel, QuAMChannel] | None = None,
         init_macro: Optional[Callable] = None,
         qmm: QuantumMachinesManager | CloudQuantumMachinesManager | None = None,
@@ -133,24 +162,28 @@ class QMBackend(Backend):
         **fields,
     ):
         """
-        Initialize the QM backend
+        Initialize the QM backend.
+
         Args:
             machine: The Quam instance
-            channel_mapping: Optional mapping of Qiskit Pulse Channels (e.g. DriveChannel, ControlChannel)
-                             to QuAM Channels. This mapping enables the conversion of Qiskit Pulse schedules
-                            into parametric QUA macros. Note: This requires Qiskit to be of version < 2.0 to work.
-                            Additionally, the Schedules created must have deterministic durations at this point.
-            init_macro: Optional macro to be called at the beginning of the QUA program
-            qmm: Optional QuantumMachinesManager instance. If not provided, inferred from the machine
+            channel_mapping: Optional mapping of Qiskit Pulse Channels
+             (e.g. DriveChannel, ControlChannel, MeasureChannel)
+            to QuAM Channels. This mapping enables the conversion of Qiskit Pulse schedules
+            into parametric QUA macros. Note: This requires Qiskit to be of version < 2.0 to work.
+            Additionally, the Schedules created must have deterministic durations at this point.
+            init_macro: Optional macro to be called at the beginning of the QUA program to initialize the QPU.
+            qmm: Optional QuantumMachinesManager or CloudQuantumMachinesManager instance. If not provided, inferred from the machine
             name: Optional name of the backend
-            fields: kwargs for the values to use to override the default
-                options
-
-        Raises:
-            AttributeError: If a field is specified that's outside the backend's
-                options
-
-
+            fields: Optional kwargs for the values to use to override the default
+                options. The options are:
+                - shots: The number of shots to run the circuit for (default is 1024)
+                - compiler_options: The options for the QOP compiler (if any)
+                - simulate: The simulation configuration to use (if any) on the QOP
+                - memory: Whether to save each shot in memory (default is False)
+                - skip_reset: Whether to skip the reset of the qubits at the beginning of the circuit (default is False)
+                - meas_level: The measurement level to use (default is MeasLevel.CLASSIFIED)
+                - meas_return: The measurement return to use (default is MeasReturnType.AVERAGE)
+                - timeout: The timeout for the circuit execution (default is 60 seconds)
 
         """
         if name is None:
@@ -162,7 +195,7 @@ class QMBackend(Backend):
 
         self._custom_instructions = {}
         self.machine = validate_machine(machine)
-        self._qmm: Optional[QuantumMachinesManager] = qmm
+        self._qmm: Optional[QuantumMachinesManager | CloudQuantumMachinesManager] = qmm
         self._qm: Optional[QuantumMachine] = None
         self.channel_mapping: Dict[QiskitChannel, QuAMChannel] = channel_mapping or {}
         self.reverse_channel_mapping: Dict[QuAMChannel, QiskitChannel] = {
@@ -258,11 +291,11 @@ class QMBackend(Backend):
         Get the qubit pair dictionary for the backend
         """
         return self._qubit_pair_dict
-    
+
     def get_qubit_index(self, qubit: str | Qubit) -> int:
         """
         Get the index of the given qubit or qubit name in Quam.
-        
+
         Args:
             qubit: The qubit or qubit name
 
@@ -275,11 +308,11 @@ class QMBackend(Backend):
             return self.qubit_dict[qubit.name]
         else:
             raise ValueError("Qubit should be a string name or a Qubit object")
-    
+
     def get_qubit_pair_indices(self, qubit_pair: str | QubitPair) -> Tuple[int, int]:
         """
         Get the indices of the given qubit pair or qubit pair name in Quam.
-        
+
         Args:
             qubit_pair: The qubit pair or qubit pair name
 
@@ -910,7 +943,8 @@ class QMBackend(Backend):
                         )
 
                     gate_param_names = [
-                        getattr(p, "name", f"param_{i}") for i, p in enumerate(parameters)
+                        getattr(p, "name", f"param_{i}")
+                        for i, p in enumerate(parameters)
                     ]
                     self._calibration_operation_mapping_QUA[
                         OperationIdentifier(

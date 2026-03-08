@@ -24,9 +24,7 @@ from .backend import (
     FluxTunableTransmonBackend,
     QMInstructionProperties,
 )
-from .providers.iqcc_cloud_provider import IQCCProvider
 from .providers.qm_provider import QMProvider
-from .providers.qm_saas_provider import QmSaasProvider
 
 if QISKIT_PULSE_AVAILABLE:
     from .pulse.quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
@@ -54,7 +52,19 @@ __all__ = [
     "QMEstimatorOptions",
     "get_measurement_outcomes",
     "add_basic_macros",
-    "IQCCProvider",
     "QMProvider",
-    "QmSaasProvider",
 ]
+
+try:
+    from .providers.qm_saas_provider import QmSaasProvider
+
+    __all__.append("QmSaasProvider")
+except ImportError:
+    pass
+
+try:
+    from .providers.iqcc_cloud_provider import IQCCProvider
+
+    __all__.append("IQCCProvider")
+except ImportError:
+    pass

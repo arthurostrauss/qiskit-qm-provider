@@ -7,11 +7,13 @@ the backend picks up these calibrations and translates them to QUA.
 
 Requires Qiskit 1.x for full Qiskit Pulse support (DriveChannel, Schedule, etc.).
 """
-#%%
+
+# %%
 from qiskit.circuit import QuantumCircuit, Parameter, duration
 from qiskit import transpile
 from qiskit_qm_provider import IQCCProvider
 import numpy as np
+
 try:
     import qiskit.pulse as qp
 except ImportError as e:
@@ -40,12 +42,17 @@ ref_beta = qubit.get_pulse("x180").alpha
 
 # Build a Qiskit Pulse Schedule for the "x" gate on qubit 0
 # (In practice you would use your backend's drive channel and a real pulse.)
-with qp.build(backend=backend, name='rx_cal') as rx_schedule:
-    qp.play(qp.Drag(duration=ref_duration_dt, amp=ref_amp/np.pi* p, sigma=40, beta=ref_beta), backend.drive_channel(physical_qubit[0]))
+with qp.build(backend=backend, name="rx_cal") as rx_schedule:
+    qp.play(
+        qp.Drag(
+            duration=ref_duration_dt, amp=ref_amp / np.pi * p, sigma=40, beta=ref_beta
+        ),
+        backend.drive_channel(physical_qubit[0]),
+    )
 
 qc.add_calibration("rx", (0,), rx_schedule, params=[p])
 transpiled = transpile(qc, backend)
-#%%
+# %%
 # Transpile and run; the backend will update its calibration mapping from the circuit
 
 job = backend.run(transpiled.assign_parameters({p: np.pi}), shots=1024)

@@ -14,25 +14,42 @@
 
 """QM SaaS provider: connect to Quantum Machines cloud (QmSaas) and get backends.
 
+Requires the ``qm-saas`` optional dependency group::
+
+    pip install qiskit-qm-provider[qm_saas]
+
 Author: Arthur Strauss
 Date: 2026-02-08
 """
 
 from __future__ import annotations
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Type
 
-from ..backend import QMBackend, FluxTunableTransmonBackend
+from ..backend import QMBackend
 
 if TYPE_CHECKING:
     from qm import SimulationConfig
     from qm_saas import QmSaas, QOPVersion, QmSaasInstance
-    from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import (
-        FluxTunableQuam as Quam,
-    )
+    from quam.core import QuamRoot
 
 
 class QmSaasProvider:
+    """Provider for the Quantum Machines SaaS simulation platform.
+
+    Connects to the QM SaaS cloud to simulate QUA programs.  Like
+    :class:`QMProvider`, users should supply their own ``quam_cls`` and
+    ``backend_cls`` to match their hardware.
+
+    Requires the ``qm_saas`` extras (``pip install qiskit-qm-provider[qm_saas]``).
+
+    Args:
+        email: QM SaaS account email.
+        password: QM SaaS account password.
+        host: QM SaaS platform host URL.
+        version: QOP version string (defaults to the latest available).
+    """
+
     def __init__(
         self,
         email: Optional[str] = None,
@@ -65,30 +82,59 @@ class QmSaasProvider:
         )
         self._instance = self._client.simulator(version=self.version)
 
-    def get_machine(self, quam_state_folder_path: Optional[str] = None) -> Quam:
+    def get_machine(
+        self,
+        quam_state_folder_path: Optional[str] = None,
+        quam_cls: Type[QuamRoot] | None = None,
+    ) -> QuamRoot:
+        """Load a QuAM machine.
+
+        Args:
+            quam_state_folder_path: Path to the QuAM state folder.
+            quam_cls: :class:`~quam.core.QuamRoot` subclass.
+                Falls back to ``FluxTunableQuam`` from *quam-builder* when
+                omitted, but users are encouraged to provide their own.
+
+        Returns:
+            The loaded QuAM machine instance.
         """
-        Get a Quam instance from the QmSaasProvider.
-        """
-        from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import (
-            FluxTunableQuam as Quam,
-        )
+        if quam_cls is None:
+            from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import (
+                FluxTunableQuam,
+            )
+
+            quam_cls = FluxTunableQuam
 
         if quam_state_folder_path is not None:
-            return Quam.load(quam_state_folder_path)
+            return quam_cls.load(quam_state_folder_path)
         else:
-            return Quam.load()
+            return quam_cls.load()
 
     def get_backend(
         self,
         quam_state_folder_path: Optional[str] = None,
         simulation_config: Optional[SimulationConfig] = None,
+        quam_cls: Type[QuamRoot] | None = None,
+        backend_cls: Type[QMBackend] | None = None,
     ) -> QMBackend:
-        """
-        Get a QMBackend from the QmSaasProvider.
+        """Create a backend connected to a SaaS simulator instance.
+
+        Args:
+            quam_state_folder_path: Path to the QuAM state folder.
+            simulation_config: Simulation configuration (defaults to 10 000
+                clock cycles).
+            quam_cls: :class:`~quam.core.QuamRoot` subclass for the machine.
+            backend_cls: :class:`QMBackend` subclass to instantiate.
+                Defaults to the base :class:`QMBackend`; pass e.g.
+                ``FluxTunableTransmonBackend`` or a custom subclass to match
+                your hardware.
+
+        Returns:
+            A :class:`QMBackend` instance connected to the SaaS simulator.
         """
         from qm import QuantumMachinesManager, SimulationConfig
 
-        machine = self.get_machine(quam_state_folder_path)
+        machine = self.get_machine(quam_state_folder_path, quam_cls)
         self.instance.spawn()
         qmm = QuantumMachinesManager(
             host=self.instance.host,
@@ -97,39 +143,29 @@ class QmSaasProvider:
         )
         if simulation_config is None:
             simulation_config = SimulationConfig(duration=10000)
-        return FluxTunableTransmonBackend(
-            machine, provider=self, qmm=qmm, simulate=simulation_config
-        )
+        if backend_cls is None:
+            backend_cls = QMBackend
+        return backend_cls(machine, provider=self, qmm=qmm, simulate=simulation_config)
 
     @property
     def client(self) -> QmSaas:
-        """
-        Get the QmSaas client.
-        """
+        """The underlying :class:`QmSaas` client."""
         return self._client
 
     @property
     def version(self) -> QOPVersion:
-        """
-        Get the QmSaas version.
-        """
+        """The QOP version used by this provider."""
         return self._version
 
     @property
     def instance(self) -> QmSaasInstance:
-        """
-        Get the QmSaas instance.
-        """
+        """The active SaaS simulator instance."""
         return self._instance
 
     def close_all(self):
-        """
-        Close all QmSaas instances and QuantumMachinesManager instances.
-        """
+        """Close all SaaS instances and QuantumMachinesManager connections."""
         self._client.close_all()
 
     def spawn(self):
-        """
-        Spawn a new QmSaas instance.
-        """
+        """Spawn a new SaaS simulator instance."""
         self._instance.spawn()

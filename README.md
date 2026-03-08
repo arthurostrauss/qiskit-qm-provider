@@ -8,6 +8,13 @@
 pip install qiskit-qm-provider
 ```
 
+For IQCC cloud access and QM SaaS simulation (requires `iqcc-cloud-client` and `qm-saas`):
+
+```bash
+pip install qiskit-qm-provider[iqcc]
+pip install qiskit-qm-provider[qm-saas]
+```
+
 ## Documentation
 
 For full API documentation, please refer to the [docs folder](docs/). Example workflows (primitives, custom gates, calibrations, IQCC + Qiskit Experiments) are in the [examples](examples/) folder.
@@ -34,32 +41,59 @@ from qiskit_qm_provider.backend.backend_utils import add_basic_macros
 # add_basic_macros(backend)
 ```
 
-1. **QMProvider**: Assumes the experimentalist has a Quantum Orchestration Platform directly accessible on their server and a local Quam instance stored on the computer.
-  ```python
-    from qiskit_qm_provider import QMProvider
-    provider = QMProvider(state_folder_path="/path/to/quam/state")
-    backend = provider.get_backend()
-  ```
-2. **QmSaasProvider**: Connects directly to the [QM SaaS platform](https://docs.quantum-machines.co/latest/docs/Guides/qm_saas_guide/).
-  ```python
-    from qiskit_qm_provider import QmSaasProvider
-    provider = QmSaasProvider(email="...", password="...", host="...")
-    backend = provider.get_backend(quam_state_folder_path="...")
-  ```
-3. **IQCCProvider**: Provides access to available devices at the Israeli Quantum Computing Center (IQCC) in Tel Aviv, Israel.
-  ```python
-    from qiskit_qm_provider import IQCCProvider
-    provider = IQCCProvider(api_token="...")
-    backend = provider.get_backend("arbel") # Example machine name
-  ```
+### Bring your own QuAM and backend
 
-## Backends: QMBackend and FluxTunableTransmonBackend
+`QMProvider` and `QmSaasProvider` are **hardware-agnostic**.  Users are encouraged to supply their own [`QuamRoot`](https://qua-platform.github.io/quam/) subclass (via `quam_cls`) and their own `QMBackend` subclass (via `backend_cls`) that match their specific hardware setup.  This avoids a hard dependency on any particular qubit architecture and lets any QuAM-compatible machine be used with the full Qiskit stack.
+
+When `quam_cls` or `backend_cls` are omitted, the providers fall back to `FluxTunableQuam` (from *quam-builder*) and the base `QMBackend`, respectively, for backward compatibility.  For flux-tunable transmon setups, the ready-made `FluxTunableTransmonBackend` can be passed explicitly.
+
+1. **QMProvider**: Assumes the experimentalist has a Quantum Orchestration Platform directly accessible on their server and a local Quam instance stored on the computer.
+
+```python
+from qiskit_qm_provider import QMProvider, FluxTunableTransmonBackend
+
+# Option A: supply your own QuAM class and backend class
+from my_lab.quam import MyCustomQuam
+from my_lab.backend import MyBackend
+
+provider = QMProvider(state_folder_path="/path/to/quam/state", quam_cls=MyCustomQuam)
+backend = provider.get_backend(backend_cls=MyBackend)
+
+# Option B: flux-tunable transmon setup (explicit)
+provider = QMProvider(state_folder_path="/path/to/quam/state")
+backend = provider.get_backend(backend_cls=FluxTunableTransmonBackend)
+```
+
+2. **QmSaasProvider** *(requires `pip install qiskit-qm-provider[qm-saas]`)*: Connects directly to the [QM SaaS platform](https://docs.quantum-machines.co/latest/docs/Guides/qm_saas_guide/).
+
+```python
+from qiskit_qm_provider import QmSaasProvider, FluxTunableTransmonBackend
+
+provider = QmSaasProvider(email="...", password="...", host="...")
+backend = provider.get_backend(
+    quam_state_folder_path="...",
+    backend_cls=FluxTunableTransmonBackend,
+)
+```
+
+3. **IQCCProvider** *(requires `pip install qiskit-qm-provider[iqcc]`)*: Provides access to available devices at the Israeli Quantum Computing Center (IQCC) in Tel Aviv, Israel.  IQCC backends are flux-tunable transmon machines; the provider always returns a `FluxTunableTransmonBackend`.
+
+```python
+from qiskit_qm_provider import IQCCProvider
+
+provider = IQCCProvider(api_token="...")
+backend = provider.get_backend("arbel")  # Example machine name
+```
+
+## Backends: QMBackend and hardware-specific subclasses
 
 The backends returned by the providers are the central interface that connects Qiskit to the Quantum Orchestration Platform. They serve two main roles: (1) representing the hardware in Qiskit’s terms, and (2) translating Qiskit circuits and schedules into QUA for execution.
 
 ### Representing the hardware in Qiskit
 
-**QMBackend** (and its subclasses such as **FluxTunableTransmonBackend**) implement the interface needed to build the appropriate [Target](https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.transpiler.Target) object, which is the key abstraction used to represent a backend in Qiskit’s `BackendV2` model. The Target is populated from the existing [Quam](https://qua-platform.github.io/quam/) structure: the backend fetches **macros** (gate-level operations and their QUA implementations) from the machine’s qubits and qubit pairs, and derives the **coupling map** from the active qubit topology. This allows the full Qiskit transpilation pipeline to work (basis gates, connectivity, instruction properties) so that algorithms can be compiled down to circuits executable on the hardware.
+**QMBackend** is the base class that provides the full circuit-to-QUA pipeline. Hardware-specific subclasses (such as the built-in **FluxTunableTransmonBackend**, or a user-defined subclass) add channel mappings, initialization macros, and other architecture-dependent details. Users whose hardware does not match the flux-tunable transmon topology should subclass `QMBackend` and provide a `QuamRoot` subclass that describes their own machine.
+
+All backends implement the interface needed to build the appropriate [Target](https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.transpiler.Target) object, which is the key abstraction used to represent a backend in Qiskit’s `BackendV2` model. The Target is populated from the existing [Quam](https://qua-platform.github.io/quam/) structure: the backend fetches **macros** (gate-level operations and their QUA implementations) from the machine’s qubits and qubit pairs, and derives the **coupling map** from the active qubit topology. This allows the full Qiskit transpilation pipeline to work (basis gates, connectivity, instruction properties) so that algorithms can be compiled down to circuits executable on the hardware.
 
 ### Circuit-to-QUA translation: qm_qasm and `quantum_circuit_to_qua`
 
@@ -80,9 +114,9 @@ Compiles the Qiskit `QuantumCircuit` into QUA instructions and inserts them into
 
 So: the “simple” path is the standard translation of Qiskit workflows through the primitives (`run()`, `QMSampler`, `QMEstimator`). The **extended** path is to embed circuits inside QUA via `quantum_circuit_to_qua` and ParameterTables, merging standard Qiskit with real-time QUA processing and hybrid workloads.
 
-### FluxTunableTransmonBackend (and future hardware-specific backends)
+### FluxTunableTransmonBackend (built-in example)
 
-**FluxTunableTransmonBackend** is a subclass of **QMBackend** for flux-tunable transmon machines. Hardware-specific backends like this add two things on top of the base backend:
+**FluxTunableTransmonBackend** is the built-in subclass of **QMBackend** for flux-tunable transmon machines.  It serves as a reference for users who want to create their own hardware-specific backend.  Hardware-specific backends like this add two things on top of the base backend:
 
 1. **Hardware lifecycle and Quam integration**
   They pull from the [quam-builder](https://github.com/Quantum-Machines/quam-builder) interface (QM’s standardized product line for Quam-based configurations). For example, `**initialize_qpu`** is provided by the Quam machine and is wired as the backend’s `**init_macro**`, so that each QUA program can start with the correct hardware initialization.
