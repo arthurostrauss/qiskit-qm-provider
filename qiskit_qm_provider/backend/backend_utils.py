@@ -38,6 +38,7 @@ from quam.components import Qubit, QubitPair
 from quam.core import QuamRoot
 from quam.utils.qua_types import QuaVariableInt
 from ..additional_gates import CRGate, SYGate, SYdgGate
+from qm import generate_qua_script
 from qm.qua import declare, assign, Cast, declare_stream
 
 if TYPE_CHECKING:
@@ -370,3 +371,35 @@ def get_non_trivial_observables(
         new_observables.append(Pauli(new_pauli_label))
 
     return PauliList(new_observables)
+
+
+def dump_qua_script(
+    backend: "QMBackend",
+    circuit: QuantumCircuit,
+    path: str | None = None,
+    param_table=None,
+) -> str:
+    """Compile a circuit to QUA and write the running QUA script to a file.
+
+    Useful for inspecting the actual QUA program that would be executed
+    when running the circuit on the backend.
+
+    Args:
+        backend: The QM backend (used for quantum_circuit_to_qua and generate_config).
+        circuit: The transpiled QuantumCircuit to compile to QUA.
+        path: Output file path for the QUA script. If None, uses "debug_qua.py".
+        param_table: Optional parameter table for parameterized circuits
+            (same as for quantum_circuit_to_qua).
+
+    Returns:
+        The path to the written file.
+    """
+    compilation_result = backend.quantum_circuit_to_qua(circuit, param_table=param_table)
+    qua_program = compilation_result.result_program.dsl_program
+    config = backend.generate_config()
+    qua_script = generate_qua_script(qua_program, config)
+    if path is None:
+        path = "debug_qua.py"
+    with open(path, "w") as f:
+        f.write(qua_script)
+    return path
