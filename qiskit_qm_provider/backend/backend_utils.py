@@ -373,6 +373,28 @@ def get_non_trivial_observables(
     return PauliList(new_observables)
 
 
+def get_qua_script(
+    backend: "QMBackend",
+    circuit: QuantumCircuit,
+    param_table=None,
+) -> str:
+    """Compile a circuit to QUA and return the running QUA script as a string.
+
+    Args:
+        backend: The QM backend (used for quantum_circuit_to_qua and generate_config).
+        circuit: The transpiled QuantumCircuit to compile to QUA.
+        param_table: Optional parameter table for parameterized circuits
+            (same as for quantum_circuit_to_qua).
+
+    Returns:
+        The QUA script string (Python source of the program that would be executed).
+    """
+    compilation_result = backend.quantum_circuit_to_qua(circuit, param_table=param_table)
+    qua_program = compilation_result.result_program.dsl_program
+    config = backend.generate_config()
+    return generate_qua_script(qua_program, config)
+
+
 def dump_qua_script(
     backend: "QMBackend",
     circuit: QuantumCircuit,
@@ -394,10 +416,7 @@ def dump_qua_script(
     Returns:
         The path to the written file.
     """
-    compilation_result = backend.quantum_circuit_to_qua(circuit, param_table=param_table)
-    qua_program = compilation_result.result_program.dsl_program
-    config = backend.generate_config()
-    qua_script = generate_qua_script(qua_program, config)
+    qua_script = get_qua_script(backend, circuit, param_table=param_table)
     if path is None:
         path = "debug_qua.py"
     with open(path, "w") as f:

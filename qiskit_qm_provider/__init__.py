@@ -33,7 +33,7 @@ from .parameter_table import *
 from .additional_gates import *
 from .primitives.qm_sampler import QMSamplerV2, QMSamplerOptions
 from .primitives.qm_estimator import QMEstimatorV2, QMEstimatorOptions
-from .backend.backend_utils import get_measurement_outcomes, add_basic_macros, dump_qua_script
+from .backend.backend_utils import get_measurement_outcomes, add_basic_macros, dump_qua_script, get_qua_script
 
 __all__ = [
     "QMBackend",
@@ -53,6 +53,7 @@ __all__ = [
     "get_measurement_outcomes",
     "add_basic_macros",
     "dump_qua_script",
+    "get_qua_script",
     "QMProvider",
 ]
 
