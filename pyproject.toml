@@ -38,7 +38,10 @@ dependencies = [
 
 [project.optional-dependencies]
 iqcc = [
-    "iqcc-cloud-client"
+    "iqcc-cloud-client",
+    "quam-builder@git+https://github.com/qua-platform/quam-builder.git@IQCC-dev-12/25",
+    "iqcc-calibration-tools@git+https://github.com/i-qcc/iqcc-calibration.git"
+
 ]
 qm-saas = [
     "qm-saas"
