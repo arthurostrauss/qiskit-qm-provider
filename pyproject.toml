@@ -1,6 +1,6 @@
 [project]
 name = "qiskit-qm-provider"
-version = "0.1.0"
+version = "0.1.1"
 description = "Provider for running Qiskit circuits and pulses on Quantum Machines' Quantum Orchestration Platform"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
