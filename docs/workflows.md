@@ -59,8 +59,31 @@ Typical flow:
 
 1. Install the IQCC extra: `pip install qiskit-qm-provider[iqcc]`.
 2. Create `IQCCProvider(api_token=...)`.
-3. Obtain a backend with `provider.get_backend("arbel")` (or another device name).
-4. Use Qiskit Experiments or custom circuits against this backend.
+3. Optionally fetch a QuAM machine explicitly with:
+
+   ```python
+   machine = provider.get_machine(
+       "arbel",
+       quam_state_folder_path="/path/to/quam/state",  # or rely on QUAM_STATE_PATH
+       # quam_cls=CustomIQCCQuam,  # optional: inject a specific Quam class
+   )
+   ```
+
+4. Obtain a backend either from a device name or from a pre-loaded machine:
+
+   ```python
+   # From a device name (loads QuAM under the hood)
+   backend = provider.get_backend(
+       "arbel",
+       quam_state_folder_path="/path/to/quam/state",  # optional, falls back to QUAM_STATE_PATH
+       # quam_cls=CustomIQCCQuam,
+   )
+
+   # Or from an already-loaded machine
+   backend = provider.get_backend(machine)
+   ```
+
+5. Use Qiskit Experiments or custom circuits against this backend.
 
 See:
 

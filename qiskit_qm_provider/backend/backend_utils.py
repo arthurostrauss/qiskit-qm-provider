@@ -389,7 +389,9 @@ def get_qua_script(
     Returns:
         The QUA script string (Python source of the program that would be executed).
     """
-    compilation_result = backend.quantum_circuit_to_qua(circuit, param_table=param_table)
+    compilation_result = backend.quantum_circuit_to_qua(
+        circuit, param_table=param_table
+    )
     qua_program = compilation_result.result_program.dsl_program
     config = backend.generate_config()
     return generate_qua_script(qua_program, config)

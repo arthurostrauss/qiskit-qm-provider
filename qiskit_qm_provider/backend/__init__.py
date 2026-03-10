@@ -21,7 +21,12 @@ Date: 2026-02-08
 from .qm_backend import QMBackend, QISKIT_PULSE_AVAILABLE
 from .flux_tunable_transmon_backend import FluxTunableTransmonBackend
 from .qm_instruction_properties import QMInstructionProperties
-from .backend_utils import add_basic_macros, get_measurement_outcomes, dump_qua_script, get_qua_script
+from .backend_utils import (
+    add_basic_macros,
+    get_measurement_outcomes,
+    dump_qua_script,
+    get_qua_script,
+)
 
 __all__ = [
     "QMBackend",

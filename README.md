@@ -82,7 +82,16 @@ backend = provider.get_backend(
 from qiskit_qm_provider import IQCCProvider
 
 provider = IQCCProvider(api_token="...")
+# Option A: let the provider load the QuAM (uses QUAM_STATE_PATH if no folder is given)
 backend = provider.get_backend("arbel")  # Example machine name
+
+# Option B: explicitly control the QuAM state folder and/or Quam class (useful in tests)
+machine = provider.get_machine(
+    "arbel",
+    quam_state_folder_path="/path/to/quam/state",  # or rely on QUAM_STATE_PATH
+    # quam_cls=CustomIQCCQuam,
+)
+backend = provider.get_backend(machine)
 ```
 
 ## Backends: QMBackend and hardware-specific subclasses

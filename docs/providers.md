@@ -66,6 +66,14 @@ IQCC backends are flux-tunable transmon machines; the provider always returns a 
 Initializes the IQCC provider.
 - `api_token`: API token for IQCC authentication.
 
-### `get_backend(name: str | IQCCQuam) -> FluxTunableTransmonBackend`
-Returns a backend for the specified machine name.
-- `name`: Name of the quantum computer (e.g., `"arbel"`) or a pre-loaded QuAM instance.
+### `get_machine(name: str, quam_state_folder_path: Optional[str] = None, quam_cls: Type[QuamRoot] | None = None) -> QuamRoot`
+Fetches the latest QuAM state for the given IQCC device and returns a loaded QuAM instance.
+- `name`: Name of the quantum computer (e.g., `"arbel"`).
+- `quam_state_folder_path`: Optional path to the QuAM state folder. If omitted, the provider falls back to the `QUAM_STATE_PATH` environment variable. Supplying an explicit path is recommended for tests and non-interactive environments.
+- `quam_cls`: Optional `QuamRoot` subclass to use for loading the machine. If omitted, the provider defaults to the IQCC-specific QuAM implementation from `iqcc_calibration_tools` (when available), and otherwise falls back to the standard `FluxTunableQuam` from *quam-builder*.
+
+### `get_backend(name: str | QuamRoot, quam_state_folder_path: Optional[str] = None, quam_cls: Type[QuamRoot] | None = None) -> FluxTunableTransmonBackend`
+Returns a `FluxTunableTransmonBackend` for the specified IQCC device or a pre-loaded QuAM instance.
+- `name`: Either the name of the quantum computer (e.g., `"arbel"`) or a pre-loaded QuAM instance.
+- `quam_state_folder_path`: Optional path to the QuAM state folder when `name` is a string. If omitted, falls back to the `QUAM_STATE_PATH` environment variable.
+- `quam_cls`: Optional `QuamRoot` subclass to use when loading the machine. If omitted, the same default resolution as in `get_machine` is used (IQCC-specific QuAM from `iqcc_calibration_tools` when present, otherwise `FluxTunableQuam` from *quam-builder*).
