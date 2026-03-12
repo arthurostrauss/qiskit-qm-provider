@@ -134,6 +134,80 @@ They are designed to:
 - stream parameters in real time via `InputType` (input streams, IO, DGX_Q),
 - and map shot budgets to QOP shots and QUA loops.
 
+### 3.1 Generated QUA programs (and how to inspect them)
+
+`QMSamplerV2`, `QMEstimatorV2`, and the `backend.run()` interface are meant to let you stay in
+**Qiskit-land** while the provider automatically generates the **QUA program** required to execute
+your circuits on QOP.
+
+If you need to debug what is actually being sent to QOP, you can inspect the generated QUA program
+from the returned job object:
+
+- For primitives: `job = sampler.run(...)` or `job = estimator.run(...)`
+- For the backend: `job = backend.run(...)`
+
+In all cases, the generated QUA `Program` is available as `job.program`. You can pretty-print it as
+a QUA script using `qm.generate_qua_script`:
+
+```python
+from qm import generate_qua_script
+
+print(generate_qua_script(job.program))
+```
+
+Below is a complete snippet showing the workflow end-to-end for `QMSamplerV2`, `QMEstimatorV2`, and
+`backend.run()`, including how to print the auto-generated QUA program for each job:
+
+```python
+from qm import generate_qua_script
+
+from qiskit import QuantumCircuit, transpile
+from qiskit.quantum_info import SparsePauliOp
+
+from qiskit_qm_provider import QMProvider, QMSamplerV2, QMSamplerOptions, QMEstimatorV2, QMEstimatorOptions
+
+# 1) Get a backend from a provider (local QuAM folder example)
+provider = QMProvider(state_folder_path="/path/to/quam/state")
+backend = provider.get_backend()
+
+# 2) Define a small circuit
+qc = QuantumCircuit(1, 1)
+qc.h(0)
+qc.measure(0, 0)
+qc = transpile(qc, backend)
+
+# --- Sampler primitive ---
+sampler = QMSamplerV2(backend=backend, options=QMSamplerOptions(default_shots=256))
+sampler_job = sampler.run([qc])
+
+print("=== Sampler: generated QUA program ===")
+print(generate_qua_script(sampler_job.program))
+
+sampler_result = sampler_job.result()
+print("Sampler result:", sampler_result)
+
+# --- Estimator primitive ---
+# (Use an observable compatible with the circuit's number of qubits.)
+obs = SparsePauliOp.from_list([("Z", 1.0)])
+estimator = QMEstimatorV2(backend=backend, options=QMEstimatorOptions())
+estimator_job = estimator.run([(qc.remove_final_measurements(inplace=False), obs, [])])
+
+print("=== Estimator: generated QUA program ===")
+print(generate_qua_script(estimator_job.program))
+
+estimator_result = estimator_job.result()
+print("Estimator result:", estimator_result)
+
+# --- Backend.run() (traditional Qiskit backend interface) ---
+backend_job = backend.run(qc, shots=256)
+
+print("=== backend.run(): generated QUA program ===")
+print(generate_qua_script(backend_job.program))
+
+backend_result = backend_job.result()
+print("backend.run() result:", backend_result)
+```
+
 Typical flow:
 
 1. Build or obtain a backend (`QMProvider`, `QmSaasProvider`, or `IQCCProvider`).

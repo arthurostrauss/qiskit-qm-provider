@@ -12,6 +12,20 @@ parent: Home
 
 A custom implementation of `BaseEstimatorV2` optimized for QOP.
 
+### Generated QUA program (debugging)
+
+`QMEstimatorV2` automatically generates the underlying QUA program required to run your pubs on
+QOP. If you need to inspect what was generated, the returned job exposes the QUA `Program` on
+`job.program`, and you can print it as a QUA script via:
+
+```python
+from qm import generate_qua_script
+print(generate_qua_script(job.program))
+```
+
+See the full end-to-end snippet in
+[Workflows and Examples](workflows.md#31-generated-qua-programs-and-how-to-inspect-them).
+
 ### `__init__(backend: QMBackend, options: QMEstimatorOptions | dict | None = None)`
 - `backend`: The QMBackend.
 - `options`: Options for the estimator.
@@ -33,6 +47,20 @@ Runs the estimator.
 `qiskit_qm_provider.primitives.qm_sampler.QMSamplerV2`
 
 A custom implementation of `BaseSamplerV2`.
+
+### Generated QUA program (debugging)
+
+`QMSamplerV2` automatically generates the underlying QUA program required to run your pubs on
+QOP. If you need to inspect what was generated, the returned job exposes the QUA `Program` on
+`job.program`, and you can print it as a QUA script via:
+
+```python
+from qm import generate_qua_script
+print(generate_qua_script(job.program))
+```
+
+See the full end-to-end snippet in
+[Workflows and Examples](workflows.md#31-generated-qua-programs-and-how-to-inspect-them).
 
 ### `__init__(backend: QMBackend, options: QMSamplerOptions | dict | None = None)`
 - `backend`: The QMBackend.

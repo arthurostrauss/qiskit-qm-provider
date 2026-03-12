@@ -337,8 +337,7 @@ def get_run_program(
         progs = []
         for j, qc in enumerate(circuits):
             with program() as prog:
-                if backend.init_macro:
-                    backend.init_macro()
+                backend.init_macro()
 
                 clbits_dict = _process_circuit(
                     qc,

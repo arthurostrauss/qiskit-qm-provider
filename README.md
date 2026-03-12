@@ -17,7 +17,11 @@ pip install qiskit-qm-provider[qm-saas]
 
 ## Documentation
 
-For full API documentation, please refer to the [docs folder](docs/). Example workflows (primitives, custom gates, calibrations, IQCC + Qiskit Experiments) are in the [examples](examples/) folder.
+For full API documentation, please refer to the [docs folder](docs/) or the
+rendered GitHub Pages site at
+[`https://arthurostrauss.github.io/qiskit-qm-provider/`](https://arthurostrauss.github.io/qiskit-qm-provider/).
+Example workflows (primitives, custom gates, calibrations, IQCC + Qiskit Experiments) are in the
+[examples](examples/) folder.
 
 ## Overview
 
@@ -141,6 +145,20 @@ We provide custom implementations of the standard Qiskit Primitives, `QMEstimato
 
 1. **Real-time Parameter Adjustment**: The ability to adjust parameter values in real-time and load them asynchronously using **Input Streaming** or **DGX Quantum**.
 2. **Real-time Control Flow**: The ability to perform real-time control flow to estimate different expectation values seamlessly across a single compilation of a quantum circuit (specifically for the Estimator primitive).
+
+### Generated QUA program (debugging)
+
+`QMSamplerV2`, `QMEstimatorV2`, and `backend.run()` automatically generate the underlying QUA program
+sent to QOP. For debugging, you can inspect the generated QUA `Program` on `job.program` (where
+`job` is returned by either a primitive’s `run()` or `backend.run()`), and print it as a QUA script:
+
+```python
+from qm import generate_qua_script
+print(generate_qua_script(job.program))
+```
+
+For a full workflow snippet (primitives + `backend.run()` + printing the generated QUA), see
+[`docs/workflows.md`](docs/workflows.md#31-generated-qua-programs-and-how-to-inspect-them).
 
 ### Usage Example
 

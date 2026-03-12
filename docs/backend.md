@@ -19,6 +19,20 @@ Executes the circuit(s).
 - `run_input`: One or more Qiskit QuantumCircuits.
 - `options`: Execution options (e.g., `shots`).
 
+**Generated QUA program (debugging):** `backend.run()` automatically generates the underlying QUA
+`Program` that will be executed on QOP. The returned `QMJob` exposes it on `job.program`. To print
+it as a QUA script:
+
+```python
+from qm import generate_qua_script
+print(generate_qua_script(job.program))
+```
+
+See
+[Workflows and Examples](workflows.md#31-generated-qua-programs-and-how-to-inspect-them)
+for a complete snippet showing `backend.run()` and the V2 primitives (`QMSamplerV2`,
+`QMEstimatorV2`) side-by-side.
+
 #### `quantum_circuit_to_qua(qc: QuantumCircuit, param_table: Optional[ParameterTable] = None) -> CompilationResult`
 Compiles a Qiskit circuit to QUA instructions. Can be used inside a QUA program context.
 - `qc`: The circuit to compile.

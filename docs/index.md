@@ -7,9 +7,11 @@ has_children: true
 
 # Qiskit QM Provider
 
-Welcome — this project is a **toolbox for crossing abstraction layers** between high-level Qiskit circuits and low-level QUA control programs on Quantum Machines' Quantum Orchestration Platform (QOP).
+Welcome to the Qiskit-QM-Provider documentation page!
 
-Thanks to Qiskit's fully integrated stack, and our close integration with QOP's latest real‑time capabilities, this provider is meant to **push state‑of‑the‑art use cases**: hybrid programs that combine classical and quantum workloads, while staying in familiar Qiskit terms.
+This project is a **toolbox for crossing abstraction layers** between high-level circuits written in [Qiskit](https://www.ibm.com/quantum/qiskit) and low-level QUA control programs on Quantum Machines' [Quantum Orchestration Platform](https://docs.quantum-machines.co/latest/) (QOP).
+
+Thanks to Qiskit's fully integrated transpiler stack, and our close integration with QOP's latest real‑time capabilities, this provider is meant to **push state‑of‑the‑art use cases**: hybrid programs that combine classical and quantum workloads, while staying in familiar Qiskit terms for abstract/complex circuit writing.
 
 **Author:** Arthur Strauss — *Centre for Quantum Technologies, National University of Singapore, in collaboration with Quantum Machines Ltd.*  
 **License:** Apache 2.0 (see the `LICENSE.md` file in the repository).
@@ -64,6 +66,18 @@ practice you often need to touch several layers at once. This provider is design
   you to rewrite everything as low‑level QUA code,
 - make it easy to **embed Qiskit circuits inside larger QUA programs**, using the same
   calibration model and parameter interface.
+
+Behind the scenes, the information about **how to lower a `QuantumCircuit` to QUA** flows through
+Qiskit’s transpiler interface into a `QMBackend` that in turn queries the
+[Quantum Abstract Machine (QUAM)](https://qua-platform.github.io/quam/) description of your device.
+From this QUAM model, the backend derives essential hardware data such as **connectivity /
+`coupling_map`**, the set of **native gate-level operations** (assuming QUAM populates the
+`macros` field for each qubit and qubit pair – see
+[Gate‑Level Operations](https://qua-platform.github.io/quam/features/gate-level-operations/)),
+and qubit properties like **T1, T2, and frequencies**. Coupling this knowledge to advanced Qiskit
+workloads (`QMSamplerV2`, `QMEstimatorV2`, `backend.run()`) and to the ability to **embed Qiskit
+inside QUA** is what makes this provider a unique toolbox: Qiskit’s stack becomes a powerful helper
+for ambitious, QUA-centric control programs, rather than merely the entry point.
 
 If you are building experiments that mix calibration, characterization, optimal control, and
 algorithmic workloads, this toolbox is meant to minimize the glue you need to write yourself.
