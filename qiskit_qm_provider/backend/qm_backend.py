@@ -413,8 +413,7 @@ class QMBackend(Backend):
     @property
     def qmm(self) -> QuantumMachinesManager | CloudQuantumMachinesManager:
         """
-        Returns the QuantumMachinesManager instance. This is a property that reopens a QuantumMachinesManager each time
-        it is called for the underlying configuration might have changed between two calls
+        Returns the QuantumMachinesManager instance. Gets a new QuantumMachinesManager instance if none is already set.
         """
         if self._qmm is None:
             self._qmm = self.machine.connect()
@@ -423,16 +422,14 @@ class QMBackend(Backend):
     @qmm.setter
     def qmm(self, qmm: QuantumMachinesManager | CloudQuantumMachinesManager):
         """
-        Set the QuantumMachinesManager instance. This is a property that reopens a QuantumMachinesManager each time
-        it is called for the underlying configuration might have changed between two calls
+        Set the QuantumMachinesManager instance.
         """
         self._qmm = qmm
 
     @property
     def qm(self) -> QuantumMachine | CloudQuantumMachine:
         """
-        Returns the QuantumMachine instance. This is a property that reopens a QuantumMachine each time
-        it is called for the underlying configuration might have changed between two calls
+        Returns the QuantumMachine instance. Gets a new QuantumMachine instance if none is already set, using the current QM config.
         """
         if self._qm is None:
             self._qm = self.qmm.open_qm(self.qm_config, close_other_machines=True)
