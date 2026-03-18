@@ -17,18 +17,16 @@
 Author: Arthur Strauss
 Date: 2026-02-08
 """
-
+from typing import Tuple, Union, List, Sequence, Literal, Optional
 from numbers import Number
 
+import numpy as np
 from qm.jobs.running_qm_job import RunningQmJob
-from qm.qua import declare, assign as qua_assign, fixed, for_
-from quam.utils.qua_types import QuaVariableInt, Scalar, ScalarInt
+from qm.qua import assign as qua_assign, fixed, for_
+from qm.qua._expressions import QuaArrayVariable
+from quam.utils.qua_types import Scalar, ScalarInt
 
 from .parameter import Parameter
-from typing import Tuple, Union, List, Sequence, Literal, Optional
-import numpy as np
-from qm.qua._expressions import QuaArrayVariable
-
 
 class QUA2DArray(Parameter):
     """
