@@ -74,11 +74,78 @@ class ParameterPool:
         """
         cls._counter = itertools.count(1)
         for value in cls._parameters_dict.values():
+            if hasattr(value, "_clear_quarc_stream_specs"):
+                value._clear_quarc_stream_specs()
             if hasattr(value, "reset"):
                 value.reset()
         cls._parameters_dict.clear()
         cls._configured = False
         cls._patched = False
+
+    @classmethod
+    def iter_dgx_quarc_packet_targets(cls) -> List[Union["ParameterTable", "Parameter"]]:
+        """
+        Every :class:`~qiskit_qm_provider.parameter_table.ParameterTable` and standalone
+        :class:`~qiskit_qm_provider.parameter_table.Parameter` in the pool with ``input_type == DGX_Q``,
+        sorted by :func:`~qiskit_qm_provider.parameter_table.quarc_naming.quarc_packet_sort_key`
+        (same order as Quarc ``add_struct`` when the pool drives synthesis).
+        """
+        from .input_type import InputType
+        from .parameter import Parameter
+        from .parameter_table import ParameterTable
+        from .quarc_naming import quarc_packet_sort_key
+
+        tables = cls.iter_dgx_parameter_tables()
+        standalones: List[Parameter] = []
+        for obj in cls.get_all_objs():
+            if isinstance(obj, Parameter) and obj.input_type == InputType.DGX_Q and obj.is_standalone():
+                standalones.append(obj)
+        targets: List[Union[ParameterTable, Parameter]] = [*tables, *standalones]
+        # Ensure the private Quarc struct naming hook is consistent across both
+        # standalone Parameters and ParameterTables.
+        for obj in targets:
+            obj._materialize_dgx_stream_id_for_quarc()
+        targets.sort(key=quarc_packet_sort_key)
+        return targets
+
+    @classmethod
+    def prepare_dgx_quarc_hybrid_packets(
+        cls,
+        *,
+        quarc_module_class_name: str | None = None,
+    ) -> List[Union["ParameterTable", "Parameter"]]:
+        """
+        Build an in-memory Quarc ``BaseModule`` (``add_struct`` per target), then copy stream ids onto pool objects.
+
+        Requires the ``quarc`` package. Uses isolated Quarc stream counters so this does not perturb other Quarc
+        usage in-process. Call after the pool snapshot is final and before QUA uses ``declare_external_stream``.
+
+        Args:
+            quarc_module_class_name: Name of the generated Quarc ``BaseModule`` subclass (must be a valid Python identifier).
+                If omitted, uses :data:`quarc_live_module.DEFAULT_QUARC_MODULE_CLASS_NAME`.
+        """
+        targets = cls.iter_dgx_quarc_packet_targets()
+        if not targets:
+            return []
+        try:
+            from .quarc_live_module import (
+                attach_pool_targets_from_quarc_module,
+                build_quarc_base_module_from_specs,
+                isolated_quarc_stream_id_counters,
+                specs_from_quarc_packet_targets,
+            )
+        except ImportError as exc:
+            raise ImportError(
+                "ParameterPool.prepare_dgx_quarc_hybrid_packets requires the `quarc` package."
+            ) from exc
+        with isolated_quarc_stream_id_counters():
+            specs = specs_from_quarc_packet_targets(
+                targets,
+                module_class_name=quarc_module_class_name,
+            )
+            module = build_quarc_base_module_from_specs(specs)
+            attach_pool_targets_from_quarc_module(module, targets)
+        return targets
 
     @classmethod
     def get_all_ids(cls) -> List[int]:
@@ -99,6 +166,24 @@ class ParameterPool:
             List[Any]: A list of all the objects.
         """
         return list(cls._parameters_dict.values())
+
+    @classmethod
+    def iter_dgx_parameter_tables(cls) -> List["ParameterTable"]:
+        """
+        Return every registered :class:`~qiskit_qm_provider.parameter_table.ParameterTable`
+        with ``input_type == DGX_Q``, sorted by pool ``_id`` (stable order for Quarc codegen).
+
+        Used to drive Quarc module synthesis from the full pool snapshot (not only policy/reward).
+        """
+        from .input_type import InputType
+        from .parameter_table import ParameterTable
+
+        tables: List[ParameterTable] = []
+        for obj in cls.get_all_objs():
+            if isinstance(obj, ParameterTable) and obj.input_type == InputType.DGX_Q:
+                tables.append(obj)
+        tables.sort(key=lambda t: t._id)
+        return tables
 
     @classmethod
     def get_all(cls) -> Dict[int, ParameterTable | Parameter]:
@@ -193,103 +278,3 @@ class ParameterPool:
             str: A string representation of the pool.
         """
         return f"ParameterPool({self._parameters_dict})"
-
-    @classmethod
-    def patch_opnic_wrapper(
-        cls,
-        path_to_python_wrapper: Union[str, Path],
-        force_recompile_python_wrapper: bool = False,
-    ):
-        """
-        Patch the OPNIC wrapper.
-
-        Args:
-            path_to_opnic_dev (Optional[str]): The path to the OPNIC development directory
-        """
-        from .opnic_utils import patch_opnic_wrapper
-        from .parameter_table import ParameterTable
-
-        def check_function(param_table: ParameterTable | Parameter) -> bool:
-            from .input_type import InputType
-
-            return (
-                param_table._usable_for_dgx_communication
-                if isinstance(param_table, ParameterTable)
-                else param_table.is_standalone()
-            ) and param_table.input_type == InputType.DGX_Q
-
-        param_tables = list(filter(check_function, cls.get_all_objs()))
-        patch_opnic_wrapper(
-            param_tables, path_to_python_wrapper, force_recompile_python_wrapper
-        )
-        cls._patched = True
-
-    @classmethod
-    def configure_stream(
-        cls,
-        path_to_python_wrapper: Union[str, Path],
-    ):
-        # from opnic_python.opnic_wrapper import configure_stream
-        # from opnic_python.opnic_wrapper import Direction_INCOMING, Direction_OUTGOING
-        if "opnic_wrapper" not in sys.modules:
-            sys.path.append(str(path_to_python_wrapper))
-        from opnic_wrapper import (
-            Direction_INCOMING,
-            Direction_OUTGOING,
-            configure_stream,
-        )
-        from .input_type import Direction
-
-        for obj in cls.get_all_objs():
-            direction = (
-                Direction_INCOMING
-                if obj.direction == Direction.INCOMING
-                else Direction_OUTGOING
-            )
-            configure_stream(obj.stream_id, direction)
-        cls._configured = True
-
-    @classmethod
-    def initialize_streams(cls, path_to_python_wrapper: Union[str, Path]):
-        """
-        Initialize the OPNIC and the necessary streams for the current stage of the ParameterPool.
-        Args:
-            path_to_python_wrapper: The path to the Python wrapper.
-
-        Returns:
-
-        """
-        cls.patch_opnic_wrapper(path_to_python_wrapper)
-        cls.configure_stream(path_to_python_wrapper)
-
-    @classmethod
-    def opx_handshake(cls):
-        """
-        Perform the OPNIC handshake.
-        """
-        from opnic_wrapper import opx_handshake
-
-        opx_handshake()
-
-    @classmethod
-    def patched(cls) -> bool:
-        return cls._patched
-
-    @classmethod
-    def configured(cls) -> bool:
-        return cls._configured
-
-    @classmethod
-    def close_streams(cls):
-        """
-        Close the streams.
-        """
-        if cls._configured and cls._patched:
-            from opnic_wrapper import close_stream
-
-            for obj in cls.get_all_objs():
-                close_stream(obj.stream_id)
-            cls._configured = False
-            cls._patched = False
-        else:
-            raise ValueError("The streams are not configured or patched.")

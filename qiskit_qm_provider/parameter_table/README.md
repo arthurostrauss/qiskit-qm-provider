@@ -13,8 +13,9 @@ This document provides a detailed presentation of the **Parameter**, **Parameter
 5. [QUA2DArray](#qua2darray)
 6. [InputType and Direction](#inputtype-and-direction)
 7. [ParameterPool and DGX Quantum](#parameterpool-and-dgx-quantum)
-8. [Usage in QUA Programs](#usage-in-qua-programs)
-9. [Python-Side Interaction](#python-side-interaction)
+8. [Quarc hybrid alignment](#quarc-hybrid-alignment)
+9. [Usage in QUA Programs](#usage-in-qua-programs)
+10. [Python-Side Interaction](#python-side-interaction)
 
 ---
 
@@ -432,6 +433,24 @@ Typical DGX workflow:
 3. In QUA: **declare_variables()**, **load_input_values()** (for OUTGOING tables), **stream_back()** (for INCOMING).
 4. From Python: **push_to_opx()** (OUTGOING) or **fetch_from_opx()** (INCOMING).
 5. When finished, **ParameterPool.close_streams()**.
+
+---
+
+## Quarc hybrid alignment
+
+During Quarc hybrid alignment, **struct names** are deterministic: use **`default_quarc_struct_name(table_or_standalone_parameter)`** so codegen and QUA agree on `Packet_{...}` keys. **Numeric stream ids** are attached deterministically in-memory by :meth:`ParameterPool.prepare_dgx_quarc_hybrid_packets` (call it after your pool is finalized and before QUA declares external DGX streams).
+
+**QUA mapping (same `qm.qua` primitives as `QuaStructHandle`):**
+
+| `ParameterTable` (DGX_Q) | Quarc `QuaStructHandle` |
+|--------------------------|-------------------------|
+| `declare_variables()` (`declare_struct` + `declare_external_stream`) | `initialize_in_qua()` |
+| `load_input_values()` → `receive_from_external_stream` | `recv()` |
+| `stream_back()` → `send_to_external_stream` | `send()` |
+
+Directions follow the same **`Direction`** enum as elsewhere in this doc (classical-centric: **OUTGOING** = classical → OPX, **INCOMING** = OPX → classical). Use **`QuarcStructRegistry`** only to record **which Quarc struct name** pairs with which table—**not** to assign stream ids.
+
+For a **full pool snapshot** (every DGX_Q table registered in the pool, e.g. policy + reward + any circuit tables), call **`ParameterPool.iter_dgx_parameter_tables()`**—sorted by table `_id` so struct emission order is stable for Quarc codegen.
 
 ---
 

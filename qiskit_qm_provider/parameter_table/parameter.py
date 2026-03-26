@@ -23,7 +23,6 @@ from __future__ import annotations
 import copy
 import warnings
 from itertools import chain
-import sys
 
 from qm import QuantumMachine
 from qm.api.v2.job_api import JobApi
@@ -226,6 +225,10 @@ class Parameter:
         if self._input_type == InputType.DGX_Q and self.direction is None:
             raise ValueError("Direction must be provided for DGX input type.")
 
+        self._quarc_incoming_stream_id: Optional[int] = None
+        self._quarc_outgoing_stream_id: Optional[int] = None
+        self._quarc_stream_specs_assigned: bool = False
+
         self._initialized = True
 
     def get_name(self):
@@ -281,6 +284,72 @@ class Parameter:
             bool: True if the parameter is standalone, False otherwise.
         """
         return self.main_table is None
+
+    def _materialize_dgx_stream_id_for_quarc(self) -> None:
+        """
+        Internal Quarc integration hook.
+
+        For standalone ``Parameter`` objects (``input_type == DGX_Q`` but not owned by any
+        :class:`~qiskit_qm_provider.parameter_table.ParameterTable`), this registers the parameter in
+        :class:`~qiskit_qm_provider.parameter_table.ParameterPool` and sets ``stream_id`` so Quarc struct naming
+        can be deterministic.
+
+        This is controlled by :meth:`ParameterPool.prepare_dgx_quarc_hybrid_packets` and must not be called directly
+        as part of user code.
+        """
+        if self._input_type != InputType.DGX_Q:
+            return
+        if self.tables:
+            return
+        if self._stream_id is None:
+            self.stream_id = ParameterPool.get_id(self)
+
+    def _clear_quarc_stream_specs(self) -> None:
+        self._quarc_incoming_stream_id = None
+        self._quarc_outgoing_stream_id = None
+        self._quarc_stream_specs_assigned = False
+
+    def _attach_quarc_stream_specs(
+        self,
+        *,
+        incoming_id: Optional[int] = None,
+        outgoing_id: Optional[int] = None,
+    ) -> None:
+        """For internal use by :class:`~qiskit_qm_provider.parameter_table.ParameterPool` only."""
+        if self._input_type != InputType.DGX_Q:
+            raise ValueError("_attach_quarc_stream_specs is only valid for InputType.DGX_Q Parameter.")
+        self._quarc_incoming_stream_id = incoming_id
+        self._quarc_outgoing_stream_id = outgoing_id
+        self._quarc_stream_specs_assigned = True
+
+    def _require_dgx_quarc_stream_specs(self) -> None:
+        if self._input_type != InputType.DGX_Q:
+            return
+        if not self._quarc_stream_specs_assigned:
+            raise RuntimeError(
+                "DGX_Q external stream ids are not set. Call "
+                "ParameterPool.prepare_dgx_quarc_hybrid_packets() before declaring QUA variables."
+            )
+
+    def _stream_id_for_qua_incoming_edge(self) -> int:
+        self._require_dgx_quarc_stream_specs()
+        if self._quarc_incoming_stream_id is not None:
+            return self._quarc_incoming_stream_id
+        if self._direction == Direction.OUTGOING and self._quarc_outgoing_stream_id is not None:
+            return self._quarc_outgoing_stream_id
+        raise RuntimeError(
+            "Cannot resolve INCOMING QUA stream id; check Quarc direction vs. attached stream specs."
+        )
+
+    def _stream_id_for_qua_outgoing_edge(self) -> int:
+        self._require_dgx_quarc_stream_specs()
+        if self._quarc_outgoing_stream_id is not None:
+            return self._quarc_outgoing_stream_id
+        if self._direction == Direction.INCOMING and self._quarc_incoming_stream_id is not None:
+            return self._quarc_incoming_stream_id
+        raise RuntimeError(
+            "Cannot resolve OUTGOING QUA stream id; check Quarc direction vs. attached stream specs."
+        )
 
     @property
     def main_table(self) -> Optional[ParameterTable]:
@@ -394,25 +463,24 @@ class Parameter:
                     QuaStreamDirection,
                 )
 
-                # Parameter not part of a parameter table
-                self.stream_id = ParameterPool.get_id(self)
+                # Parameter not part of a parameter table; stream ids come from ParameterPool.prepare_*
                 dgx_struct = self.dgx_struct
                 self._var = declare_struct(dgx_struct)
 
                 if self.direction == Direction.INCOMING:
                     self._qua_external_stream_out = declare_external_stream(
-                        dgx_struct, self.stream_id, QuaStreamDirection.OUTGOING
+                        dgx_struct, self._stream_id_for_qua_outgoing_edge(), QuaStreamDirection.OUTGOING
                     )
                 elif self.direction == Direction.OUTGOING:
                     self._qua_external_stream_in = declare_external_stream(
-                        dgx_struct, self.stream_id, QuaStreamDirection.INCOMING
+                        dgx_struct, self._stream_id_for_qua_incoming_edge(), QuaStreamDirection.INCOMING
                     )
                 else:
                     self._qua_external_stream_in = declare_external_stream(
-                        dgx_struct, self.stream_id, QuaStreamDirection.INCOMING
+                        dgx_struct, self._stream_id_for_qua_incoming_edge(), QuaStreamDirection.INCOMING
                     )
                     self._qua_external_stream_out = declare_external_stream(
-                        dgx_struct, self.stream_id, QuaStreamDirection.OUTGOING
+                        dgx_struct, self._stream_id_for_qua_outgoing_edge(), QuaStreamDirection.OUTGOING
                     )
 
             else:
@@ -488,8 +556,10 @@ class Parameter:
                 from qm.qua import qua_struct, QuaArray
             except ImportError:
                 raise ImportError("Need to install QUA version compatible with DGX")
+            if self.stream_id is None:
+                self._materialize_dgx_stream_id_for_quarc()
             length = 1 if not self.is_array else self.length
-            cls_name = f"{self.name}_struct_{self.stream_id}"
+            cls_name = f"Packet_{self.name}_{self.stream_id}"
             dgxStruct = qua_struct(
                 type(
                     cls_name,
@@ -1011,6 +1081,7 @@ class Parameter:
         self._dgx_struct = None
         self._qua_external_stream_in = None
         self._qua_external_stream_out = None
+        self._clear_quarc_stream_specs()
         # self._index = -1
         # self._main_table = None
         # self._table_indices = {}
@@ -1057,6 +1128,9 @@ class Parameter:
         new_param._dgx_struct = None
         new_param._stream_id = None  # Will be re-evaluated by property or new table
         new_param._main_table = None
+        new_param._quarc_incoming_stream_id = None
+        new_param._quarc_outgoing_stream_id = None
+        new_param._quarc_stream_specs_assigned = False
 
         # If your __init__ sets an _initialized flag, set it here too
         if hasattr(self, "_initialized"):

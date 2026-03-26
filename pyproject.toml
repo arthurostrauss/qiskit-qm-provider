@@ -36,6 +36,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+quarc = [
+    "quarc",
+]
 iqcc = [
     "iqcc-cloud-client",
 ]

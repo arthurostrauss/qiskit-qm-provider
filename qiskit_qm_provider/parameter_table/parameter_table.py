@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import copy
 import warnings
-import sys
 from itertools import chain
 from numbers import Number
 from typing import (
@@ -124,6 +123,10 @@ class ParameterTable:
         self._packet_type = None
         self._direction = None
         self._usable_for_dgx_communication = False
+        # Quarc / DGX_Q packet streams — set only via ParameterPool (``_attach_quarc_stream_specs``)
+        self._quarc_incoming_stream_id: Optional[int] = None
+        self._quarc_outgoing_stream_id: Optional[int] = None
+        self._quarc_stream_specs_assigned: bool = False
 
         if isinstance(parameters_dict, Dict):
             for index, (parameter_name, parameter) in enumerate(
@@ -216,10 +219,75 @@ class ParameterTable:
                 ]
                 for parameter in self.parameters
             }
-            struct_name = f"Packet_{self.name}_{self._id}"
+            from .quarc_naming import default_quarc_struct_name
+
+            struct_name = default_quarc_struct_name(self)
             self._packet_type = qua_struct(
                 type(struct_name, (object,), {"__annotations__": attributes})
             )
+
+    def _clear_quarc_stream_specs(self) -> None:
+        self._quarc_incoming_stream_id = None
+        self._quarc_outgoing_stream_id = None
+        self._quarc_stream_specs_assigned = False
+
+    def _materialize_dgx_stream_id_for_quarc(self) -> None:
+        """
+        Internal Quarc integration hook.
+
+        ``ParameterTable`` stream ids are already materialized deterministically at construction time
+        via :meth:`ParameterPool.get_id`, and Quarc struct naming uses ``self._id``.
+
+        This method exists to provide a stable private hook shared with
+        :meth:`~qiskit_qm_provider.parameter_table.parameter.Parameter._materialize_dgx_stream_id_for_quarc`.
+        """
+        # Nothing to do here; Quarc stream specs (incoming/outgoing ids) are attached later via
+        # :meth:`_attach_quarc_stream_specs` when the Quarc module is built.
+        return
+
+    def _attach_quarc_stream_specs(
+        self,
+        *,
+        incoming_id: Optional[int] = None,
+        outgoing_id: Optional[int] = None,
+    ) -> None:
+        """For internal use by :class:`~qiskit_qm_provider.parameter_table.ParameterPool` only."""
+        if self.input_type != InputType.DGX_Q:
+            raise ValueError("_attach_quarc_stream_specs is only valid for InputType.DGX_Q ParameterTable.")
+        self._quarc_incoming_stream_id = incoming_id
+        self._quarc_outgoing_stream_id = outgoing_id
+        self._quarc_stream_specs_assigned = True
+
+    def _require_dgx_quarc_stream_specs(self) -> None:
+        if self.input_type != InputType.DGX_Q:
+            return
+        if not self._quarc_stream_specs_assigned:
+            raise RuntimeError(
+                "DGX_Q external stream ids are not set. Call "
+                "ParameterPool.prepare_dgx_quarc_hybrid_packets() before declaring QUA variables."
+            )
+
+    def _stream_id_for_qua_incoming_edge(self) -> int:
+        """Stream id paired with ``QuaStreamDirection.INCOMING`` in ``declare_external_stream``."""
+        self._require_dgx_quarc_stream_specs()
+        if self._quarc_incoming_stream_id is not None:
+            return self._quarc_incoming_stream_id
+        if self._direction == Direction.OUTGOING and self._quarc_outgoing_stream_id is not None:
+            return self._quarc_outgoing_stream_id
+        raise RuntimeError(
+            "Cannot resolve INCOMING QUA stream id; check Quarc direction vs. attached stream specs."
+        )
+
+    def _stream_id_for_qua_outgoing_edge(self) -> int:
+        """Stream id paired with ``QuaStreamDirection.OUTGOING`` in ``declare_external_stream``."""
+        self._require_dgx_quarc_stream_specs()
+        if self._quarc_outgoing_stream_id is not None:
+            return self._quarc_outgoing_stream_id
+        if self._direction == Direction.INCOMING and self._quarc_incoming_stream_id is not None:
+            return self._quarc_incoming_stream_id
+        raise RuntimeError(
+            "Cannot resolve OUTGOING QUA stream id; check Quarc direction vs. attached stream specs."
+        )
 
     def declare_variables(
         self, pause_program=False, declare_streams=True
@@ -242,18 +310,18 @@ class ParameterTable:
             self._packet = declare_struct(self._packet_type)
             if self.direction == Direction.BOTH:
                 self._qua_external_stream_in = declare_external_stream(
-                    self._packet, self._id, QuaStreamDirection.INCOMING
+                    self._packet, self._stream_id_for_qua_incoming_edge(), QuaStreamDirection.INCOMING
                 )
                 self._qua_external_stream_out = declare_external_stream(
-                    self._packet, self._id, QuaStreamDirection.OUTGOING
+                    self._packet, self._stream_id_for_qua_outgoing_edge(), QuaStreamDirection.OUTGOING
                 )
             elif self.direction == Direction.INCOMING:
                 self._qua_external_stream_out = declare_external_stream(
-                    self._packet, self._id, QuaStreamDirection.OUTGOING
+                    self._packet, self._stream_id_for_qua_outgoing_edge(), QuaStreamDirection.OUTGOING
                 )
             else:
                 self._qua_external_stream_in = declare_external_stream(
-                    self._packet, self._id, QuaStreamDirection.INCOMING
+                    self._packet, self._stream_id_for_qua_incoming_edge(), QuaStreamDirection.INCOMING
                 )
 
             for parameter in self.parameters:
@@ -1080,6 +1148,7 @@ class ParameterTable:
 
         for parameter in self.parameters:
             parameter.reset()
+        self._clear_quarc_stream_specs()
 
     def reset_vars(self):
         """
