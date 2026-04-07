@@ -64,7 +64,7 @@ class QMSamplerOptions:
     - :class:`~.InputType.INPUT_STREAM`: Input stream mechanism.
     - :class:`~.InputType.IO1`: IO1.
     - :class:`~.InputType.IO2`: IO2.
-    - :class:`~.InputType.DGX_Q`: Using DGX Quantum communication.
+    - :class:`~.InputType.OPNIC`: Using OPNIC communication.
     - None: Preload at compile time the parameter values to the OPX (Warning: This should be used only for small number of parameters)
     Default: None."""
 

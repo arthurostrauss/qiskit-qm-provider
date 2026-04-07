@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import copy
 import warnings
-from itertools import chain
 
 from qm import QuantumMachine
 from qm.api.v2.job_api import JobApi
@@ -167,7 +166,7 @@ class Parameter:
         value: Optional[Union[int, float, List, np.ndarray]] = None,
         qua_type: Optional[Union[str, type]] = None,
         input_type: Optional[
-            Union[Literal["DGX_Q", "INPUT_STREAM", "IO1", "IO2"], InputType]
+            Union[Literal["OPNIC", "INPUT_STREAM", "IO1", "IO2"], InputType]
         ] = None,
         direction: Optional[
             Union[Literal["INCOMING", "OUTGOING", "BOTH"], Direction]
@@ -180,14 +179,13 @@ class Parameter:
             name: Name of the parameter.
             value: Initial value of the parameter.
             qua_type: Type of the QUA variable to be declared (int, fixed, bool). If none is provided, the type is inferred from initial value.
-            input_type: Input type of the parameter (DGX_Q, INPUT_STREAM, IO1, IO2). Default is None.
+            input_type: Input type of the parameter (OPNIC, INPUT_STREAM, IO1, IO2). Default is None.
             direction: Direction of the parameter stream (INCOMING, OUTGOING, BOTH).
-                The direction describes in this case the relationship between DGX_Q and OPX in the following manner:
-                DGX_Q -> OPX: OUTGOING
-                OPX -> DGX_Q: INCOMING
-                DGX_Q <-> OPX: BOTH
-                Default is None. Relevant only if
-                          input_type is DGX_Q.
+                For OPNIC, direction describes data flow vs OPX:
+                OPNIC -> OPX: OUTGOING
+                OPX -> OPNIC: INCOMING
+                OPNIC <-> OPX: BOTH
+                Default is None. Relevant only if input_type is OPNIC.
             units: Units of the parameter. Default is "".
 
         """
@@ -213,7 +211,7 @@ class Parameter:
                 InputType(input_type) if isinstance(input_type, str) else input_type
             )
         self._input_type: Optional[InputType] = input_type
-        self._dgx_struct = None
+        self._opnic_struct = None
         if direction is not None:
             direction = (
                 Direction(direction) if isinstance(direction, str) else direction
@@ -222,14 +220,16 @@ class Parameter:
         self._table_indices: Dict[str, int] = {}
         self._main_table = None
 
-        if self._input_type == InputType.DGX_Q and self.direction is None:
-            raise ValueError("Direction must be provided for DGX input type.")
+        if self._input_type == InputType.OPNIC and self.direction is None:
+            raise ValueError("Direction must be provided for OPNIC input type.")
 
         self._quarc_incoming_stream_id: Optional[int] = None
         self._quarc_outgoing_stream_id: Optional[int] = None
         self._quarc_stream_specs_assigned: bool = False
 
         self._initialized = True
+        if self._input_type == InputType.OPNIC:
+            ParameterPool._track_opnic_parameter_pending_table(self)
 
     def get_name(self):
         return f"{self.name} [{self.units}]"
@@ -267,6 +267,7 @@ class Parameter:
             param_table: ParameterTable object to set the index for.
             index: Index of the parameter in the parameter table.
         """
+        ParameterPool._release_opnic_unbound_parameter(self)
         if self._index == -1:
             self._index = -2
 
@@ -285,25 +286,6 @@ class Parameter:
         """
         return self.main_table is None
 
-    def _materialize_dgx_stream_id_for_quarc(self) -> None:
-        """
-        Internal Quarc integration hook.
-
-        For standalone ``Parameter`` objects (``input_type == DGX_Q`` but not owned by any
-        :class:`~qiskit_qm_provider.parameter_table.ParameterTable`), this registers the parameter in
-        :class:`~qiskit_qm_provider.parameter_table.ParameterPool` and sets ``stream_id`` so Quarc struct naming
-        can be deterministic.
-
-        This is controlled by :meth:`ParameterPool.prepare_dgx_quarc_hybrid_packets` and must not be called directly
-        as part of user code.
-        """
-        if self._input_type != InputType.DGX_Q:
-            return
-        if self.tables:
-            return
-        if self._stream_id is None:
-            self.stream_id = ParameterPool.get_id(self)
-
     def _clear_quarc_stream_specs(self) -> None:
         self._quarc_incoming_stream_id = None
         self._quarc_outgoing_stream_id = None
@@ -316,23 +298,23 @@ class Parameter:
         outgoing_id: Optional[int] = None,
     ) -> None:
         """For internal use by :class:`~qiskit_qm_provider.parameter_table.ParameterPool` only."""
-        if self._input_type != InputType.DGX_Q:
-            raise ValueError("_attach_quarc_stream_specs is only valid for InputType.DGX_Q Parameter.")
+        if self._input_type != InputType.OPNIC:
+            raise ValueError("_attach_quarc_stream_specs is only valid for InputType.OPNIC Parameter.")
         self._quarc_incoming_stream_id = incoming_id
         self._quarc_outgoing_stream_id = outgoing_id
         self._quarc_stream_specs_assigned = True
 
-    def _require_dgx_quarc_stream_specs(self) -> None:
-        if self._input_type != InputType.DGX_Q:
+    def _require_opnic_quarc_stream_specs(self) -> None:
+        if self._input_type != InputType.OPNIC:
             return
         if not self._quarc_stream_specs_assigned:
             raise RuntimeError(
-                "DGX_Q external stream ids are not set. Call "
-                "ParameterPool.prepare_dgx_quarc_hybrid_packets() before declaring QUA variables."
+                "OPNIC external stream ids are not set. Call "
+                "ParameterPool.prepare_opnic_quarc_hybrid_packets() before declaring QUA variables."
             )
 
     def _stream_id_for_qua_incoming_edge(self) -> int:
-        self._require_dgx_quarc_stream_specs()
+        self._require_opnic_quarc_stream_specs()
         if self._quarc_incoming_stream_id is not None:
             return self._quarc_incoming_stream_id
         if self._direction == Direction.OUTGOING and self._quarc_outgoing_stream_id is not None:
@@ -342,7 +324,7 @@ class Parameter:
         )
 
     def _stream_id_for_qua_outgoing_edge(self) -> int:
-        self._require_dgx_quarc_stream_specs()
+        self._require_opnic_quarc_stream_specs()
         if self._quarc_outgoing_stream_id is not None:
             return self._quarc_outgoing_stream_id
         if self._direction == Direction.INCOMING and self._quarc_incoming_stream_id is not None:
@@ -356,7 +338,7 @@ class Parameter:
         """
         Returns:
             The ParameterTable object used to declare the parameter.
-            Specifically, the one that should be used for communication if InputType is DGX_Q.
+            Specifically, the one that should be used for communication if InputType is OPNIC.
         :returns: ParameterTable object or None if not found.
 
         """
@@ -455,7 +437,7 @@ class Parameter:
         """
         if self.is_declared:
             raise ValueError("Variable already declared. Cannot declare again.")
-        if self.input_type == InputType.DGX_Q:
+        if self.input_type == InputType.OPNIC:
             if self.is_standalone():
                 from qm.qua import (
                     declare_struct,
@@ -464,23 +446,23 @@ class Parameter:
                 )
 
                 # Parameter not part of a parameter table; stream ids come from ParameterPool.prepare_*
-                dgx_struct = self.dgx_struct
-                self._var = declare_struct(dgx_struct)
+                pkt_struct = self.opnic_struct
+                self._var = declare_struct(pkt_struct)
 
                 if self.direction == Direction.INCOMING:
                     self._qua_external_stream_out = declare_external_stream(
-                        dgx_struct, self._stream_id_for_qua_outgoing_edge(), QuaStreamDirection.OUTGOING
+                        pkt_struct, self._stream_id_for_qua_outgoing_edge(), QuaStreamDirection.OUTGOING
                     )
                 elif self.direction == Direction.OUTGOING:
                     self._qua_external_stream_in = declare_external_stream(
-                        dgx_struct, self._stream_id_for_qua_incoming_edge(), QuaStreamDirection.INCOMING
+                        pkt_struct, self._stream_id_for_qua_incoming_edge(), QuaStreamDirection.INCOMING
                     )
                 else:
                     self._qua_external_stream_in = declare_external_stream(
-                        dgx_struct, self._stream_id_for_qua_incoming_edge(), QuaStreamDirection.INCOMING
+                        pkt_struct, self._stream_id_for_qua_incoming_edge(), QuaStreamDirection.INCOMING
                     )
                     self._qua_external_stream_out = declare_external_stream(
-                        dgx_struct, self._stream_id_for_qua_outgoing_edge(), QuaStreamDirection.OUTGOING
+                        pkt_struct, self._stream_id_for_qua_outgoing_edge(), QuaStreamDirection.OUTGOING
                     )
 
             else:
@@ -533,61 +515,61 @@ class Parameter:
 
     @property
     def direction(self):
-        if self.input_type != InputType.DGX_Q:
-            warnings.warn("This parameter is not associated with a DGX stream.")
-            raise ValueError("This parameter is not associated with a DGX stream.")
+        if self.input_type != InputType.OPNIC:
+            warnings.warn("This parameter is not associated with an OPNIC stream.")
+            raise ValueError("This parameter is not associated with an OPNIC stream.")
         return self._direction
 
     @property
-    def dgx_struct(self):
+    def opnic_struct(self):
         """
-        DGX struct associated with the parameter.
+        OPNIC (QUA) struct associated with the parameter.
         Can be a reference to a bigger struct describing a ParameterTable (automatically set by the
         ParameterTable class) or a standalone struct created on the fly.
         Returns:
 
         """
-        if self.input_type != InputType.DGX_Q:
+        if self.input_type != InputType.OPNIC:
             raise ValueError(
-                "Invalid input type for calling dgx_struct property. Must be set to InputType.DGX."
+                "Invalid input type for calling opnic_struct property. Must be set to InputType.OPNIC."
             )
-        if self.is_standalone():
+        if not self._table_indices:
             try:
                 from qm.qua import qua_struct, QuaArray
             except ImportError:
-                raise ImportError("Need to install QUA version compatible with DGX")
-            if self.stream_id is None:
-                self._materialize_dgx_stream_id_for_quarc()
+                raise ImportError("Need to install QUA version compatible with OPNIC external streams")
             length = 1 if not self.is_array else self.length
             cls_name = f"Packet_{self.name}_{self.stream_id}"
-            dgxStruct = qua_struct(
+            pkt_struct = qua_struct(
                 type(
                     cls_name,
                     (object,),
                     {"__annotations__": {self.name: QuaArray[self.type, length]}},
                 )
             )
-            self._dgx_struct = dgxStruct
+            self._opnic_struct = pkt_struct
 
-        return self._dgx_struct
+        return self._opnic_struct
 
-    @dgx_struct.setter
-    def dgx_struct(self, value):
-        if self._dgx_struct is None:
-            self._dgx_struct = value
+    @opnic_struct.setter
+    def opnic_struct(self, value):
+        if self._opnic_struct is None:
+            self._opnic_struct = value
         else:
-            raise ValueError("DGX struct already set. Cannot change it.")
+            raise ValueError("OPNIC struct already set. Cannot change it.")
 
     @property
     def stream_id(self) -> int:
         """
-        ID of the external stream associated with the parameter (Relevant only for DGX).
+        ID of the external stream associated with the parameter (relevant only for OPNIC).
         If the Parameter is part of a ParameterTable, returns the stream_id of the table.
         Returns:
             Unique ID integer of the external stream.
 
         """
-
+        if self._stream_id is None and self._input_type == InputType.OPNIC and not self._table_indices:
+            self._stream_id = ParameterPool.get_id(self)
+            ParameterPool._release_opnic_unbound_parameter(self)
         return self._stream_id
 
     @stream_id.setter
@@ -607,7 +589,7 @@ class Parameter:
             raise ValueError(
                 "Variable not declared. Declare the variable first through declare_variable method."
             )
-        if self.input_type == InputType.DGX_Q:
+        if self.input_type == InputType.OPNIC:
             var = getattr(self._var, self.name)
             return var if self.is_array else var[0]
 
@@ -782,14 +764,14 @@ class Parameter:
         This should be corresponding to one call of the `fetch_from_opx` method on the client side.
         For input streams, the stream is advanced.
         For IO1 and IO2, the value is assigned to the QUA variable.
-        For DGX Quantum, the value is polled.
+        For OPNIC, the value is polled.
         """
         if self.input_type is None:
             raise ValueError("No input type specified")
         elif self.input_type == InputType.INPUT_STREAM:
             qua_advance_input_stream(self.var)
 
-        elif self.input_type == InputType.DGX_Q:
+        elif self.input_type == InputType.OPNIC:
             from qm.qua import receive_from_external_stream
 
             if self.is_standalone():
@@ -903,29 +885,38 @@ class Parameter:
                 )
             job.push_to_input_stream(self.name, value)
 
-        elif self.input_type == InputType.DGX_Q:
+        elif self.input_type == InputType.OPNIC:
             if self.is_standalone():
                 if self.direction == Direction.INCOMING:
                     raise ValueError("Cannot push value to Incoming stream.")
-                if not ParameterPool.configured() or not ParameterPool.patched():
-                    raise ValueError("OPNIC not configured or patched.")
-                # Prepare the packet to be sent
-                param_dict = {self.name: [value] if not self.is_array else value}
-                param_dict = {
-                    k: v.tolist() if isinstance(v, np.ndarray) else v
-                    for k, v in param_dict.items()
-                }
+                processed_value = value.tolist() if isinstance(value, np.ndarray) else value
+                try:
+                    mod = ParameterPool.get_opnic_transport_module()
+                    send_packet = getattr(mod, "send_packet", None)
+                    OutgoingPacket = getattr(mod, "OutgoingPacket", None)
+                except ImportError as exc:
+                    raise ImportError(
+                        "OPNIC push_to_opx requires either an opnic_wrapper-style transport "
+                        "(OutgoingPacket/send_packet) or a Quarc runtime exposing "
+                        "setup_opnic(...)->runtime.data_packet.send()."
+                    ) from exc
 
-                from opnic_wrapper import OutgoingPacket, send_packet
-
-                flattened_values = list(chain(*param_dict.values()))
-                packet = OutgoingPacket(*flattened_values)
-                for k, v in param_dict.items():
-                    setattr(packet, k, v)
-                send_packet(self.stream_id, packet)
+                if callable(send_packet) and OutgoingPacket is not None:
+                    payload = (
+                        [processed_value]
+                        if not self.is_array and isinstance(processed_value, (int, float, bool))
+                        else processed_value
+                    )
+                    packet = OutgoingPacket(*list(payload))
+                    setattr(packet, self.name, payload)
+                    send_packet(self.stream_id, packet)
+                else:
+                    data_packet = ParameterPool.get_opnic_runtime_packet(target_obj=self)
+                    setattr(data_packet, self.name, processed_value)
+                    data_packet.send()
 
                 if verbosity > 1:
-                    print(f"Sent packet: {packet}")
+                    print(f"Sent packet field {self.name}={processed_value}")
             else:
                 raise RuntimeError(
                     f"This method should be called from the ParameterTable object"
@@ -936,8 +927,8 @@ class Parameter:
     def stream_back(self, reset: bool = False):
         """
         QUA Macro: Save/stream the value of the parameter to the client/server side.
-        This method uses stream_processing method to save the value to the stream if input_type is different from DGX Quantum.
-        If input_type is DGX Quantum, the value is sent to the external stream.
+        This method uses stream_processing to save the value to the stream if input_type is not OPNIC.
+        If input_type is OPNIC, the value is sent to the external stream.
 
         Args:
             reset: Whether to reset the parameter to a 0 value (in the appropriate QUA type) after sending it to the client/server side.
@@ -947,7 +938,7 @@ class Parameter:
             and self.stream is not None
         ):
             self.save_to_stream(reset)
-        elif self.input_type == InputType.DGX_Q:
+        elif self.input_type == InputType.OPNIC:
             from qm.qua import send_to_external_stream
 
             if not self.is_standalone():  # Part of a parameter table
@@ -990,9 +981,9 @@ class Parameter:
         Client function: Fetches data based on the specified input type and returns the fetched value.
 
         This method handles various input types defined by the `InputType` enumeration
-        (IO1, IO2, INPUT_STREAM, DGX). It manages the fetching logic, including waiting
+        (IO1, IO2, INPUT_STREAM, OPNIC). It manages the fetching logic, including waiting
         for paused jobs, accessing specified result streams, and interacting with
-        external modules when necessary. For DGX input type, it also checks configurations
+        external modules when necessary. For OPNIC it also checks configurations
         and fetches data based on parameters related to outgoing or incoming streams.
 
         :param job: The job instance of the RunningQmJob for which data is being fetched.
@@ -1028,7 +1019,7 @@ class Parameter:
                 "value"
             ]
 
-        elif self.input_type == InputType.DGX_Q:
+        elif self.input_type == InputType.OPNIC:
             if not self.is_standalone():  # Part of a parameter table
                 raise RuntimeError(
                     f"This method should be called from the"
@@ -1038,17 +1029,32 @@ class Parameter:
 
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot fetch value from outgoing stream.")
-            elif not ParameterPool.configured() or not ParameterPool.patched():
-                raise ValueError("OPNIC not configured or patched.")
+            try:
+                mod = ParameterPool.get_opnic_transport_module()
+                read_packet = getattr(mod, "read_packet", None)
+                wait_for_packets = getattr(mod, "wait_for_packets", None)
+            except ImportError as exc:
+                raise ImportError(
+                    "OPNIC fetch_from_opx requires either an opnic_wrapper-style transport "
+                    "(wait_for_packets/read_packet) or a Quarc runtime exposing "
+                    "setup_opnic(...)->runtime.data_packet.recv()."
+                ) from exc
 
-            from opnic_wrapper import wait_for_packets, read_packet
-
-            wait_for_packets(self.stream_id, fetching_index + fetching_size)
-            packets = []
-            for i in range(fetching_size):
-                packet = read_packet(self.stream_id, fetching_index + i)
-                packets.append(packet)
-            value = np.array([getattr(packet, self.name) for packet in packets])
+            if callable(wait_for_packets) and callable(read_packet):
+                wait_for_packets(self.stream_id, fetching_index + fetching_size)
+                packets = []
+                for i in range(fetching_size):
+                    packet = read_packet(self.stream_id, fetching_index + i)
+                    packets.append(packet)
+                value = np.array([getattr(packet, self.name) for packet in packets])
+            else:
+                data_packet = ParameterPool.get_opnic_runtime_packet(target_obj=self)
+                values = []
+                for i in range(fetching_index + fetching_size):
+                    data_packet.recv()
+                    if i >= fetching_index:
+                        values.append(getattr(data_packet, self.name))
+                value = np.array(values)
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io_method = (
                 "get_io1_value" if self.input_type == InputType.IO1 else "get_io2_value"
@@ -1076,12 +1082,12 @@ class Parameter:
         self._is_declared = False
         self._var = None
         self._stream = None
-        self._stream_id = None
+        if self._input_type != InputType.OPNIC or self.tables:
+            self._stream_id = None
         self._ctr = None
-        self._dgx_struct = None
+        self._opnic_struct = None
         self._qua_external_stream_in = None
         self._qua_external_stream_out = None
-        self._clear_quarc_stream_specs()
         # self._index = -1
         # self._main_table = None
         # self._table_indices = {}
@@ -1122,10 +1128,10 @@ class Parameter:
         new_param._qua_external_stream_in = None
         new_param._qua_external_stream_out = None
 
-        # Reset table/DGX specific attributes that will be set by the new table or properties
+        # Reset table/OPNIC-specific attributes that will be set by the new table or properties
         new_param._index = -1  # Default for a parameter not (yet) in a table
         new_param._table_indices = {}  # New dictionary for table associations
-        new_param._dgx_struct = None
+        new_param._opnic_struct = None
         new_param._stream_id = None  # Will be re-evaluated by property or new table
         new_param._main_table = None
         new_param._quarc_incoming_stream_id = None

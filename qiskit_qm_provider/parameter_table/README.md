@@ -1,6 +1,6 @@
 # Parameter Table Submodule: In-Depth Guide
 
-This document provides a detailed presentation of the **Parameter**, **ParameterTable**, **QUAArray**, and **QUA2DArray** classes in `qiskit_qm_provider.parameter_table`. These classes manage dynamic parameters in QUA programs, enabling runtime updates from Python, integration with external I/O (OPX IO1/IO2, input streams), and DGX Quantum (OPNIC) communication for Reinforcement Learning, Quantum Optimal Control, and similar workflows.
+This document provides a detailed presentation of the **Parameter**, **ParameterTable**, **QUAArray**, and **QUA2DArray** classes in `qiskit_qm_provider.parameter_table`. These classes manage dynamic parameters in QUA programs, enabling runtime updates from Python, integration with external I/O (OPX IO1/IO2, input streams), and OPNIC (OPNIC) communication for Reinforcement Learning, Quantum Optimal Control, and similar workflows.
 
 ---
 
@@ -12,7 +12,7 @@ This document provides a detailed presentation of the **Parameter**, **Parameter
 4. [QUAArray](#quaarray)
 5. [QUA2DArray](#qua2darray)
 6. [InputType and Direction](#inputtype-and-direction)
-7. [ParameterPool and DGX Quantum](#parameterpool-and-dgx-quantum)
+7. [ParameterPool and OPNIC](#parameterpool-and-dgx-quantum)
 8. [Quarc hybrid alignment](#quarc-hybrid-alignment)
 9. [Usage in QUA Programs](#usage-in-qua-programs)
 10. [Python-Side Interaction](#python-side-interaction)
@@ -22,7 +22,7 @@ This document provides a detailed presentation of the **Parameter**, **Parameter
 ## Overview
 
 - **Parameter**: A single named QUA variable (scalar or 1D array) with optional input/output stream configuration. It maps a Python-side value to a QUA variable that can be declared, assigned, and streamed within a QUA program.
-- **ParameterTable**: A named collection of `Parameter` objects sharing the same **input type** (and for DGX Quantum, the same **direction**). It provides bulk declaration, assignment, loading, and streaming, and for `InputType.DGX_Q` it forms a single OPNIC packet.
+- **ParameterTable**: A named collection of `Parameter` objects sharing the same **input type** (and for OPNIC, the same **direction**). It provides bulk declaration, assignment, loading, and streaming, and for `InputType.OPNIC` it forms a single OPNIC packet.
 - **QUAArray**: A **Parameter** subclass that represents an **N-dimensional** logical view over one underlying 1D QUA array. It supports arbitrary shapes, multi-dimensional indexing, slicing, and sub-array views (`_QUAArrayView`).
 - **QUA2DArray**: A **Parameter** subclass that represents a **2D** view over one 1D QUA array (`n_rows * n_cols` elements). It offers 2D indexing, row/column slicing, row views (`_QUA2DRow`), and row-wise or element-wise assignment.
 
@@ -41,7 +41,7 @@ Parameter(
     name: str,
     value: Optional[Union[int, float, List, np.ndarray]] = None,
     qua_type: Optional[Union[str, type]] = None,
-    input_type: Optional[InputType | Literal["DGX_Q", "INPUT_STREAM", "IO1", "IO2"]] = None,
+    input_type: Optional[InputType | Literal["OPNIC", "INPUT_STREAM", "IO1", "IO2"]] = None,
     direction: Optional[Direction | Literal["INCOMING", "OUTGOING", "BOTH"]] = None,
     units: str = "",
 )
@@ -50,8 +50,8 @@ Parameter(
 - **name**: Identifier for the parameter (used in QUA and for table access).
 - **value**: Initial value. Can be a scalar (`int`, `float`, `bool`) or a 1D list/array; if omitted, type/length must be set via `qua_type` and (for arrays) by using a subclass like `QUAArray`/`QUA2DArray` that sets length internally.
 - **qua_type**: QUA type: `int`, `fixed`, or `bool`. If `None`, inferred from `value` (float → `fixed`, int → `int`, bool → `bool`; for lists/arrays, element type is used).
-- **input_type**: How this parameter is fed in or out: `InputType.INPUT_STREAM`, `InputType.IO1`, `InputType.IO2`, or `InputType.DGX_Q`. `None` means no external stream (only in-program use and optional QUA stream for saving).
-- **direction**: For `InputType.DGX_Q` only: `Direction.INCOMING` (OPX → DGX), `Direction.OUTGOING` (DGX → OPX), or `Direction.BOTH`. Required when `input_type == InputType.DGX_Q`.
+- **input_type**: How this parameter is fed in or out: `InputType.INPUT_STREAM`, `InputType.IO1`, `InputType.IO2`, or `InputType.OPNIC`. `None` means no external stream (only in-program use and optional QUA stream for saving).
+- **direction**: For `InputType.OPNIC` only: `Direction.INCOMING` (OPX → DGX), `Direction.OUTGOING` (DGX → OPX), or `Direction.BOTH`. Required when `input_type == InputType.OPNIC`.
 - **units**: Optional units string (e.g. for display).
 
 If `value` is a list or 1D numpy array, the parameter is an array of that length; otherwise it is a scalar. Duplicate names in the same `ParameterPool` (e.g. same name in another table) trigger a warning and reuse of the existing parameter.
@@ -73,17 +73,17 @@ If `value` is a list or 1D numpy array, the parameter is an array of that length
 | `var`          | The QUA variable (after declaration); for DGX struct, returns the field (scalar or array slice). |
 | `stream`       | Output stream (if declared) for saving. |
 | `input_type`   | `InputType` or `None`. |
-| `direction`    | For DGX Quantum: Stream direction (`Direction.OUTGOING`, `Direction.INCOMING`, `Direction.BOTH`). |
-| `stream_id`    | OPNIC stream ID (DGX Quantum). |
-| `dgx_struct`   | Struct type for DGX Quantum packet (standalone or from table if parameter belongs to a `ParameterTable`). |
-| `main_table`   | `ParameterTable` that declared this parameter (DGX Quantum); `None` if standalone. |
+| `direction`    | For OPNIC: Stream direction (`Direction.OUTGOING`, `Direction.INCOMING`, `Direction.BOTH`). |
+| `stream_id`    | OPNIC stream ID (OPNIC). |
+| `opnic_struct`   | Struct type for OPNIC packet (standalone or from table if parameter belongs to a `ParameterTable`). |
+| `main_table`   | `ParameterTable` that declared this parameter (OPNIC); `None` if standalone. |
 | `index` / `get_index(table)` | Index in a given `ParameterTable` (useful for `switch_` logic in QUA for deciding which parameter to update). |
 | `tables`       | List of tables that contain this parameter. |
 
 ### Declaration (inside QUA)
 
 - **declare_variable(pause_program=False, declare_stream=True)**  
-  Declares the QUA variable (and optionally an output stream). For DGX Quantum, standalone parameters declare their own struct and external stream; parameters that belong to a table must be declared via that table’s `declare_variables()`. Returns the declared variable.
+  Declares the QUA variable (and optionally an output stream). For OPNIC, standalone parameters declare their own struct and external stream; parameters that belong to a table must be declared via that table’s `declare_variables()`. Returns the declared variable.
 
 - **declare_stream()**  
   Declares the output stream for this parameter (used for `save_to_stream` / stream processing).
@@ -94,17 +94,17 @@ If `value` is a list or 1D numpy array, the parameter is an array of that length
   Assigns to the parameter’s QUA variable.  
   - **value**: Python scalar, list, another `Parameter`’s `.var`, or a QUA array variable. For arrays, length must match.  
   - **condition** / **value_cond**: Optional QUA boolean and else-value; both must be provided together.  
-  For array parameters, assignment can be from a list, a QUA array, or another Parameter; for DGX Quantum struct, assignment is to the struct field.
+  For array parameters, assignment can be from a list, a QUA array, or another Parameter; for OPNIC struct, assignment is to the struct field.
 
 ### Loading input (inside QUA)
 
 - **load_input_value()**  
-  Loads one value from the parameter’s input mechanism: advances `INPUT_STREAM`, reads from IO1/IO2 (with `pause()` and assign), or for DGX Quantum receives from the external stream (standalone only; table parameters use the table’s `load_input_values()`).
+  Loads one value from the parameter’s input mechanism: advances `INPUT_STREAM`, reads from IO1/IO2 (with `pause()` and assign), or for OPNIC receives from the external stream (standalone only; table parameters use the table’s `load_input_values()`).
 
 ### Streaming and saving (inside QUA)
 
 - **stream_back(reset=False)**  
-  Sends the current value to the client: for non-DGX Quantum with a stream, saves to stream; for DGX Quantum with `Direction.INCOMING` or `Direction.BOTH`, sends the struct to the external stream; for IO1/IO2, sends via IO. If `reset=True`, resets the variable to zero (in appropriate QUA type) after sending.
+  Sends the current value to the client: for non-OPNIC with a stream, saves to stream; for OPNIC with `Direction.INCOMING` or `Direction.BOTH`, sends the struct to the external stream; for IO1/IO2, sends via IO. If `reset=True`, resets the variable to zero (in appropriate QUA type) after sending.
 
 - **save_to_stream()**  
   Saves the current value to the parameter’s output stream (must be declared).
@@ -120,16 +120,16 @@ If `value` is a list or 1D numpy array, the parameter is an array of that length
 ### Python-side (outside QUA)
 
 - **push_to_opx(value, job=None, qm=None, verbosity=1, time_out=30)**  
-  Sends `value` from Python to the OPX so that the next `load_input_value()` in QUA receives it. Uses input stream, IO1/IO2, or DGX Quantum OPNIC depending on `input_type`.
+  Sends `value` from Python to the OPX so that the next `load_input_value()` in QUA receives it. Uses input stream, IO1/IO2, or OPNIC OPNIC depending on `input_type`.
 
 - **fetch_from_opx(job=None, fetching_index=0, fetching_size=1, verbosity=1, time_out=30)**  
-  Retrieves value(s) from the OPX (IOs, stream processing if `InputType.INPUT_STREAM` or DGX Quantum packet) and returns them (scalar or array).
+  Retrieves value(s) from the OPX (IOs, stream processing if `InputType.INPUT_STREAM` or OPNIC packet) and returns them (scalar or array).
 
 ---
 
 ## ParameterTable
 
-A **ParameterTable** groups multiple **Parameter** instances under one name and ensures they share the same **input_type** (and for DGX Quantum, the same **direction**). It is the main interface for declaring, assigning, loading, and streaming many parameters at once, and for DGX Quantum it defines a single OPNIC packet.
+A **ParameterTable** groups multiple **Parameter** instances under one name and ensures they share the same **input_type** (and for OPNIC, the same **direction**). It is the main interface for declaring, assigning, loading, and streaming many parameters at once, and for OPNIC it defines a single OPNIC packet.
 
 ### Initialization
 
@@ -145,7 +145,7 @@ parameters_dict: Dict[str, Union[
 - **value**: Initial value (scalar or 1D list/array).
 - **qua_type**: Optional; inferred from value if omitted.
 - **input_type**: Optional; if present, all parameters in the table must use the same one.
-- **direction**: Required when `input_type == InputType.DGX_Q`; must be the same for all.
+- **direction**: Required when `input_type == InputType.OPNIC`; must be the same for all.
 
 **From a list of Parameter objects (Recommended)**
 
@@ -157,9 +157,9 @@ Input type and direction are taken from the parameters; they must all match. The
 
 **name**: Optional table name; if not set, a unique default is generated.
 
-### DGX Quantum packet (InputType.DGX_Q)
+### OPNIC packet (InputType.OPNIC)
 
-When `input_type == InputType.DGX_Q`, the table builds a QUA struct (packet) whose fields are the parameters. All parameters in the table are then represented by that single struct in QUA; declaration uses `declare_struct` and external streams use this packet type.
+When `input_type == InputType.OPNIC`, the table builds a QUA struct (packet) whose fields are the parameters. All parameters in the table are then represented by that single struct in QUA; declaration uses `declare_struct` and external streams use this packet type.
 
 ### Declaration and streams (inside QUA)
 
@@ -207,7 +207,7 @@ When `input_type == InputType.DGX_Q`, the table builds a QUA struct (packet) who
 ### Mutating the table (before declaration)
 
 - **add_parameters(Parameter \| List[Parameter])**  
-  Appends parameter(s); indices are assigned automatically. All must have the same `input_type` (and direction for DGX Quantum).
+  Appends parameter(s); indices are assigned automatically. All must have the same `input_type` (and direction for OPNIC).
 
 - **remove_parameter(name \| Parameter)**  
   Removes a parameter.
@@ -223,7 +223,7 @@ When `input_type == InputType.DGX_Q`, the table builds a QUA struct (packet) who
 - **variables_dict**: Name → QUA variable (after declaration).
 - **is_declared**: True if all parameters are declared.
 - **input_type**, **direction**: For DGX tables.
-- **packet**, **dgx_struct**, **stream_id**: DGX-only.
+- **packet**, **opnic_struct**, **stream_id**: DGX-only.
 
 ### Creation from Qiskit
 
@@ -393,9 +393,9 @@ arr.assign(0, other_qua_array)
 |------------------|-------------|
 | `INPUT_STREAM`   | QUA input stream; advance with `advance_input_stream`; push from Python via job API. |
 | `IO1` / `IO2`    | OPX physical IO channels; program pauses, reads value, assigns to variable; Python uses `set_io_values` when job is paused. |
-| `DGX_Q`          | DGX Quantum (OPNIC): external stream with a packet struct; direction is given by **Direction**. |
+| `OPNIC`          | OPNIC (OPNIC): external stream with a packet struct; direction is given by **Direction**. |
 
-**Direction** (enum, used with `InputType.DGX_Q`):
+**Direction** (enum, used with `InputType.OPNIC`):
 
 | Value      | Meaning |
 |------------|---------|
@@ -403,13 +403,13 @@ arr.assign(0, other_qua_array)
 | `OUTGOING` | DGX → OPX (server sends parameters to the OPX). |
 | `BOTH`     | Bidirectional (separate streams for in/out). |
 
-For a **ParameterTable** with `InputType.DGX_Q`, every parameter must share the same **direction**.
+For a **ParameterTable** with `InputType.OPNIC`, every parameter must share the same **direction**.
 
 ---
 
-## ParameterPool and DGX Quantum
+## ParameterPool and OPNIC
 
-**ParameterPool** manages unique IDs for objects that need OPNIC stream IDs (e.g. DGX Quantum parameter tables and standalone DGX Quantum parameters). It also tracks which objects are registered and supports OPNIC wrapper patching and configuration.
+**ParameterPool** manages unique IDs for objects that need OPNIC stream IDs (e.g. OPNIC parameter tables and standalone OPNIC parameters). It also tracks which objects are registered and supports OPNIC wrapper patching and configuration.
 
 - **get_id(obj)**  
   Returns a new unique ID and optionally registers `obj`.
@@ -421,14 +421,14 @@ For a **ParameterTable** with `InputType.DGX_Q`, every parameter must share the 
   Returns all registered objects.
 
 - **initialize_streams()** / **close_streams()**  
-  Used for DGX Quantum: patch and configure OPNIC, then close when done.
+  Used for OPNIC: patch and configure OPNIC, then close when done.
 
 - **configured()** / **patched()**  
   State flags for OPNIC.
 
 Typical DGX workflow:
 
-1. Define parameters/tables with `input_type=InputType.DGX_Q` and the correct **direction** (they register with the pool).
+1. Define parameters/tables with `input_type=InputType.OPNIC` and the correct **direction** (they register with the pool).
 2. Call **ParameterPool.initialize_streams()** before running the QUA program.
 3. In QUA: **declare_variables()**, **load_input_values()** (for OUTGOING tables), **stream_back()** (for INCOMING).
 4. From Python: **push_to_opx()** (OUTGOING) or **fetch_from_opx()** (INCOMING).
@@ -438,11 +438,11 @@ Typical DGX workflow:
 
 ## Quarc hybrid alignment
 
-During Quarc hybrid alignment, **struct names** are deterministic: use **`default_quarc_struct_name(table_or_standalone_parameter)`** so codegen and QUA agree on `Packet_{...}` keys. **Numeric stream ids** are attached deterministically in-memory by :meth:`ParameterPool.prepare_dgx_quarc_hybrid_packets` (call it after your pool is finalized and before QUA declares external DGX streams).
+During Quarc hybrid alignment, **struct names** are deterministic: use **`default_quarc_struct_name(table_or_standalone_parameter)`** so codegen and QUA agree on `Packet_{...}` keys. **Numeric stream ids** are attached deterministically in-memory by :meth:`ParameterPool.prepare_opnic_quarc_hybrid_packets` (call it after your pool is finalized and before QUA declares external DGX streams).
 
 **QUA mapping (same `qm.qua` primitives as `QuaStructHandle`):**
 
-| `ParameterTable` (DGX_Q) | Quarc `QuaStructHandle` |
+| `ParameterTable` (OPNIC) | Quarc `QuaStructHandle` |
 |--------------------------|-------------------------|
 | `declare_variables()` (`declare_struct` + `declare_external_stream`) | `initialize_in_qua()` |
 | `load_input_values()` → `receive_from_external_stream` | `recv()` |
@@ -450,7 +450,7 @@ During Quarc hybrid alignment, **struct names** are deterministic: use **`defaul
 
 Directions follow the same **`Direction`** enum as elsewhere in this doc (classical-centric: **OUTGOING** = classical → OPX, **INCOMING** = OPX → classical). Use **`QuarcStructRegistry`** only to record **which Quarc struct name** pairs with which table—**not** to assign stream ids.
 
-For a **full pool snapshot** (every DGX_Q table registered in the pool, e.g. policy + reward + any circuit tables), call **`ParameterPool.iter_dgx_parameter_tables()`**—sorted by table `_id` so struct emission order is stable for Quarc codegen.
+For a **full pool snapshot** (every OPNIC table registered in the pool, e.g. policy + reward + any circuit tables), call **`ParameterPool.iter_opnic_parameter_tables()`**—sorted by table `_id` so struct emission order is stable for Quarc codegen.
 
 ---
 

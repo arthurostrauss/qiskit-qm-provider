@@ -120,7 +120,7 @@ def sampler_program(
     """Return the QUA program for the given PUBs."""
     circuits = [pub.circuit for pub in pubs]
     num_circuits = len(circuits)
-    # TODO: Handle DGX Quantum case where circuits share parameters (loading might not work)
+    # TODO: Handle OPNIC case where circuits share parameters (loading might not work)
     clbits_dicts = []
     with program() as sampler_prog:
         backend.init_macro()

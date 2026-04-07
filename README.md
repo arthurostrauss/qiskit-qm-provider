@@ -186,7 +186,7 @@ Both primitives accept an options object that controls how jobs are run and how 
 | Option          | Type                                         | Default        | Description                                                                                                                                                                                                    |
 | --------------- | -------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `default_shots` | `int`                                        | `1024`         | Default number of shots per circuit when not specified in `run()`.                                                                                                                                             |
-| `input_type`    | `InputType | None`                           | `None`         | How parameter values are loaded on the OPX: `InputType.INPUT_STREAM`, `InputType.IO1`, `InputType.IO2`, `InputType.DGX_Q`, or `None` (preload at compile time; use only for a small number of parameter sets). |
+| `input_type`    | `InputType | None`                           | `None`         | How parameter values are loaded on the OPX: `InputType.INPUT_STREAM`, `InputType.IO1`, `InputType.IO2`, `InputType.OPNIC`, or `None` (preload at compile time; use only for a small number of parameter sets). |
 | `run_options`   | `dict | None`                                | `None`         | Extra options passed through to the backend’s `run()` method.                                                                                                                                                  |
 | `meas_level`    | `"classified" | "kerneled" | "avg_kerneled"` | `"classified"` | Measurement level: classified (counts), kerneled (raw IQ per shot), or avg_kerneled (averaged).                                                                                                                |
 
@@ -198,11 +198,11 @@ Both primitives accept an options object that controls how jobs are run and how 
 | ------------------- | ------------------ | ---------- | --------------------------------------------------------------------------------------------------- |
 | `default_precision` | `float`            | `0.015625` | Default precision for expectation-value estimation when not specified in `run()` (e.g. 1/√4096).    |
 | `abelian_grouping`  | `bool`             | `True`     | Whether to group observables into qubit-wise commuting sets.                                        |
-| `input_type`        | `InputType | None` | `None`     | Same as for the Sampler: `INPUT_STREAM`, `IO1`, `IO2`, `DGX_Q`, or `None` for compile-time preload. |
+| `input_type`        | `InputType | None` | `None`     | Same as for the Sampler: `INPUT_STREAM`, `IO1`, `IO2`, `OPNIC`, or `None` for compile-time preload. |
 | `run_options`       | `dict | None`      | `None`     | Extra options passed through to the backend’s `run()` method.                                       |
 
 
-**InputType** (from `qiskit_qm_provider`): `INPUT_STREAM` (real-time input stream), `IO1`, `IO2` (I/O channels), or `DGX_Q` (DGX Quantum communication). Use `None` to bind all parameter values at compile time.
+**InputType** (from `qiskit_qm_provider`): `INPUT_STREAM` (real-time input stream), `IO1`, `IO2` (I/O channels), or `OPNIC` (DGX Quantum communication). Use `None` to bind all parameter values at compile time.
 
 Standalone examples for the Sampler and Estimator are in the [examples](examples/) folder.
 
@@ -297,7 +297,7 @@ with program() as qec_prog:
         # Execute recovery circuit with updated parameters
         recovery_circuit_result = backend.quantum_circuit_to_qua(recovery_circuit, recovery_vars)
 
-    if input_type != InputType.DGX_Q:
+    if input_type != InputType.OPNIC:
         with stream_processing():
             syndrome_data.stream_processing()
 ```

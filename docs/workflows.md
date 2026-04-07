@@ -131,7 +131,7 @@ See:
 They are designed to:
 
 - re‑use QuAM‑derived Targets for transpilation,
-- stream parameters in real time via `InputType` (input streams, IO, DGX_Q),
+- stream parameters in real time via `InputType` (input streams, IO, OPNIC),
 - and map shot budgets to QOP shots and QUA loops.
 
 ### 3.1 Generated QUA programs (and how to inspect them)

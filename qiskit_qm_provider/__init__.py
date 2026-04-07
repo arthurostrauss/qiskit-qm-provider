@@ -50,6 +50,7 @@ __all__ = [
     "ParameterPool",
     "Direction",
     "InputType",
+    "OpnicPacketBinding",
     "QUA2DArray",
     "QMSamplerV2",
     "QMSamplerOptions",

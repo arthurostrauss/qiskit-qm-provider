@@ -63,8 +63,8 @@ class TestQMEstimatorOptions:
         assert opts.abelian_grouping is False
 
     def test_input_type_enum(self):
-        opts = QMEstimatorOptions(input_type=InputType.DGX_Q)
-        assert opts.input_type == InputType.DGX_Q
+        opts = QMEstimatorOptions(input_type=InputType.OPNIC)
+        assert opts.input_type == InputType.OPNIC
 
     def test_input_type_string_coercion(self):
         opts = QMEstimatorOptions(input_type="IO1")

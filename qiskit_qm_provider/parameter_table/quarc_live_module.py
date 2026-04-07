@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 
-"""Build an in-process Quarc ``BaseModule`` from DGX packet targets and sync stream ids to pool objects.
+"""Build an in-process Quarc ``BaseModule`` from OPNIC packet targets and sync stream ids to pool objects.
 
 Requires the ``quarc`` package. Mirrors ``quarc build`` config import: struct registration uses
 ``StructSpec.from_struct`` / Quarc's global stream id counters (isolated here when building).
@@ -50,8 +50,6 @@ def _field_length_for_parameter(param: Any) -> int:
 
 
 def struct_spec_from_standalone_parameter(param: "Parameter") -> Dict[str, Any]:
-    # Private/internal hook used to set standalone DGX packet stream ids.
-    param._materialize_dgx_stream_id_for_quarc()
     fields = [
         {
             "name": param.name,
@@ -60,11 +58,16 @@ def struct_spec_from_standalone_parameter(param: "Parameter") -> Dict[str, Any]:
         }
     ]
     d = param.direction
-    return {
+    if d is None:
+        raise ValueError("struct_spec_from_standalone_parameter requires Parameter.direction for OPNIC specs.")
+    out: Dict[str, Any] = {
         "struct_name": default_quarc_struct_name(param),
         "direction": d.name,
         "fields": fields,
+        "rl_qoc_binding": param.name,
+        "rl_qoc_pool_stream_id": int(param.stream_id),
     }
+    return out
 
 
 def struct_spec_from_table(table: "ParameterTable") -> Dict[str, Any]:
@@ -78,11 +81,14 @@ def struct_spec_from_table(table: "ParameterTable") -> Dict[str, Any]:
             }
         )
     d = table.direction
-    return {
+    out: Dict[str, Any] = {
         "struct_name": default_quarc_struct_name(table),
         "direction": d.name,
         "fields": fields,
+        "rl_qoc_binding": table.name,
+        "rl_qoc_pool_table_id": int(table._id),
     }
+    return out
 
 
 def specs_from_quarc_packet_targets(

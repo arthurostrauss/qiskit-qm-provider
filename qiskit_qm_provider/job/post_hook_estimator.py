@@ -68,7 +68,7 @@ def _serialize_parameter_table(parameter_table: Optional[ParameterTable]) -> str
             input_type_str = f"InputType.{param.input_type.name}"
 
         # Serialize direction
-        if param.input_type is None or param.input_type != InputType.DGX_Q:
+        if param.input_type is None or param.input_type != InputType.OPNIC:
             direction_str = "None"
         elif param.direction is None:
             direction_str = "None"

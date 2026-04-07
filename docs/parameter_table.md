@@ -69,7 +69,7 @@ Represents a single parameter.
 
 ### `InputType`
 Enum for input mechanisms:
-- `DGX_Q`: DGX Quantum communication.
+- `OPNIC`: OPNIC (classical host) packet communication.
 - `INPUT_STREAM`: Standard QOP Input Stream.
 - `IO1`, `IO2`: GPIO inputs.
 

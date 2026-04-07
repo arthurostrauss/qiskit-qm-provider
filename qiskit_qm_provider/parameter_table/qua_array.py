@@ -73,7 +73,7 @@ class QUAArray(Parameter):
                         used as initial values.
             qua_type:   QUA type of the elements (e.g. ``fixed``, ``int``, ``bool``).
             input_type: Input type forwarded to ``Parameter``.
-            direction:  Direction forwarded to ``Parameter`` (DGX Quantum only).
+            direction:  Direction forwarded to ``Parameter`` (OPNIC only).
             units:      Units string forwarded to ``Parameter``.
 
         Raises:

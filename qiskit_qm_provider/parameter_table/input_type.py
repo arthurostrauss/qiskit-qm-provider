@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""InputType and Direction enums for parameter/stream configuration (e.g. DGX_Q, INPUT_STREAM).
+"""InputType and Direction enums for parameter/stream configuration (e.g. OPNIC, INPUT_STREAM).
 
 Author: Arthur Strauss
 Date: 2026-02-08
 """
 
 from enum import Enum
-from typing import Optional, Union, ClassVar
+from typing import Optional
 
 
 class InputType(Enum):
-    DGX_Q = "DGX_Q"
+    OPNIC = "OPNIC"
     INPUT_STREAM = "INPUT_STREAM"
     IO1 = "IO1"
     IO2 = "IO2"
@@ -43,16 +43,15 @@ class InputType(Enum):
 
 class Direction(Enum):
     """
-    The direction of the data flow.
-    INCOMING: OPX -> DGX_Q
-    OUTGOING: DGX_Q -> OPX
-
-    Useful for defining DGX Quantum streams.
+    The direction of the data flow for OPNIC packet streams.
+    INCOMING: OPX -> classical (OPNIC)
+    OUTGOING: classical (OPNIC) -> OPX
+    BOTH: bidirectional.
     """
 
-    INCOMING = "INCOMING"  # OPX -> DGX_Q
-    OUTGOING = "OUTGOING"  # DGX_Q -> OPX
-    BOTH = "BOTH"  # DGX_Q -> OPX and OPX -> DGX_Q
+    INCOMING = "INCOMING"  # OPX -> OPNIC
+    OUTGOING = "OUTGOING"  # OPNIC -> OPX
+    BOTH = "BOTH"  # OPNIC <-> OPX
 
     def __str__(self) -> str:
         return self.value

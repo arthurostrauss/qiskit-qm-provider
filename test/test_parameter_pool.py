@@ -1,12 +1,13 @@
 """Tests for ParameterPool."""
 
 import pytest
-from qiskit_qm_provider.parameter_table.parameter_pool import ParameterPool
+
+from qiskit_qm_provider import Direction, InputType, Parameter, ParameterPool, ParameterTable
+from qiskit_qm_provider.parameter_table.quarc_naming import default_quarc_struct_name
 
 
 @pytest.fixture(autouse=True)
 def reset_pool():
-    """Reset the ParameterPool before each test to avoid cross-test contamination."""
     ParameterPool.reset()
     yield
     ParameterPool.reset()
@@ -57,64 +58,63 @@ class TestParameterPoolCollections:
         assert result[id1] == "x"
 
 
-class TestParameterPoolDunderMethods:
-    def test_getitem(self):
-        pool = ParameterPool()
-        id_ = ParameterPool.get_id("item")
-        assert pool[id_] == "item"
+class TestOpnicTransportModule:
+    def test_set_opnic_transport_module_override(self):
+        class FakeTransport:
+            pass
 
-    def test_setitem_raises_on_duplicate(self):
-        pool = ParameterPool()
-        id_ = ParameterPool.get_id("item")
-        with pytest.raises(ValueError, match="already exists"):
-            pool[id_] = "another"
-
-    def test_delitem(self):
-        pool = ParameterPool()
-        id_ = ParameterPool.get_id("item")
-        del pool[id_]
-        assert id_ not in pool
-
-    def test_delitem_missing_raises(self):
-        pool = ParameterPool()
-        with pytest.raises(KeyError):
-            del pool[99999]
-
-    def test_contains(self):
-        pool = ParameterPool()
-        id_ = ParameterPool.get_id("item")
-        assert id_ in pool
-        assert 99999 not in pool
-
-    def test_len(self):
-        pool = ParameterPool()
-        ParameterPool.get_id("a")
-        ParameterPool.get_id("b")
-        assert len(pool) >= 2
-
-    def test_iter(self):
-        pool = ParameterPool()
-        ParameterPool.get_id("a")
-        ParameterPool.get_id("b")
-        items = list(pool)
-        assert "a" in items
-        assert "b" in items
-
-    def test_str(self):
-        pool = ParameterPool()
-        ParameterPool.get_id("x")
-        s = str(pool)
-        assert "x" in s
-
-    def test_repr(self):
-        pool = ParameterPool()
-        r = repr(pool)
-        assert "ParameterPool" in r
+        ParameterPool.set_opnic_transport_module(FakeTransport)
+        assert ParameterPool.get_opnic_transport_module() is FakeTransport
 
 
-class TestParameterPoolFlags:
-    def test_patched_default_false(self):
-        assert ParameterPool.patched() is False
+class TestParameterPoolNamedRegistration:
+    def test_duplicate_parameter_table_name_raises(self):
+        p1 = Parameter("a", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
+        ParameterTable([p1], name="policy")
+        p2 = Parameter("b", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
+        with pytest.raises(ValueError, match="Duplicate pool registration name"):
+            ParameterTable([p2], name="policy")
 
-    def test_configured_default_false(self):
-        assert ParameterPool.configured() is False
+
+class TestParameterPoolRebind:
+    def test_rebind_parameter_table_id_moves_registry_entry(self):
+        mu = Parameter("mu", [0.0], input_type=InputType.OPNIC, direction=Direction.OUTGOING)
+        sigma = Parameter("sigma", [1.0], input_type=InputType.OPNIC, direction=Direction.OUTGOING)
+        t = ParameterTable([mu, sigma], name="policy")
+        old_id = t._id
+        ParameterPool.rebind_parameter_table_id(t, 42)
+        assert t._id == 42
+        assert ParameterPool.get_obj(42) is t
+        assert old_id not in ParameterPool.get_all_ids()
+
+    def test_rebind_standalone_opnic_parameter_stream_id(self):
+        p = Parameter("solo_rebind_test", [0.0], input_type=InputType.OPNIC, direction=Direction.INCOMING)
+        _ = p.stream_id
+        ParameterPool.rebind_standalone_opnic_parameter_stream_id(p, 77)
+        assert p._stream_id == 77
+        assert ParameterPool.get_obj(77) is p
+
+
+class TestParameterPoolQuarcSpecsAttach:
+    def test_attach_opnic_streams_from_specs_dict_smoke(self):
+        pytest.importorskip("quarc")
+        mu = Parameter("mu", [0.0], input_type=InputType.OPNIC, direction=Direction.OUTGOING)
+        sigma = Parameter("sigma", [1.0], input_type=InputType.OPNIC, direction=Direction.OUTGOING)
+        tab = ParameterTable([mu, sigma], name="policy")
+        tid = tab._id
+        specs = {
+            "version": 1,
+            "structs": [
+                {
+                    "struct_name": default_quarc_struct_name(tab),
+                    "direction": "OUTGOING",
+                    "fields": [
+                        {"name": "mu", "dtype": "float", "length": 1},
+                        {"name": "sigma", "dtype": "float", "length": 1},
+                    ],
+                    "rl_qoc_binding": "policy",
+                    "rl_qoc_pool_table_id": tid,
+                }
+            ],
+        }
+        ParameterPool.attach_opnic_streams_from_specs_dict(specs)

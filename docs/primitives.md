@@ -37,7 +37,7 @@ Runs the estimator.
 
 - `default_precision`: Default precision (1/sqrt(shots)).
 - `abelian_grouping`: Group commuting observables (Default: True).
-- `input_type`: Mechanism for parameter loading (`InputType.INPUT_STREAM`, `DGX_Q`, etc.).
+- `input_type`: Mechanism for parameter loading (`InputType.INPUT_STREAM`, `OPNIC`, etc.).
 - `run_options`: Dictionary of options passed to `backend.run`.
 
 ---

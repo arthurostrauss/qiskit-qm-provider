@@ -52,7 +52,7 @@ class QUA2DArray(Parameter):
             n_cols: Number of columns.
             qua_type: QUA type of the elements.
             input_type: Input type of the parameter.
-            direction: Direction of the parameter (only for DGX Quantum).
+            direction: Direction of the parameter (only for OPNIC).
             units: Units of the parameter.
         Example:
             >>> fake_data = QUA2DArray("fake_data", 50, 2, 8)
