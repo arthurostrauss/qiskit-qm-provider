@@ -1,6 +1,18 @@
 # API Documentation
 
-This directory contains detailed API documentation for the `qiskit-qm-provider`. It is set up to be published as a **GitHub Pages** site available [here](https://arthurostrauss.github.io/qiskit-qm-provider/) theme).
+This directory contains detailed API documentation for `qiskit-qm-provider`.
+The docs are built with **Sphinx** and the **Qiskit ecosystem theme** (`qiskit-ecosystem`).
+
+## Build locally
+
+From the repository root, with your virtual environment activated:
+
+```bash
+pip install -e ".[docs]"
+sphinx-build -b html docs docs/_build/html
+```
+
+Open `docs/_build/html/index.html` in your browser to preview the site.
 
 ## Contents
 

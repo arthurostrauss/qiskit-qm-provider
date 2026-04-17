@@ -1,5 +1,7 @@
 # Qiskit QM Provider
 
+[![Qiskit Ecosystem](https://qisk.it/e-07ae12cb)](https://qisk.it/e)
+
 **A comprehensive interface for tight integration between the Qiskit ecosystem and Quantum Machine's Quantum Orchestration Platform (QOP).**
 
 ## Installation

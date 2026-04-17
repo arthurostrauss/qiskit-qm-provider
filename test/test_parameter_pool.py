@@ -6,7 +6,6 @@ from qiskit_qm_provider.parameter_table.parameter_pool import ParameterPool
 
 @pytest.fixture(autouse=True)
 def reset_pool():
-    """Reset the ParameterPool before each test to avoid cross-test contamination."""
     ParameterPool.reset()
     yield
     ParameterPool.reset()

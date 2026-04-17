@@ -1,9 +1,3 @@
----
-title: Error‑Correction Workflow
-nav_order: 7
-parent: Home
----
-
 # Error‑Correction Workflow with ParameterTable
 
 Error‑correction experiments are a **stress‑test for hybrid programming**:

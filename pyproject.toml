@@ -42,6 +42,11 @@ iqcc = [
 qm-saas = [
     "qm-saas"
 ]
+docs = [
+    "myst-parser",
+    "qiskit-sphinx-theme",
+    "sphinx",
+]
 [tool.uv]
 prerelease = "allow"
 

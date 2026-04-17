@@ -1,9 +1,3 @@
----
-title: Parameter Table
-nav_order: 6
-parent: Home
----
-
 # Parameter Table
 
 The `ParameterTable` module enables real-time parameter updates and streaming.

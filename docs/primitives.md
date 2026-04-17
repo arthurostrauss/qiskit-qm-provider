@@ -1,9 +1,3 @@
----
-title: Primitives
-nav_order: 5
-parent: Home
----
-
 # Primitives
 
 ## QMEstimatorV2
@@ -24,7 +18,7 @@ print(generate_qua_script(job.program))
 ```
 
 See the full end-to-end snippet in
-[Workflows and Examples](workflows.md#31-generated-qua-programs-and-how-to-inspect-them).
+[Workflows and Examples](workflows.md).
 
 ### `__init__(backend: QMBackend, options: QMEstimatorOptions | dict | None = None)`
 - `backend`: The QMBackend.
@@ -60,7 +54,7 @@ print(generate_qua_script(job.program))
 ```
 
 See the full end-to-end snippet in
-[Workflows and Examples](workflows.md#31-generated-qua-programs-and-how-to-inspect-them).
+[Workflows and Examples](workflows.md).
 
 ### `__init__(backend: QMBackend, options: QMSamplerOptions | dict | None = None)`
 - `backend`: The QMBackend.

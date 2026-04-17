@@ -1,9 +1,3 @@
----
-title: Backend and Utilities
-nav_order: 4
-parent: Home
----
-
 # Backend and Utilities
 
 ## QMBackend
@@ -29,7 +23,7 @@ print(generate_qua_script(job.program))
 ```
 
 See
-[Workflows and Examples](workflows.md#31-generated-qua-programs-and-how-to-inspect-them)
+[Workflows and Examples](workflows.md)
 for a complete snippet showing `backend.run()` and the V2 primitives (`QMSamplerV2`,
 `QMEstimatorV2`) side-by-side.
 

@@ -1,9 +1,3 @@
----
-title: Providers
-nav_order: 3
-parent: Home
----
-
 # Providers
 
 ## QMProvider

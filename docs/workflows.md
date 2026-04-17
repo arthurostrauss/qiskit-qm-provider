@@ -1,9 +1,3 @@
----
-title: Workflows and Examples
-nav_order: 2
-parent: Home
----
-
 # Workflows and Examples
 
 This page walks through the **main workflows** supported by `qiskit-qm-provider` and points you to
@@ -134,6 +128,7 @@ They are designed to:
 - stream parameters in real time via `InputType` (input streams, IO, DGX_Q),
 - and map shot budgets to QOP shots and QUA loops.
 
+(generated-qua-programs)=
 ### 3.1 Generated QUA programs (and how to inspect them)
 
 `QMSamplerV2`, `QMEstimatorV2`, and the `backend.run()` interface are meant to let you stay in

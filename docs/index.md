@@ -1,10 +1,3 @@
----
-title: Home
-layout: default
-nav_order: 1
-has_children: true
----
-
 # Qiskit QM Provider
 
 Welcome to the Qiskit-QM-Provider documentation page!
@@ -15,6 +8,18 @@ Thanks to Qiskit's fully integrated transpiler stack, and our close integration 
 
 **Author:** Arthur Strauss — *Centre for Quantum Technologies, National University of Singapore, in collaboration with Quantum Machines Ltd.*  
 **License:** Apache 2.0 (see the `LICENSE.md` file in the repository).
+
+```{toctree}
+:hidden:
+
+workflows
+providers
+backend
+primitives
+parameter_table
+error_correction
+GitHub <https://github.com/arthurostrauss/qiskit-qm-provider>
+```
 
 ## What this toolbox gives you
 
