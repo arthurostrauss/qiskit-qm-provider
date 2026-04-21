@@ -161,7 +161,11 @@ class QUAArray(Parameter):
 
             term = ind if stride == 1 else ind * stride
 
-            flat_idx = term if (isinstance(flat_idx, int) and flat_idx == 0) else flat_idx + term
+            flat_idx = (
+                term
+                if (isinstance(flat_idx, int) and flat_idx == 0)
+                else flat_idx + term
+            )
 
         return flat_idx
 
@@ -200,7 +204,10 @@ class QUAArray(Parameter):
         for i, k in enumerate(key):
             if isinstance(k, slice):
                 start, stop, step = k.indices(self.shape[i])
-                return [self[key[:i] + (v,) + key[i + 1 :]] for v in range(start, stop, step)]
+                return [
+                    self[key[:i] + (v,) + key[i + 1 :]]
+                    for v in range(start, stop, step)
+                ]
 
         # No slices remain — key contains only scalar indices (Python int or QUA var).
         if len(key) == len(self.shape):
@@ -266,7 +273,6 @@ class QUAArray(Parameter):
                 f"Too many indices in assign: got {len(indices)}, "
                 f"array has {len(self.shape)} dimensions."
             )
-
 
     # ------------------------------------------------------------------
     # OPX I/O
@@ -360,9 +366,7 @@ class QUAArray(Parameter):
             TypeError:  ``buffer`` is not ``None``, an ``int``, or a ``tuple``.
         """
         if mode not in ("save", "save_all"):
-            raise ValueError(
-                f"mode must be 'save' or 'save_all', got {mode!r}."
-            )
+            raise ValueError(f"mode must be 'save' or 'save_all', got {mode!r}.")
 
         if buffer is None:
             # Default: reshape stream back to the array's own N-D shape.
@@ -403,7 +407,9 @@ class _QUAArrayView:
 
     def __init__(self, parent: QUAArray, indices: Tuple):
         self._parent = parent
-        self._indices = indices  # already-resolved prefix indices (Python int or QUA var)
+        self._indices = (
+            indices  # already-resolved prefix indices (Python int or QUA var)
+        )
 
     # ------------------------------------------------------------------
     # Indexing
@@ -454,7 +460,7 @@ class _QUAArrayView:
             ValueError: Shape / length mismatch between view and ``val``.
             NotImplementedError: ``val`` is neither a list, ndarray, nor QUA array.
         """
-        view_shape = self._parent.shape[len(self._indices):]
+        view_shape = self._parent.shape[len(self._indices) :]
         view_size = int(np.prod(view_shape))
 
         # Compute the flat index of this view's first element.
@@ -483,5 +489,7 @@ class _QUAArrayView:
                 ctr = declare(int)
 
             with for_(ctr, 0, ctr < view_size, ctr + 1):
-                flat_pos = base + ctr if (isinstance(base, int) and base == 0) else base + ctr
+                flat_pos = (
+                    base + ctr if (isinstance(base, int) and base == 0) else base + ctr
+                )
                 qua_assign(self._parent.var[flat_pos], val[ctr])

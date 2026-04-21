@@ -438,7 +438,7 @@ Typical DGX workflow:
 
 ## Quarc hybrid alignment
 
-During Quarc hybrid alignment, **struct names** are deterministic: use **`default_quarc_struct_name(table_or_standalone_parameter)`** so codegen and QUA agree on `Packet_{...}` keys. **Numeric stream ids** are attached deterministically in-memory by :meth:`ParameterPool.prepare_opnic_quarc_hybrid_packets` (call it after your pool is finalized and before QUA declares external DGX streams).
+Authoritative packet layout and stream ids come from **Quarc** (`quarc build` → generated `module.json`). Build `ParameterTable` instances with :meth:`ParameterPool.from_quarc_module` after constructing your `quarc.BaseModule` subclass (e.g. `rl_qoc.qua.quarc.RLQoCModule`). Each table’s ``_var`` is the **`QuaStructHandle`**; Python **push_to_opx** / **fetch_from_opx** delegate to **send** / **recv** on that handle (or the pybind runtime endpoint after rebinding on the classical host).
 
 **QUA mapping (same `qm.qua` primitives as `QuaStructHandle`):**
 
@@ -448,9 +448,9 @@ During Quarc hybrid alignment, **struct names** are deterministic: use **`defaul
 | `load_input_values()` → `receive_from_external_stream` | `recv()` |
 | `stream_back()` → `send_to_external_stream` | `send()` |
 
-Directions follow the same **`Direction`** enum as elsewhere in this doc (classical-centric: **OUTGOING** = classical → OPX, **INCOMING** = OPX → classical). Use **`QuarcStructRegistry`** only to record **which Quarc struct name** pairs with which table—**not** to assign stream ids.
+Directions follow the same **`Direction`** enum as elsewhere in this doc (classical-centric: **OUTGOING** = classical → OPX, **INCOMING** = OPX → classical).
 
-For a **full pool snapshot** (every OPNIC table registered in the pool, e.g. policy + reward + any circuit tables), call **`ParameterPool.iter_opnic_parameter_tables()`**—sorted by table `_id` so struct emission order is stable for Quarc codegen.
+For every OPNIC table currently registered in the pool, call **`ParameterPool.iter_opnic_parameter_tables()`**—sorted by table `_id`.
 
 ---
 

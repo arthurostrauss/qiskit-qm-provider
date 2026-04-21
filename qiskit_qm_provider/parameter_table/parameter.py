@@ -22,14 +22,9 @@ from __future__ import annotations
 
 import copy
 import warnings
-
-from qm import QuantumMachine
-from qm.api.v2.job_api import JobApi
-from qm.qua._dsl import _ResultSource
-
-from .parameter_pool import ParameterPool
-from .input_type import Direction, InputType
+from functools import wraps
 from typing import Optional, List, Union, Tuple, Literal, Sequence, TYPE_CHECKING, Dict
+
 import numpy as np
 from qm.qua import (
     fixed,
@@ -48,7 +43,12 @@ from qm.qua import (
 )
 from qm.qua._expressions import QuaArrayVariable
 from qm.jobs.running_qm_job import RunningQmJob
+from qm import QuantumMachine
+from qm.api.v2.job_api import JobApi
 from qualang_tools.results import wait_until_job_is_paused
+
+from .parameter_pool import ParameterPool
+from .input_type import Direction, InputType
 
 if TYPE_CHECKING:
     from .parameter_table import ParameterTable
@@ -58,6 +58,7 @@ if TYPE_CHECKING:
         VectorOfAnyType,
         ScalarOfAnyType,
         QuaScalar,
+        ResultStreamSource,
     )
 
 
@@ -130,6 +131,28 @@ def reset_var(var: QuaScalar, type: Union[str, type]):
         assign(var, False)
     else:
         raise ValueError("Invalid QUA type. Please use 'int', 'fixed' or 'bool'.")
+
+
+def opnic_check(method):
+    """Block exchange-level field API when OPNIC parameter is table-bound."""
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        if self.input_type == InputType.OPNIC and self.main_table is not None:
+            method_name = method.__name__
+            table_method = (
+                "declare_variables"
+                if method_name == "declare_variable"
+                else method_name
+            )
+            raise RuntimeError(
+                f"Parameter.{method_name}() is table-managed for OPNIC fields "
+                f"(parameter={self.name!r}, table={self.main_table.name!r}). "
+                f"Use ParameterTable.{table_method}() on the owning table instead."
+            )
+        return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 class Parameter:
@@ -223,10 +246,6 @@ class Parameter:
         if self._input_type == InputType.OPNIC and self.direction is None:
             raise ValueError("Direction must be provided for OPNIC input type.")
 
-        self._quarc_incoming_stream_id: Optional[int] = None
-        self._quarc_outgoing_stream_id: Optional[int] = None
-        self._quarc_stream_specs_assigned: bool = False
-
         self._initialized = True
         if self._input_type == InputType.OPNIC:
             ParameterPool._track_opnic_parameter_pending_table(self)
@@ -277,6 +296,8 @@ class Parameter:
             raise ValueError(
                 f"Parameter {self.name} is already part of the parameter table {param_table.name}."
             )
+        if self._main_table is None:
+            self._main_table = param_table
 
     def is_standalone(self) -> bool:
         """
@@ -285,53 +306,6 @@ class Parameter:
             bool: True if the parameter is standalone, False otherwise.
         """
         return self.main_table is None
-
-    def _clear_quarc_stream_specs(self) -> None:
-        self._quarc_incoming_stream_id = None
-        self._quarc_outgoing_stream_id = None
-        self._quarc_stream_specs_assigned = False
-
-    def _attach_quarc_stream_specs(
-        self,
-        *,
-        incoming_id: Optional[int] = None,
-        outgoing_id: Optional[int] = None,
-    ) -> None:
-        """For internal use by :class:`~qiskit_qm_provider.parameter_table.ParameterPool` only."""
-        if self._input_type != InputType.OPNIC:
-            raise ValueError("_attach_quarc_stream_specs is only valid for InputType.OPNIC Parameter.")
-        self._quarc_incoming_stream_id = incoming_id
-        self._quarc_outgoing_stream_id = outgoing_id
-        self._quarc_stream_specs_assigned = True
-
-    def _require_opnic_quarc_stream_specs(self) -> None:
-        if self._input_type != InputType.OPNIC:
-            return
-        if not self._quarc_stream_specs_assigned:
-            raise RuntimeError(
-                "OPNIC external stream ids are not set. Call "
-                "ParameterPool.prepare_opnic_quarc_hybrid_packets() before declaring QUA variables."
-            )
-
-    def _stream_id_for_qua_incoming_edge(self) -> int:
-        self._require_opnic_quarc_stream_specs()
-        if self._quarc_incoming_stream_id is not None:
-            return self._quarc_incoming_stream_id
-        if self._direction == Direction.OUTGOING and self._quarc_outgoing_stream_id is not None:
-            return self._quarc_outgoing_stream_id
-        raise RuntimeError(
-            "Cannot resolve INCOMING QUA stream id; check Quarc direction vs. attached stream specs."
-        )
-
-    def _stream_id_for_qua_outgoing_edge(self) -> int:
-        self._require_opnic_quarc_stream_specs()
-        if self._quarc_outgoing_stream_id is not None:
-            return self._quarc_outgoing_stream_id
-        if self._direction == Direction.INCOMING and self._quarc_incoming_stream_id is not None:
-            return self._quarc_incoming_stream_id
-        raise RuntimeError(
-            "Cannot resolve OUTGOING QUA stream id; check Quarc direction vs. attached stream specs."
-        )
 
     @property
     def main_table(self) -> Optional[ParameterTable]:
@@ -428,6 +402,7 @@ class Parameter:
                     )
                 assign_with_condition(self.var, value, value_cond)
 
+    @opnic_check
     def declare_variable(self, pause_program=False, declare_stream=True):
         """
         Declare the QUA variable associated with the parameter.
@@ -435,42 +410,13 @@ class Parameter:
             Default is False.
         declare_stream: Boolean indicating if an output stream should be declared to save the QUA variable.
         """
+        if self.input_type == InputType.OPNIC:
+            raise RuntimeError(
+                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
+                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+            )
         if self.is_declared:
             raise ValueError("Variable already declared. Cannot declare again.")
-        if self.input_type == InputType.OPNIC:
-            if self.is_standalone():
-                from qm.qua import (
-                    declare_struct,
-                    declare_external_stream,
-                    QuaStreamDirection,
-                )
-
-                # Parameter not part of a parameter table; stream ids come from ParameterPool.prepare_*
-                pkt_struct = self.opnic_struct
-                self._var = declare_struct(pkt_struct)
-
-                if self.direction == Direction.INCOMING:
-                    self._qua_external_stream_out = declare_external_stream(
-                        pkt_struct, self._stream_id_for_qua_outgoing_edge(), QuaStreamDirection.OUTGOING
-                    )
-                elif self.direction == Direction.OUTGOING:
-                    self._qua_external_stream_in = declare_external_stream(
-                        pkt_struct, self._stream_id_for_qua_incoming_edge(), QuaStreamDirection.INCOMING
-                    )
-                else:
-                    self._qua_external_stream_in = declare_external_stream(
-                        pkt_struct, self._stream_id_for_qua_incoming_edge(), QuaStreamDirection.INCOMING
-                    )
-                    self._qua_external_stream_out = declare_external_stream(
-                        pkt_struct, self._stream_id_for_qua_outgoing_edge(), QuaStreamDirection.OUTGOING
-                    )
-
-            else:
-                raise ValueError(
-                    f"This parameter is part of a parameter table. "
-                    f"Please use the parameter table {ParameterPool.get_obj(self.stream_id).name} "
-                    f"forming the Struct to declare it."
-                )
         else:
             args_declare = {"t": self.type}
             if self.value is not None:
@@ -537,7 +483,9 @@ class Parameter:
             try:
                 from qm.qua import qua_struct, QuaArray
             except ImportError:
-                raise ImportError("Need to install QUA version compatible with OPNIC external streams")
+                raise ImportError(
+                    "Need to install QUA version compatible with OPNIC external streams"
+                )
             length = 1 if not self.is_array else self.length
             cls_name = f"Packet_{self.name}_{self.stream_id}"
             pkt_struct = qua_struct(
@@ -567,7 +515,11 @@ class Parameter:
             Unique ID integer of the external stream.
 
         """
-        if self._stream_id is None and self._input_type == InputType.OPNIC and not self._table_indices:
+        if (
+            self._stream_id is None
+            and self._input_type == InputType.OPNIC
+            and not self._table_indices
+        ):
             self._stream_id = ParameterPool.get_id(self)
             ParameterPool._release_opnic_unbound_parameter(self)
         return self._stream_id
@@ -640,7 +592,7 @@ class Parameter:
         return self.length > 0
 
     @property
-    def stream(self) -> _ResultSource:
+    def stream(self) -> ResultStreamSource:
         """Output stream associated with the parameter."""
         return self._stream
 
@@ -758,6 +710,7 @@ class Parameter:
                 with if_(self.var > max_val):
                     assign(self.var, max_val)
 
+    @opnic_check
     def load_input_value(self):
         """
         QUA Macro: Load a value from the input mechanism associated with the parameter.
@@ -772,15 +725,10 @@ class Parameter:
             qua_advance_input_stream(self.var)
 
         elif self.input_type == InputType.OPNIC:
-            from qm.qua import receive_from_external_stream
-
-            if self.is_standalone():
-                receive_from_external_stream(self._qua_external_stream_in, self._var)
-            else:
-                raise RuntimeError(
-                    f"This method should be called from the ParameterTable {ParameterPool.get_obj(self.stream_id).name}"
-                    f" as this parameter was associated with a bigger packet."
-                )
+            raise RuntimeError(
+                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
+                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+            )
 
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io = IO1 if self.input_type == InputType.IO1 else IO2
@@ -799,6 +747,7 @@ class Parameter:
         else:
             raise ValueError("Invalid input stream type.")
 
+    @opnic_check
     def push_to_opx(
         self,
         value: Union[int, float, bool, Sequence[Union[int, float, bool]]],
@@ -886,44 +835,12 @@ class Parameter:
             job.push_to_input_stream(self.name, value)
 
         elif self.input_type == InputType.OPNIC:
-            if self.is_standalone():
-                if self.direction == Direction.INCOMING:
-                    raise ValueError("Cannot push value to Incoming stream.")
-                processed_value = value.tolist() if isinstance(value, np.ndarray) else value
-                try:
-                    mod = ParameterPool.get_opnic_transport_module()
-                    send_packet = getattr(mod, "send_packet", None)
-                    OutgoingPacket = getattr(mod, "OutgoingPacket", None)
-                except ImportError as exc:
-                    raise ImportError(
-                        "OPNIC push_to_opx requires either an opnic_wrapper-style transport "
-                        "(OutgoingPacket/send_packet) or a Quarc runtime exposing "
-                        "setup_opnic(...)->runtime.data_packet.send()."
-                    ) from exc
+            raise RuntimeError(
+                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
+                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+            )
 
-                if callable(send_packet) and OutgoingPacket is not None:
-                    payload = (
-                        [processed_value]
-                        if not self.is_array and isinstance(processed_value, (int, float, bool))
-                        else processed_value
-                    )
-                    packet = OutgoingPacket(*list(payload))
-                    setattr(packet, self.name, payload)
-                    send_packet(self.stream_id, packet)
-                else:
-                    data_packet = ParameterPool.get_opnic_runtime_packet(target_obj=self)
-                    setattr(data_packet, self.name, processed_value)
-                    data_packet.send()
-
-                if verbosity > 1:
-                    print(f"Sent packet field {self.name}={processed_value}")
-            else:
-                raise RuntimeError(
-                    f"This method should be called from the ParameterTable object"
-                    f" {ParameterPool.get_obj(self.stream_id).name} as this parameter "
-                    f"was associated with a bigger packet."
-                )
-
+    @opnic_check
     def stream_back(self, reset: bool = False):
         """
         QUA Macro: Save/stream the value of the parameter to the client/server side.
@@ -939,20 +856,10 @@ class Parameter:
         ):
             self.save_to_stream(reset)
         elif self.input_type == InputType.OPNIC:
-            from qm.qua import send_to_external_stream
-
-            if not self.is_standalone():  # Part of a parameter table
-                raise RuntimeError(
-                    f"This method should be called from the"
-                    f" ParameterTable object {ParameterPool.get_obj(self.stream_id).name} "
-                    f"as this parameter was associated with a bigger packet."
-                )
-
-            if self.direction == Direction.OUTGOING:
-                raise ValueError("Cannot send value to outgoing stream.")
-
-            send_to_external_stream(self._qua_external_stream_out, self._var)
-            self.reset_var()
+            raise RuntimeError(
+                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
+                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+            )
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io = IO1 if self.input_type == InputType.IO1 else IO2
             if self.is_array:
@@ -969,6 +876,7 @@ class Parameter:
                     reset_var(self.var, self.type)
                 pause()
 
+    @opnic_check
     def fetch_from_opx(
         self,
         job: Optional[RunningQmJob | JobApi] = None,
@@ -1020,41 +928,10 @@ class Parameter:
             ]
 
         elif self.input_type == InputType.OPNIC:
-            if not self.is_standalone():  # Part of a parameter table
-                raise RuntimeError(
-                    f"This method should be called from the"
-                    f" ParameterTable object {ParameterPool.get_obj(self.stream_id).name} "
-                    f"as this parameter was associated with a bigger packet."
-                )
-
-            if self.direction == Direction.OUTGOING:
-                raise ValueError("Cannot fetch value from outgoing stream.")
-            try:
-                mod = ParameterPool.get_opnic_transport_module()
-                read_packet = getattr(mod, "read_packet", None)
-                wait_for_packets = getattr(mod, "wait_for_packets", None)
-            except ImportError as exc:
-                raise ImportError(
-                    "OPNIC fetch_from_opx requires either an opnic_wrapper-style transport "
-                    "(wait_for_packets/read_packet) or a Quarc runtime exposing "
-                    "setup_opnic(...)->runtime.data_packet.recv()."
-                ) from exc
-
-            if callable(wait_for_packets) and callable(read_packet):
-                wait_for_packets(self.stream_id, fetching_index + fetching_size)
-                packets = []
-                for i in range(fetching_size):
-                    packet = read_packet(self.stream_id, fetching_index + i)
-                    packets.append(packet)
-                value = np.array([getattr(packet, self.name) for packet in packets])
-            else:
-                data_packet = ParameterPool.get_opnic_runtime_packet(target_obj=self)
-                values = []
-                for i in range(fetching_index + fetching_size):
-                    data_packet.recv()
-                    if i >= fetching_index:
-                        values.append(getattr(data_packet, self.name))
-                value = np.array(values)
+            raise RuntimeError(
+                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
+                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+            )
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io_method = (
                 "get_io1_value" if self.input_type == InputType.IO1 else "get_io2_value"
@@ -1134,9 +1011,6 @@ class Parameter:
         new_param._opnic_struct = None
         new_param._stream_id = None  # Will be re-evaluated by property or new table
         new_param._main_table = None
-        new_param._quarc_incoming_stream_id = None
-        new_param._quarc_outgoing_stream_id = None
-        new_param._quarc_stream_specs_assigned = False
 
         # If your __init__ sets an _initialized flag, set it here too
         if hasattr(self, "_initialized"):

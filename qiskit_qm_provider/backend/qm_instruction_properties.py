@@ -46,17 +46,26 @@ class QMInstructionProperties(InstructionProperties):
     and :pyattr:`quam_macro` properties.
     """
 
-    def __new__(cls, duration=None, error=None, qua_pulse_macro=None, *args, **kwargs):
-        if qua_pulse_macro is not None:
+    def __new__(
+        cls,
+        duration=None,
+        error=None,
+        qua_pulse_macro=None,
+        quam_macro=None,
+        *args,
+        **kwargs,
+    ):
+        macro = quam_macro if quam_macro is not None else qua_pulse_macro
+        if macro is not None:
             if duration is None:
-                duration = cls._infer_duration(qua_pulse_macro)
+                duration = cls._infer_duration(macro)
             if error is None:
-                fidelity = getattr(qua_pulse_macro, "fidelity", None)
+                fidelity = getattr(macro, "fidelity", None)
                 if isinstance(fidelity, float):
                     error = 1.0 - fidelity
 
         self = super().__new__(cls, duration=duration, error=error, *args, **kwargs)
-        self._qua_pulse_macro = qua_pulse_macro
+        self._qua_pulse_macro = macro
         return self
 
     @staticmethod
@@ -91,6 +100,7 @@ class QMInstructionProperties(InstructionProperties):
         duration: float | None = None,
         error: float | None = None,
         qua_pulse_macro: Callable | QuamMacro | None = None,
+        quam_macro: QuamMacro | None = None,
     ):
         """Create a new ``QMInstructionProperties``.
 
@@ -103,6 +113,9 @@ class QMInstructionProperties(InstructionProperties):
             qua_pulse_macro: Either a :class:`~quam.core.macro.QuamMacro`
                 (structured QuAM component with declarative attributes) or a
                 plain callable (bare QUA macro function).
+            quam_macro: Explicit :class:`~quam.core.macro.QuamMacro` input.
+                When both ``quam_macro`` and ``qua_pulse_macro`` are supplied,
+                ``quam_macro`` takes priority and ``qua_pulse_macro`` is ignored.
         """
         super().__init__()
 

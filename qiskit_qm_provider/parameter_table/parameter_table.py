@@ -22,9 +22,8 @@ from __future__ import annotations
 
 import copy
 import warnings
-from itertools import chain
-from numbers import Number
 from typing import (
+    Any,
     Optional,
     List,
     Dict,
@@ -117,16 +116,14 @@ class ParameterTable:
             self.name = f"ParameterTable_{id(self)}"
         self._input_type = None
         self._id = ParameterPool.get_id(self)
-        self._qua_external_stream_in = None
-        self._qua_external_stream_out = None
         self._packet = None
-        self._packet_type = None
         self._direction = None
         self._usable_for_opnic_communication = False
-        # Quarc / OPNIC packet streams — set only via ParameterPool (``_attach_quarc_stream_specs``)
-        self._quarc_incoming_stream_id: Optional[int] = None
-        self._quarc_outgoing_stream_id: Optional[int] = None
-        self._quarc_stream_specs_assigned: bool = False
+        #: Quarc ``QuaStructHandle`` (or pybind runtime endpoint) exposing ``send`` / ``recv`` / field access;
+        #: set by :meth:`ParameterPool.from_quarc_module` on the QUA side and rebound to the OPNIC runtime
+        #: endpoint (``runtime.<snake_case_struct>``) before calling :meth:`push_to_opx` / :meth:`fetch_from_opx`
+        #: on the classical side. All struct transport flows through this single handle.
+        self._var: Optional[Any] = None
 
         if isinstance(parameters_dict, Dict):
             for index, (parameter_name, parameter) in enumerate(
@@ -210,77 +207,6 @@ class ParameterTable:
                             "All parameters in the table must have the same direction."
                         )
 
-        if self.input_type == InputType.OPNIC:
-            self._recompute_opnic_qua_packet_type()
-
-    def _recompute_opnic_qua_packet_type(self) -> None:
-        """Rebuild :attr:`_packet_type` from current column parameters and :attr:`_id` (Quarc struct name)."""
-        if self.input_type != InputType.OPNIC:
-            return
-        from qm.qua import qua_struct, QuaArray
-
-        from .quarc_naming import default_quarc_struct_name
-
-        attributes = {
-            parameter.name: QuaArray[
-                parameter.type, parameter.length if parameter.is_array else 1
-            ]
-            for parameter in self.parameters
-        }
-        struct_name = default_quarc_struct_name(self)
-        self._packet_type = qua_struct(
-            type(struct_name, (object,), {"__annotations__": attributes})
-        )
-
-    def _clear_quarc_stream_specs(self) -> None:
-        self._quarc_incoming_stream_id = None
-        self._quarc_outgoing_stream_id = None
-        self._quarc_stream_specs_assigned = False
-
-    def _attach_quarc_stream_specs(
-        self,
-        *,
-        incoming_id: Optional[int] = None,
-        outgoing_id: Optional[int] = None,
-    ) -> None:
-        """For internal use by :class:`~qiskit_qm_provider.parameter_table.ParameterPool` only."""
-        if self.input_type != InputType.OPNIC:
-            raise ValueError("_attach_quarc_stream_specs is only valid for InputType.OPNIC ParameterTable.")
-        self._quarc_incoming_stream_id = incoming_id
-        self._quarc_outgoing_stream_id = outgoing_id
-        self._quarc_stream_specs_assigned = True
-
-    def _require_opnic_quarc_stream_specs(self) -> None:
-        if self.input_type != InputType.OPNIC:
-            return
-        if not self._quarc_stream_specs_assigned:
-            raise RuntimeError(
-                "OPNIC external stream ids are not set. Call "
-                "ParameterPool.prepare_opnic_quarc_hybrid_packets() before declaring QUA variables."
-            )
-
-    def _stream_id_for_qua_incoming_edge(self) -> int:
-        """Stream id paired with ``QuaStreamDirection.INCOMING`` in ``declare_external_stream``."""
-        self._require_opnic_quarc_stream_specs()
-        if self._quarc_incoming_stream_id is not None:
-            return self._quarc_incoming_stream_id
-        if self._direction == Direction.OUTGOING and self._quarc_outgoing_stream_id is not None:
-            return self._quarc_outgoing_stream_id
-        raise RuntimeError(
-            "Cannot resolve INCOMING QUA stream id; check Quarc direction vs. attached stream specs."
-        )
-
-    def _stream_id_for_qua_outgoing_edge(self) -> int:
-        """Stream id paired with ``QuaStreamDirection.OUTGOING`` in ``declare_external_stream``."""
-        self._require_opnic_quarc_stream_specs()
-        if self._quarc_outgoing_stream_id is not None:
-            return self._quarc_outgoing_stream_id
-        if self._direction == Direction.INCOMING and self._quarc_incoming_stream_id is not None:
-            return self._quarc_incoming_stream_id
-        raise RuntimeError(
-            "Cannot resolve OUTGOING QUA stream id; check Quarc direction vs. attached stream specs."
-        )
-
     def declare_variables(
         self, pause_program=False, declare_streams=True
     ) -> QuaVariable | List[QuaVariable | QuaArrayVariable]:
@@ -293,37 +219,21 @@ class ParameterTable:
 
         """
         if self.input_type == InputType.OPNIC:
-            from qm.qua import (
-                declare_struct,
-                declare_external_stream,
-                QuaStreamDirection,
-            )
-
-            self._packet = declare_struct(self._packet_type)
-            if self.direction == Direction.BOTH:
-                self._qua_external_stream_in = declare_external_stream(
-                    self._packet_type, self._stream_id_for_qua_incoming_edge(), QuaStreamDirection.INCOMING
+            if self._var is None:
+                raise RuntimeError(
+                    f"ParameterTable {self.name!r} has no Quarc struct handle. Build it via "
+                    "ParameterPool.from_quarc_module(module) before declaring QUA variables."
                 )
-                self._qua_external_stream_out = declare_external_stream(
-                    self._packet_type, self._stream_id_for_qua_outgoing_edge(), QuaStreamDirection.OUTGOING
-                )
-            elif self.direction == Direction.INCOMING:
-                self._qua_external_stream_out = declare_external_stream(
-                    self._packet_type, self._stream_id_for_qua_outgoing_edge(), QuaStreamDirection.OUTGOING
-                )
-            else:
-                self._qua_external_stream_in = declare_external_stream(
-                    self._packet_type, self._stream_id_for_qua_incoming_edge(), QuaStreamDirection.INCOMING
-                )
+            self._var.initialize_in_qua()
+            self._packet = self._var.qua_struct
 
             for parameter in self.parameters:
-                # In ParameterTable.declare_variables(), OPNIC path:
                 if parameter.is_declared:
-                    main_table_name = "an unknown table (main_table not set)"
-                    if (
-                        parameter.main_table is not None
-                    ):  # Check if main_table is actually set
-                        main_table_name = parameter.main_table.name
+                    main_table_name = (
+                        parameter.main_table.name
+                        if parameter.main_table is not None
+                        else self.name
+                    )
                     raise ValueError(
                         f"Parameter {parameter.name} already declared. "
                         f"It was declared through table '{main_table_name}'."
@@ -331,18 +241,14 @@ class ParameterTable:
 
                 parameter._var = self._packet
                 parameter._is_declared = True
-                parameter.stream_id = self._id
-                parameter.opnic_struct = self._packet_type
                 parameter._main_table = self
                 if declare_streams:
                     parameter.declare_stream()
-
                 if parameter.is_array:
                     parameter._ctr = declare(int)
 
-            if (
-                self._direction == Direction.INCOMING
-            ):  # OPX -> OPNIC (initialize the packet)
+            if self._direction == Direction.INCOMING:
+                # OPX -> classical: QUA initializes the outgoing packet with default values.
                 for parameter in self.parameters:
                     if parameter.is_array:
                         for i in range(parameter.length):
@@ -397,8 +303,6 @@ class ParameterTable:
         Args: filter_func: Optional function to filter the parameters to be loaded.
         """
         if self.input_type == InputType.OPNIC:
-            from qm.qua import receive_from_external_stream
-
             if not self._usable_for_opnic_communication:
                 raise ValueError(
                     "Parameter table not usable for OPNIC communication, as it contains parameters that "
@@ -415,7 +319,7 @@ class ParameterTable:
             elif (
                 self.direction == Direction.OUTGOING or self.direction == Direction.BOTH
             ):
-                receive_from_external_stream(self._qua_external_stream_in, self._packet)
+                self._var.recv()
 
         else:
             for parameter in self.parameters:
@@ -833,17 +737,16 @@ class ParameterTable:
         return self._id
 
     @property
-    def direction(self) -> Direction:
+    def direction(self) -> Direction | None:
         """
         Get the direction of the parameter table.
         Relevant for OPNIC parameter tables.
         "INCOMING": OPX -> OPNIC
         "OUTGOING": OPNIC -> OPX
-        Returns:
+        "BOTH": OPNIC <-> OPX
+        Returns: Direction of the parameter table. None if the parameter table is not an OPNIC parameter table.
 
         """
-        if self.input_type != InputType.OPNIC:
-            raise ValueError("Direction is only relevant for OPNIC parameter tables.")
         return self._direction
 
     def push_to_opx(
@@ -857,74 +760,48 @@ class ParameterTable:
     ):
         """
         Client function: Push the values of the parameters to the OPX (Python side).
+
+        For OPNIC tables, each parameter field is assigned onto the bound Quarc struct handle
+        (``self._var``) and :meth:`QuaStructHandle.send`-equivalent is invoked. The handle is
+        normally the OPNIC runtime endpoint (``runtime.<snake_case_struct>``) on the classical side.
+
         Args:
-            param_dict: Dictionary of the form {parameter_name: parameter_value}.
-            The parameter value can be either a Python value or a QuaExpressionType.
-            job: RunningQmJob object to push the values to.
-            qm: QuantumMachine object to push the values to (IO variables). Relevant only for OPX+ with IO variables.
+            param_dict: Dictionary of the form ``{parameter_name: parameter_value}``.
+            job: ``RunningQmJob`` (only needed for IO/input-stream parameters).
+            qm: ``QuantumMachine`` (only needed for IO parameters).
             verbosity: Verbosity level of the pushing process.
         """
         if self.input_type != InputType.OPNIC:
             for parameter, value in param_dict.items():
                 self.get_parameter(parameter).push_to_opx(value, job, qm, verbosity)
+            return
 
-        else:
-            if not self._usable_for_opnic_communication:
-                raise ValueError(
-                    "Parameter table not usable for OPNIC communication, as it contains parameters that "
-                    "were either undeclared or declared through a different table forming main communication packet."
-                )
-            if self.direction == Direction.INCOMING:
-                raise ValueError("Cannot push values to incoming OPNIC parameter tables.")
-            # Check if all parameters are in the dictionary
-            values_for_packet = {}
-            for p_obj in self.parameters:
-                value = None
-                if p_obj in param_dict:
-                    value = param_dict[p_obj]
-                elif p_obj.name in param_dict:
-                    value = param_dict[p_obj.name]
-                else:
-                    raise KeyError(
-                        f"Parameter '{p_obj.name}' not found in the input dictionary;"
-                        f"all packet fields must be provided."
-                    )
-                processed_value = (
-                    value.tolist() if isinstance(value, np.ndarray) else value
-                )
-                processed_value = (
-                    [processed_value]
-                    if not p_obj.is_array and isinstance(processed_value, Number)
-                    else processed_value
-                )
-                values_for_packet[p_obj.name] = processed_value
+        if self._var is None:
+            raise RuntimeError(
+                f"ParameterTable {self.name!r} has no OPNIC endpoint; bind one via "
+                "QMEnvironment.from_quarc_module or ParameterPool.from_quarc_module before pushing."
+            )
+        if self.direction == Direction.INCOMING:
+            raise ValueError("Cannot push values to incoming OPNIC parameter tables.")
 
-            try:
-                mod = ParameterPool.get_opnic_transport_module()
-                OutgoingPacket = getattr(mod, "OutgoingPacket", None)
-                send_packet = getattr(mod, "send_packet", None)
-            except ImportError as exc:
-                raise ImportError(
-                    "OPNIC push_to_opx requires either an opnic_wrapper-style transport "
-                    "(OutgoingPacket/send_packet) or a Quarc runtime exposing "
-                    "setup_opnic(...)->runtime.data_packet.send()."
-                ) from exc
-
-            if callable(send_packet) and OutgoingPacket is not None:
-                flattened_values = list(chain(*values_for_packet.values()))
-                packet = OutgoingPacket(*flattened_values)
-                send_packet(self.stream_id, packet)
+        for p in self.parameters:
+            if p in param_dict:
+                value = param_dict[p]
+            elif p.name in param_dict:
+                value = param_dict[p.name]
             else:
-                data_packet = ParameterPool.get_opnic_runtime_packet(target_obj=self)
-                for name, field_value in values_for_packet.items():
-                    if isinstance(field_value, list) and len(field_value) == 1:
-                        setattr(data_packet, name, field_value[0])
-                    else:
-                        setattr(data_packet, name, field_value)
-                data_packet.send()
+                raise KeyError(
+                    f"Parameter '{p.name}' not found in the input dictionary; "
+                    "all packet fields must be provided."
+                )
+            if isinstance(value, np.ndarray):
+                value = value.tolist()
+            setattr(self._var, p.name, value)
 
-            if verbosity > 1:
-                print(f"Sent packet: {values_for_packet}")
+        self._var.send()
+
+        if verbosity > 1:
+            print(f"Sent packet {self.name!r} via {type(self._var).__name__}.")
 
     def stream_back(self, reset: bool = False):
         """
@@ -945,10 +822,11 @@ class ParameterTable:
                     "were either undeclared or declared through a different table forming main communication packet."
                 )
             if self.direction == Direction.OUTGOING:
-                raise ValueError("Cannot send values to outgoing OPNIC parameter tables.")
-            from qm.qua import send_to_external_stream
+                raise ValueError(
+                    "Cannot send values to outgoing OPNIC parameter tables."
+                )
 
-            send_to_external_stream(self._qua_external_stream_out, self._packet)
+            self._var.send()
 
             for parameter in self.parameters:
                 if parameter.stream is not None:
@@ -974,54 +852,27 @@ class ParameterTable:
 
         Returns: Dictionary of the form {parameter_name: parameter_value}.
         """
-        param_dict = {}
+        param_dict: Dict[str, Any] = {}
         if self.input_type == InputType.OPNIC:
-            if not self._usable_for_opnic_communication:
-                raise ValueError(
-                    "Parameter table not usable for OPNIC communication, as it contains parameters that "
-                    "were either undeclared or declared through a different table forming main communication packet."
+            if self._var is None:
+                raise RuntimeError(
+                    f"ParameterTable {self.name!r} has no OPNIC endpoint; bind one via "
+                    "QMEnvironment.from_quarc_module or ParameterPool.from_quarc_module before fetching."
                 )
             if self.direction == Direction.OUTGOING:
                 raise ValueError(
                     "Cannot fetch values from outgoing OPNIC parameter tables."
                 )
-            try:
-                mod = ParameterPool.get_opnic_transport_module()
-                read_packet = getattr(mod, "read_packet", None)
-                wait_for_packets = getattr(mod, "wait_for_packets", None)
-            except ImportError as exc:
-                raise ImportError(
-                    "OPNIC fetch_from_opx requires either an opnic_wrapper-style transport "
-                    "(wait_for_packets/read_packet) or a Quarc runtime exposing "
-                    "setup_opnic(...)->runtime.data_packet.recv()."
-                ) from exc
 
-            if callable(wait_for_packets) and callable(read_packet):
-                wait_for_packets(self.stream_id, fetching_index + fetching_size)
-                packets = []
-                for i in range(fetching_size):
-                    packet = read_packet(
-                        self.stream_id, fetching_index + i
-                    )
-                    packets.append(packet)
-                for parameter in self.parameters:
-                    param_dict[parameter.name] = np.array(
-                        [getattr(packet, parameter.name) for packet in packets]
-                    )
-            else:
-                data_packet = ParameterPool.get_opnic_runtime_packet(target_obj=self)
-                for parameter in self.parameters:
-                    param_dict[parameter.name] = []
-                for i in range(fetching_index + fetching_size):
-                    data_packet.recv()
-                    if i < fetching_index:
-                        continue
-                    for parameter in self.parameters:
-                        param_dict[parameter.name].append(
-                            getattr(data_packet, parameter.name)
-                        )
-                for parameter in self.parameters:
-                    param_dict[parameter.name] = np.array(param_dict[parameter.name])
+            collected: Dict[str, list] = {p.name: [] for p in self.parameters}
+            for i in range(fetching_index + fetching_size):
+                self._var.recv()
+                if i < fetching_index:
+                    continue
+                for p in self.parameters:
+                    collected[p.name].append(getattr(self._var, p.name))
+            for name, values in collected.items():
+                param_dict[name] = np.array(values)
 
         else:
             for parameter in self.parameters:

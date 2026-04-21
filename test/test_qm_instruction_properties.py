@@ -52,6 +52,34 @@ class TestQMInstructionPropertiesInit:
         prop = QMInstructionProperties(duration=200e-9, qua_pulse_macro=mock_macro)
         assert prop.duration == 200e-9
 
+    def test_quam_macro_argument_is_supported(self):
+        from quam.core.macro import QuamMacro
+
+        mock_quam = MagicMock(spec=QuamMacro)
+        mock_quam.duration = 80e-9
+        mock_quam.fidelity = 0.98
+        mock_quam.apply = MagicMock()
+        prop = QMInstructionProperties(quam_macro=mock_quam)
+        assert prop.quam_macro is mock_quam
+        assert prop.qua_pulse_macro is mock_quam.apply
+        assert prop.duration == 80e-9
+        assert abs(prop.error - 0.02) < 1e-10
+
+    def test_quam_macro_has_priority_over_qua_pulse_macro(self):
+        from quam.core.macro import QuamMacro
+
+        mock_quam = MagicMock(spec=QuamMacro)
+        mock_quam.duration = 70e-9
+        mock_quam.fidelity = 0.97
+        mock_quam.apply = MagicMock()
+        plain_callable = lambda: None
+        prop = QMInstructionProperties(
+            qua_pulse_macro=plain_callable, quam_macro=mock_quam
+        )
+        assert prop.quam_macro is mock_quam
+        assert prop.qua_pulse_macro is mock_quam.apply
+        assert prop.duration == 70e-9
+
     def test_isinstance_instruction_properties(self):
         prop = QMInstructionProperties()
         assert isinstance(prop, InstructionProperties)

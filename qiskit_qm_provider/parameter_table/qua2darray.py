@@ -28,6 +28,7 @@ from quam.utils.qua_types import Scalar, ScalarInt
 
 from .parameter import Parameter
 
+
 class QUA2DArray(Parameter):
     """
     A 2D view over one big 1D QUA array.
