@@ -74,16 +74,16 @@ If `value` is a list or 1D numpy array, the parameter is an array of that length
 | `stream`       | Output stream (if declared) for saving. |
 | `input_type`   | `InputType` or `None`. |
 | `direction`    | For OPNIC: Stream direction (`Direction.OUTGOING`, `Direction.INCOMING`, `Direction.BOTH`). |
-| `stream_id`    | OPNIC stream ID (OPNIC). |
-| `opnic_struct`   | Struct type for OPNIC packet (standalone or from table if parameter belongs to a `ParameterTable`). |
-| `main_table`   | `ParameterTable` that declared this parameter (OPNIC); `None` if standalone. |
+| `stream_id`    | OPNIC stream ID of the owning `ParameterTable` (OPNIC only). |
+| `opnic_struct`   | Struct handle for the owning OPNIC `ParameterTable`. |
+| `main_table`   | `ParameterTable` that declared this parameter (OPNIC). |
 | `index` / `get_index(table)` | Index in a given `ParameterTable` (useful for `switch_` logic in QUA for deciding which parameter to update). |
 | `tables`       | List of tables that contain this parameter. |
 
 ### Declaration (inside QUA)
 
 - **declare_variable(pause_program=False, declare_stream=True)**  
-  Declares the QUA variable (and optionally an output stream). For OPNIC, standalone parameters declare their own struct and external stream; parameters that belong to a table must be declared via that table’s `declare_variables()`. Returns the declared variable.
+  Declares the QUA variable (and optionally an output stream). For OPNIC, parameters are table-managed and must be declared via `ParameterTable.declare_variables()` from Quarc-built tables.
 
 - **declare_stream()**  
   Declares the output stream for this parameter (used for `save_to_stream` / stream processing).
@@ -99,7 +99,7 @@ If `value` is a list or 1D numpy array, the parameter is an array of that length
 ### Loading input (inside QUA)
 
 - **load_input_value()**  
-  Loads one value from the parameter’s input mechanism: advances `INPUT_STREAM`, reads from IO1/IO2 (with `pause()` and assign), or for OPNIC receives from the external stream (standalone only; table parameters use the table’s `load_input_values()`).
+  Loads one value from the parameter’s input mechanism: advances `INPUT_STREAM` or reads from IO1/IO2. For OPNIC, field-level loading is table-managed via `ParameterTable.load_input_values()`.
 
 ### Streaming and saving (inside QUA)
 
@@ -409,7 +409,7 @@ For a **ParameterTable** with `InputType.OPNIC`, every parameter must share the 
 
 ## ParameterPool and OPNIC
 
-**ParameterPool** manages unique IDs for objects that need OPNIC stream IDs (e.g. OPNIC parameter tables and standalone OPNIC parameters). It also tracks which objects are registered and supports OPNIC wrapper patching and configuration.
+**ParameterPool** manages unique IDs and registrations for parameter objects/tables. In Quarc-backed OPNIC flows, stream transport is table-centric and comes from Quarc struct handles.
 
 - **get_id(obj)**  
   Returns a new unique ID and optionally registers `obj`.
@@ -420,19 +420,12 @@ For a **ParameterTable** with `InputType.OPNIC`, every parameter must share the 
 - **get_all_objs()**  
   Returns all registered objects.
 
-- **initialize_streams()** / **close_streams()**  
-  Used for OPNIC: patch and configure OPNIC, then close when done.
-
-- **configured()** / **patched()**  
-  State flags for OPNIC.
-
 Typical DGX workflow:
 
 1. Define parameters/tables with `input_type=InputType.OPNIC` and the correct **direction** (they register with the pool).
-2. Call **ParameterPool.initialize_streams()** before running the QUA program.
+2. Build OPNIC tables from your module with **`ParameterPool.from_quarc_module(module)`**.
 3. In QUA: **declare_variables()**, **load_input_values()** (for OUTGOING tables), **stream_back()** (for INCOMING).
 4. From Python: **push_to_opx()** (OUTGOING) or **fetch_from_opx()** (INCOMING).
-5. When finished, **ParameterPool.close_streams()**.
 
 ---
 
@@ -457,7 +450,7 @@ For every OPNIC table currently registered in the pool, call **`ParameterPool.it
 ## Usage in QUA Programs
 
 1. **Declare**  
-   Call **ParameterTable.declare_variables()** (or **Parameter.declare_variable()** for standalone parameters) at the start of the program. Use **declare_streams=True** if you want to save results to streams.
+   Call **ParameterTable.declare_variables()** at the start of the program. Use **declare_streams=True** if you want to save results to streams.
 
 2. **Load input**  
    Where the program should read new values, call **load_input_values()** on the table (or **load_input_value()** on a parameter). For DGX OUTGOING, this receives one packet.

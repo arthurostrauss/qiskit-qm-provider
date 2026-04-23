@@ -36,6 +36,7 @@ from qm.qua import (
     for_,
     advance_input_stream as qua_advance_input_stream,
     declare_stream as qua_declare_stream,
+    declare_output_stream,
     IO1,
     IO2,
     if_,
@@ -221,7 +222,6 @@ class Parameter:
         self._var = None
         self._is_declared = False
         self._stream = None
-        self._stream_id = None
         self._type = set_type(qua_type) if qua_type is not None else infer_type(value)
         self._length = 0 if not isinstance(value, (List, np.ndarray)) else len(value)
         self._ctr: Optional[QuaScalar[int]] = None  # Counter for QUA array variables
@@ -247,8 +247,6 @@ class Parameter:
             raise ValueError("Direction must be provided for OPNIC input type.")
 
         self._initialized = True
-        if self._input_type == InputType.OPNIC:
-            ParameterPool._track_opnic_parameter_pending_table(self)
 
     def get_name(self):
         return f"{self.name} [{self.units}]"
@@ -286,7 +284,6 @@ class Parameter:
             param_table: ParameterTable object to set the index for.
             index: Index of the parameter in the parameter table.
         """
-        ParameterPool._release_opnic_unbound_parameter(self)
         if self._index == -1:
             self._index = -2
 
@@ -418,18 +415,13 @@ class Parameter:
         if self.is_declared:
             raise ValueError("Variable already declared. Cannot declare again.")
         else:
-            args_declare = {"t": self.type}
-            if self.value is not None:
-                args_declare["value"] = self.value
-            elif self.length > 1:
-                args_declare["size"] = self.length
             if self.input_type == InputType.INPUT_STREAM:
-                args_declare["name"] = self.name
-                declare_statement = declare_input_stream
+                if self.is_array:
+                    self._var = declare_input_stream(source='client', stream_id=self.name, dtype=self.type, size=self.length)
+                else:
+                    self._var = declare_input_stream(source='client', stream_id=self.name, dtype=self.type)
             else:
-                declare_statement = declare
-            self._var = declare_statement(**args_declare)
-
+                self._var = declare(self.type)
         if self.is_array and self.length > 1:
             self._ctr = declare(int)
         if pause_program:
@@ -444,7 +436,7 @@ class Parameter:
         Declare the output stream associated with the parameter.
         """
         if self._stream is None:
-            self._stream = qua_declare_stream()
+            self._stream = declare_output_stream(target='client', stream_id=self.name, dtype=self.type)
         else:
             warnings.warn(f"Stream {self.name} already declared, skipping declaration.")
         return self._stream
@@ -461,6 +453,14 @@ class Parameter:
 
     @property
     def direction(self):
+        """
+        Direction of the parameter stream (INCOMING, OUTGOING, BOTH).
+        For OPNIC, direction describes data flow vs OPX:
+        OPNIC -> OPX: OUTGOING
+        OPX -> OPNIC: INCOMING
+        OPNIC <-> OPX: BOTH
+        Default is None. Relevant only if input_type is OPNIC.
+        """
         if self.input_type != InputType.OPNIC:
             warnings.warn("This parameter is not associated with an OPNIC stream.")
             raise ValueError("This parameter is not associated with an OPNIC stream.")
@@ -480,22 +480,10 @@ class Parameter:
                 "Invalid input type for calling opnic_struct property. Must be set to InputType.OPNIC."
             )
         if not self._table_indices:
-            try:
-                from qm.qua import qua_struct, QuaArray
-            except ImportError:
-                raise ImportError(
-                    "Need to install QUA version compatible with OPNIC external streams"
-                )
-            length = 1 if not self.is_array else self.length
-            cls_name = f"Packet_{self.name}_{self.stream_id}"
-            pkt_struct = qua_struct(
-                type(
-                    cls_name,
-                    (object,),
-                    {"__annotations__": {self.name: QuaArray[self.type, length]}},
-                )
+            raise RuntimeError(
+                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
+                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
             )
-            self._opnic_struct = pkt_struct
 
         return self._opnic_struct
 
@@ -509,27 +497,19 @@ class Parameter:
     @property
     def stream_id(self) -> int:
         """
-        ID of the external stream associated with the parameter (relevant only for OPNIC).
-        If the Parameter is part of a ParameterTable, returns the stream_id of the table.
+        ID of the external stream associated with the owning table (relevant only for OPNIC).
         Returns:
             Unique ID integer of the external stream.
 
         """
-        if (
-            self._stream_id is None
-            and self._input_type == InputType.OPNIC
-            and not self._table_indices
-        ):
-            self._stream_id = ParameterPool.get_id(self)
-            ParameterPool._release_opnic_unbound_parameter(self)
-        return self._stream_id
-
-    @stream_id.setter
-    def stream_id(self, value: int):
-        if self._stream_id is None:
-            self._stream_id = value
-        else:
-            raise ValueError("Stream ID already set. Cannot change it.")
+        if self._input_type != InputType.OPNIC:
+            raise ValueError("Stream ID is only defined for OPNIC parameters.")
+        if self.main_table is None:
+            raise RuntimeError(
+                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
+                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+            )
+        return self.main_table.stream_id
 
     @property
     def var(self) -> QuaArrayVariable | QuaScalar:
@@ -542,11 +522,9 @@ class Parameter:
                 "Variable not declared. Declare the variable first through declare_variable method."
             )
         if self.input_type == InputType.OPNIC:
-            var = getattr(self._var, self.name)
-            return var if self.is_array else var[0]
-
-        else:
-            return self._var
+            # Quarc struct handles expose fields with the correct scalar/array shape.
+            return getattr(self._var, self.name)
+        return self._var
 
     @property
     def tables(self) -> List[ParameterTable]:
@@ -959,8 +937,6 @@ class Parameter:
         self._is_declared = False
         self._var = None
         self._stream = None
-        if self._input_type != InputType.OPNIC or self.tables:
-            self._stream_id = None
         self._ctr = None
         self._opnic_struct = None
         self._qua_external_stream_in = None
@@ -1009,7 +985,6 @@ class Parameter:
         new_param._index = -1  # Default for a parameter not (yet) in a table
         new_param._table_indices = {}  # New dictionary for table associations
         new_param._opnic_struct = None
-        new_param._stream_id = None  # Will be re-evaluated by property or new table
         new_param._main_table = None
 
         # If your __init__ sets an _initialized flag, set it here too

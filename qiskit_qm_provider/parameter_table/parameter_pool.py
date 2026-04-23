@@ -22,8 +22,7 @@ struct to a :class:`~qiskit_qm_provider.parameter_table.ParameterTable` whose ``
 from __future__ import annotations
 
 import itertools
-import weakref
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .parameter_table import ParameterTable
@@ -33,29 +32,6 @@ if TYPE_CHECKING:
 class ParameterPool:
     _counter = itertools.count(1)
     _registry: Dict[int, ParameterTable | Parameter] = {}
-    _opnic_unbound: Dict[int, weakref.ref] = {}
-
-    @classmethod
-    def _opnic_unbound_cleanup(
-        cls, oid: int
-    ) -> Callable[[weakref.ReferenceType], None]:
-        def _cb(_ref: weakref.ReferenceType) -> None:
-            cls._opnic_unbound.pop(oid, None)
-
-        return _cb
-
-    @classmethod
-    def _track_opnic_parameter_pending_table(cls, param: "Parameter") -> None:
-        from .input_type import InputType
-
-        if param.input_type != InputType.OPNIC:
-            return
-        oid = id(param)
-        cls._opnic_unbound[oid] = weakref.ref(param, cls._opnic_unbound_cleanup(oid))
-
-    @classmethod
-    def _release_opnic_unbound_parameter(cls, param: "Parameter") -> None:
-        cls._opnic_unbound.pop(id(param), None)
 
     @classmethod
     def _assert_unique_registered_name(cls, obj: Any) -> None:
@@ -85,7 +61,6 @@ class ParameterPool:
     def reset(cls) -> None:
         cls._counter = itertools.count(1)
         cls._registry.clear()
-        cls._opnic_unbound.clear()
 
     @classmethod
     def get_all_ids(cls) -> List[int]:
@@ -167,7 +142,7 @@ class ParameterPool:
                 )
 
             annotations = get_type_hints(struct_spec.struct)
-            params: List[Parameter] = []
+            params: List[Any] = []
             for field_name, annotation in annotations.items():
                 origin = get_origin(annotation)
                 args = get_args(annotation)

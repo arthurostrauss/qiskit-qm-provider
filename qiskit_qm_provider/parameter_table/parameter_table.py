@@ -39,7 +39,7 @@ from qm import QuantumMachine
 from qm.api.v2.job_api import JobApi
 from qm.jobs.running_qm_job import RunningQmJob
 from qm.qua import assign, pause, declare, fixed
-from qm.qua._dsl import _ResultSource
+from qm.qua.type_hints import ResultStreamSource
 from qm.qua._expressions import QuaArrayVariable
 from quam.utils.qua_types import QuaVariable
 
@@ -275,7 +275,7 @@ class ParameterTable:
             else:
                 return self.variables
 
-    def declare_streams(self) -> List[_ResultSource]:
+    def declare_streams(self) -> List[ResultStreamSource]:
         """
         QUA Macro to declare all the output streams associated with the parameters in the parameter table.
         This macro is expected to be called at the beginning of the QUA program.
@@ -401,6 +401,9 @@ class ParameterTable:
                 parameter_name.assign(parameter_value)
 
     def print_parameters(self):
+        """
+        Print the parameters in the parameter table.
+        """
         text = ""
         for parameter_name, parameter in self.table.items():
             text += f"{parameter_name}: {parameter.value}, \n"
@@ -864,15 +867,10 @@ class ParameterTable:
                     "Cannot fetch values from outgoing OPNIC parameter tables."
                 )
 
-            collected: Dict[str, list] = {p.name: [] for p in self.parameters}
-            for i in range(fetching_index + fetching_size):
-                self._var.recv()
-                if i < fetching_index:
-                    continue
-                for p in self.parameters:
-                    collected[p.name].append(getattr(self._var, p.name))
-            for name, values in collected.items():
-                param_dict[name] = np.array(values)
+            self._var.recv(fetching_size, fetching_index)
+            
+            for p in self.parameters:
+                param_dict[p.name] = [getattr(self._var, p.name)[i] for i in range(fetching_size)]
 
         else:
             for parameter in self.parameters:
