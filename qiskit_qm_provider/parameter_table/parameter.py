@@ -417,11 +417,14 @@ class Parameter:
         else:
             if self.input_type == InputType.INPUT_STREAM:
                 if self.is_array:
-                    self._var = declare_input_stream(source='client', stream_id=self.name, dtype=self.type, size=self.length)
+                    self._var = declare_input_stream('client', self.name, self.type, size=self.length)
                 else:
-                    self._var = declare_input_stream(source='client', stream_id=self.name, dtype=self.type)
+                    self._var = declare_input_stream('client', self.name, self.type)
             else:
-                self._var = declare(self.type)
+                if self.value is not None:
+                    self._var = declare(self.type, value=self.value)
+                else:
+                    self._var = declare(self.type, size=self.length if self.is_array else None)
         if self.is_array and self.length > 1:
             self._ctr = declare(int)
         if pause_program:
