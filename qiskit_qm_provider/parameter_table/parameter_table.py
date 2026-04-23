@@ -119,6 +119,8 @@ class ParameterTable:
         self._packet = None
         self._direction = None
         self._usable_for_opnic_communication = False
+        self._incoming_stream_id: Optional[int] = None
+        self._outgoing_stream_id: Optional[int] = None
         #: Quarc ``QuaStructHandle`` (or pybind runtime endpoint) exposing ``send`` / ``recv`` / field access;
         #: set by :meth:`ParameterPool.from_quarc_module` on the QUA side and rebound to the OPNIC runtime
         #: endpoint (``runtime.<snake_case_struct>``) before calling :meth:`push_to_opx` / :meth:`fetch_from_opx`
@@ -191,6 +193,14 @@ class ParameterTable:
                 assert isinstance(
                     parameter, Parameter
                 ), "Invalid format for parameter value. Please use Parameter object."
+                if (
+                    getattr(parameter, "opnic_table", None) is not None
+                    and parameter.opnic_table is not self
+                ):
+                    raise ValueError(
+                        f"Parameter {parameter.name!r} is already finalized with standalone "
+                        "OPNIC ownership and cannot be attached to a new ParameterTable."
+                    )
                 self.table[parameter.name] = parameter
                 self.table[parameter.name].set_index(self, index)
                 if self._input_type is None:
@@ -206,6 +216,16 @@ class ParameterTable:
                         raise ValueError(
                             "All parameters in the table must have the same direction."
                         )
+
+    def _sync_stream_ids_from_handle(self, handle: Any) -> None:
+        """Hydrate stream ids from Quarc handle._struct_spec when available."""
+        struct_spec = getattr(handle, "_struct_spec", None)
+        if struct_spec is None:
+            return
+        incoming = getattr(struct_spec, "incoming_stream_spec", None)
+        outgoing = getattr(struct_spec, "outgoing_stream_spec", None)
+        self._incoming_stream_id = getattr(incoming, "id", None)
+        self._outgoing_stream_id = getattr(outgoing, "id", None)
 
     def declare_variables(
         self, pause_program=False, declare_streams=True
@@ -238,8 +258,8 @@ class ParameterTable:
                         f"Parameter {parameter.name} already declared. "
                         f"It was declared through table '{main_table_name}'."
                     )
-
-                parameter._var = self._packet
+                var = getattr(self._packet, parameter.name)
+                parameter._var =  var if parameter.is_array else var[0]
                 parameter._is_declared = True
                 parameter._main_table = self
                 if declare_streams:
@@ -555,6 +575,14 @@ class ParameterTable:
                 raise ValueError(
                     "Invalid parameter type. Please use a Parameter object."
                 )
+            if (
+                getattr(parameter, "opnic_table", None) is not None
+                and parameter.opnic_table is not self
+            ):
+                raise ValueError(
+                    f"Parameter {parameter.name!r} is already finalized with standalone "
+                    "OPNIC ownership and cannot be attached to this table."
+                )
             if parameter.name in self.table.keys():
                 raise KeyError(
                     f"Parameter {parameter.name} already exists in the parameter table."
@@ -732,12 +760,30 @@ class ParameterTable:
         return self._packet_type
 
     @property
-    def stream_id(self) -> int:
-        """
-        Get the stream ID of the parameter table.
-        Relevant for OPNIC parameter tables.
-        """
-        return self._id
+    def incoming_stream_id(self) -> int:
+        """Incoming stream id for this OPNIC table (Quarc incoming spec id)."""
+        if self.input_type != InputType.OPNIC:
+            raise ValueError(
+                "Incoming stream ID is only defined for OPNIC parameter tables."
+            )
+        return (
+            self._incoming_stream_id
+            if self._incoming_stream_id is not None
+            else self._id
+        )
+
+    @property
+    def outgoing_stream_id(self) -> int:
+        """Outgoing stream id for this OPNIC table (Quarc outgoing spec id)."""
+        if self.input_type != InputType.OPNIC:
+            raise ValueError(
+                "Outgoing stream ID is only defined for OPNIC parameter tables."
+            )
+        return (
+            self._outgoing_stream_id
+            if self._outgoing_stream_id is not None
+            else self._id
+        )
 
     @property
     def direction(self) -> Direction | None:

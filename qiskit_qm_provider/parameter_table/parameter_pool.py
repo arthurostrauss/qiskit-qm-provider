@@ -171,6 +171,7 @@ class ParameterPool:
 
             table = ParameterTable(params, name=struct_name)
             table._var = handle
+            table._sync_stream_ids_from_handle(handle)
             table._direction = direction
             table._input_type = InputType.OPNIC
             result[pascal_to_snake_case(struct_name)] = table

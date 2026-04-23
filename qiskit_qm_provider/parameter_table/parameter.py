@@ -22,8 +22,7 @@ from __future__ import annotations
 
 import copy
 import warnings
-from functools import wraps
-from typing import Optional, List, Union, Tuple, Literal, Sequence, TYPE_CHECKING, Dict
+from typing import Optional, List, Union, Tuple, Literal, Sequence, TYPE_CHECKING, Dict, Any
 
 import numpy as np
 from qm.qua import (
@@ -134,26 +133,107 @@ def reset_var(var: QuaScalar, type: Union[str, type]):
         raise ValueError("Invalid QUA type. Please use 'int', 'fixed' or 'bool'.")
 
 
-def opnic_check(method):
-    """Block exchange-level field API when OPNIC parameter is table-bound."""
+def _resolve_struct_stream_ids(handle: Any) -> tuple[Optional[int], Optional[int]]:
+    """Extract (incoming_id, outgoing_id) from a Quarc handle-like object."""
+    struct_spec = getattr(handle, "_struct_spec", None)
+    if struct_spec is None:
+        return None, None
+    incoming = getattr(struct_spec, "incoming_stream_spec", None)
+    outgoing = getattr(struct_spec, "outgoing_stream_spec", None)
+    return getattr(incoming, "id", None), getattr(outgoing, "id", None)
 
-    @wraps(method)
-    def wrapper(self, *args, **kwargs):
-        if self.input_type == InputType.OPNIC and self.main_table is not None:
-            method_name = method.__name__
-            table_method = (
-                "declare_variables"
-                if method_name == "declare_variable"
-                else method_name
-            )
-            raise RuntimeError(
-                f"Parameter.{method_name}() is table-managed for OPNIC fields "
-                f"(parameter={self.name!r}, table={self.main_table.name!r}). "
-                f"Use ParameterTable.{table_method}() on the owning table instead."
-            )
-        return method(self, *args, **kwargs)
 
-    return wrapper
+def _resolve_stream_id_for_direction(
+    handle: Any, direction: Optional[Direction]
+) -> Optional[int]:
+    """Resolve the stream id for qiskit-qm-provider direction semantics."""
+    incoming_id, outgoing_id = _resolve_struct_stream_ids(handle)
+    if direction == Direction.OUTGOING:
+        # OPNIC -> OPX maps to Quarc incoming stream.
+        return incoming_id
+    if direction == Direction.INCOMING:
+        # OPX -> OPNIC maps to Quarc outgoing stream.
+        return outgoing_id
+    if direction == Direction.BOTH:
+        return incoming_id if incoming_id is not None else outgoing_id
+    return None
+
+
+class _StandaloneOpnicTableAdapter:
+    """Minimal table-like adapter for a single standalone OPNIC Parameter."""
+
+    def __init__(self, parameter: "Parameter", handle: Any, name: str):
+        self.parameter = parameter
+        self._var = None
+        self._handle = handle
+        self.name = name
+        self._is_standalone_adapter = True
+        incoming_id, outgoing_id = _resolve_struct_stream_ids(handle)
+        self.incoming_stream_id = incoming_id
+        self.outgoing_stream_id = outgoing_id
+        resolved_stream_id = _resolve_stream_id_for_direction(handle, parameter.direction)
+        fallback_stream_id = getattr(handle, "stream_id", None)
+        if resolved_stream_id is None:
+            resolved_stream_id = (
+                fallback_stream_id
+                if fallback_stream_id is not None
+                else id(self) % (2**31 - 1)
+            )
+        self.stream_id = resolved_stream_id
+        if self.incoming_stream_id is None:
+            self.incoming_stream_id = resolved_stream_id
+        if self.outgoing_stream_id is None:
+            self.outgoing_stream_id = resolved_stream_id
+        # Register adapter as the parameter's owning table so table-based checks
+        # can rely on main_table/table_indices even for standalone OPNIC fields.
+        self.parameter._main_table = self
+        self.parameter._table_indices[self.name] = 0
+
+    def declare_variables(self, pause_program: bool = False, declare_streams: bool = True):
+        if hasattr(self._handle, "initialize_in_qua"):
+            self._handle.initialize_in_qua()
+            packet = self._handle.qua_struct
+        else:
+            packet = self._handle
+        var = getattr(packet, self.parameter.name)
+        self.parameter._var = var if self.parameter.is_array else var[0]
+        self.parameter._is_declared = True
+        if declare_streams:
+            self.parameter.declare_stream()
+        if self.parameter.is_array and self.parameter.length > 1 and self.parameter._ctr is None:
+            self.parameter._ctr = declare(int)
+        if pause_program:
+            pause()
+        return packet
+
+    def load_input_values(self):
+        self._handle.recv()
+
+    def push_to_opx(self, values: Dict[str, Any], **kwargs):
+        value = values[self.parameter.name]
+        if isinstance(value, np.ndarray):
+            value = value.tolist()
+        setattr(self._handle, self.parameter.name, value)
+        self._handle.send()
+
+    def stream_back(self, reset: bool = False):
+        if hasattr(self._handle, "send"):
+            self._handle.send()
+        if self.parameter.stream is not None:
+            self.parameter.save_to_stream(reset=reset)
+
+    def fetch_from_opx(
+        self,
+        job: Optional[RunningQmJob | JobApi] = None,
+        fetching_index: int = 0,
+        fetching_size: int = 1,
+        verbosity: int = 1,
+        time_out: int = 30,
+    ):
+        if hasattr(self._handle, "recv"):
+            self._handle.recv(fetching_size, fetching_index)
+        values = [getattr(self._handle, self.parameter.name)[i] for i in range(fetching_size)]
+        return {self.parameter.name: values}
 
 
 class Parameter:
@@ -242,6 +322,7 @@ class Parameter:
         self._direction = direction
         self._table_indices: Dict[str, int] = {}
         self._main_table = None
+        self._opnic_table = None
 
         if self._input_type == InputType.OPNIC and self.direction is None:
             raise ValueError("Direction must be provided for OPNIC input type.")
@@ -284,6 +365,12 @@ class Parameter:
             param_table: ParameterTable object to set the index for.
             index: Index of the parameter in the parameter table.
         """
+        if self._opnic_table is not None and self._opnic_table is not param_table:
+            raise ValueError(
+                f"Parameter {self.name!r} is already finalized with standalone OPNIC table "
+                f"{getattr(self._opnic_table, 'name', '<unnamed>')!r}; cannot attach to table "
+                f"{param_table.name!r}."
+            )
         if self._index == -1:
             self._index = -2
 
@@ -303,6 +390,19 @@ class Parameter:
             bool: True if the parameter is standalone, False otherwise.
         """
         return self.main_table is None
+
+    @property
+    def is_stand_alone(self) -> bool:
+        """Compatibility alias used by higher-level OPNIC ownership checks."""
+        # A standalone parameter backed by _StandaloneOpnicTableAdapter still has
+        # a synthetic table index/owner for compatibility with table-based checks.
+        if self._opnic_table is not None and self._main_table is self._opnic_table:
+            return True
+        return len(self._table_indices) == 0
+
+    @property
+    def opnic_table(self):
+        return self._opnic_table
 
     @property
     def main_table(self) -> Optional[ParameterTable]:
@@ -399,7 +499,6 @@ class Parameter:
                     )
                 assign_with_condition(self.var, value, value_cond)
 
-    @opnic_check
     def declare_variable(self, pause_program=False, declare_stream=True):
         """
         Declare the QUA variable associated with the parameter.
@@ -408,10 +507,11 @@ class Parameter:
         declare_stream: Boolean indicating if an output stream should be declared to save the QUA variable.
         """
         if self.input_type == InputType.OPNIC:
-            raise RuntimeError(
-                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
-                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+            opnic_table = self._require_standalone_opnic_table(context="declare_variable")
+            opnic_table.declare_variables(
+                pause_program=pause_program, declare_streams=declare_stream
             )
+            return self._var
         if self.is_declared:
             raise ValueError("Variable already declared. Cannot declare again.")
         else:
@@ -482,12 +582,20 @@ class Parameter:
             raise ValueError(
                 "Invalid input type for calling opnic_struct property. Must be set to InputType.OPNIC."
             )
-        if not self._table_indices:
+        if self._opnic_table is not None and getattr(self._opnic_table, "_var", None) is not None:
+            return self._opnic_table._var
+        if self._opnic_struct is not None:
+            if self.is_stand_alone:
+                self._ensure_standalone_opnic_table(self._opnic_struct, f"{self.name}_standalone")
+            return self._opnic_struct
+        if self.is_stand_alone and self._var is not None:
+            self._ensure_standalone_opnic_table(self._var, f"{self.name}_standalone")
+            return self._var
+        if not self._table_indices and self._opnic_table is None:
             raise RuntimeError(
                 f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
                 "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
             )
-
         return self._opnic_struct
 
     @opnic_struct.setter
@@ -507,12 +615,43 @@ class Parameter:
         """
         if self._input_type != InputType.OPNIC:
             raise ValueError("Stream ID is only defined for OPNIC parameters.")
-        if self.main_table is None:
+        owner = self.main_table if self.main_table is not None else self._opnic_table
+        if owner is None:
             raise RuntimeError(
                 f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
                 "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
             )
-        return self.main_table.stream_id
+        return owner.stream_id
+
+    @property
+    def incoming_stream_id(self) -> int:
+        """Incoming stream id exposed by the owning OPNIC table/adapter."""
+        if self._input_type != InputType.OPNIC:
+            raise ValueError("Incoming stream ID is only defined for OPNIC parameters.")
+        owner = self.main_table if self.main_table is not None else self._opnic_table
+        if owner is None:
+            raise RuntimeError(
+                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
+                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+            )
+        if not hasattr(owner, "incoming_stream_id"):
+            return owner.stream_id
+        return owner.incoming_stream_id
+
+    @property
+    def outgoing_stream_id(self) -> int:
+        """Outgoing stream id exposed by the owning OPNIC table/adapter."""
+        if self._input_type != InputType.OPNIC:
+            raise ValueError("Outgoing stream ID is only defined for OPNIC parameters.")
+        owner = self.main_table if self.main_table is not None else self._opnic_table
+        if owner is None:
+            raise RuntimeError(
+                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
+                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+            )
+        if not hasattr(owner, "outgoing_stream_id"):
+            return owner.stream_id
+        return owner.outgoing_stream_id
 
     @property
     def var(self) -> QuaArrayVariable | QuaScalar:
@@ -524,10 +663,43 @@ class Parameter:
             raise ValueError(
                 "Variable not declared. Declare the variable first through declare_variable method."
             )
-        if self.input_type == InputType.OPNIC:
-            # Quarc struct handles expose fields with the correct scalar/array shape.
-            return getattr(self._var, self.name)
         return self._var
+
+    def _ensure_standalone_opnic_table(self, handle: Any, suggested_name: Optional[str] = None) -> None:
+        if self.input_type != InputType.OPNIC or not self.is_stand_alone:
+            return
+        resolved_handle = handle
+        if resolved_handle is None:
+            resolved_handle = self._opnic_struct if self._opnic_struct is not None else self._var
+        if self._opnic_table is not None:
+            if resolved_handle is not None and getattr(self._opnic_table, "_var", None) is None:
+                self._opnic_table._var = resolved_handle
+            # Keep synthetic owner/index in sync for compatibility checks.
+            self._main_table = self._opnic_table
+            self._table_indices[self._opnic_table.name] = 0
+            self._ensure_registered_in_pool()
+            return
+        if resolved_handle is None:
+            return
+        table_name = suggested_name or f"{self.name}_standalone"
+        self._opnic_table = _StandaloneOpnicTableAdapter(self, handle=resolved_handle, name=table_name)
+        # As soon as standalone OPNIC ownership is finalized, register in pool.
+        self._ensure_registered_in_pool()
+
+    def _ensure_registered_in_pool(self) -> None:
+        """Ensure this parameter is present in ParameterPool registry once finalized."""
+        if any(obj is self for obj in ParameterPool.get_all_objs()):
+            return
+        ParameterPool.get_id(self)
+
+    def _require_standalone_opnic_table(self, *, context: str) -> _StandaloneOpnicTableAdapter:
+        self._ensure_standalone_opnic_table(None, self.name)
+        if self._opnic_table is None:
+            raise RuntimeError(
+                f"Standalone OPNIC parameter {self.name!r} has no bound opnic_table during {context}; "
+                "bind from Quarc module/runtime or set opnic_struct first."
+            )
+        return self._opnic_table
 
     @property
     def tables(self) -> List[ParameterTable]:
@@ -691,7 +863,6 @@ class Parameter:
                 with if_(self.var > max_val):
                     assign(self.var, max_val)
 
-    @opnic_check
     def load_input_value(self):
         """
         QUA Macro: Load a value from the input mechanism associated with the parameter.
@@ -706,10 +877,7 @@ class Parameter:
             qua_advance_input_stream(self.var)
 
         elif self.input_type == InputType.OPNIC:
-            raise RuntimeError(
-                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
-                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
-            )
+            self._require_standalone_opnic_table(context="load_input_value").load_input_values()
 
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io = IO1 if self.input_type == InputType.IO1 else IO2
@@ -728,7 +896,6 @@ class Parameter:
         else:
             raise ValueError("Invalid input stream type.")
 
-    @opnic_check
     def push_to_opx(
         self,
         value: Union[int, float, bool, Sequence[Union[int, float, bool]]],
@@ -816,12 +983,10 @@ class Parameter:
             job.push_to_input_stream(self.name, value)
 
         elif self.input_type == InputType.OPNIC:
-            raise RuntimeError(
-                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
-                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+            self._require_standalone_opnic_table(context="push_to_opx").push_to_opx(
+                {self.name: value}, job=job, qm=qm, verbosity=verbosity
             )
 
-    @opnic_check
     def stream_back(self, reset: bool = False):
         """
         QUA Macro: Save/stream the value of the parameter to the client/server side.
@@ -837,10 +1002,7 @@ class Parameter:
         ):
             self.save_to_stream(reset)
         elif self.input_type == InputType.OPNIC:
-            raise RuntimeError(
-                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
-                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
-            )
+            self._require_standalone_opnic_table(context="stream_back").stream_back(reset=reset)
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io = IO1 if self.input_type == InputType.IO1 else IO2
             if self.is_array:
@@ -857,7 +1019,6 @@ class Parameter:
                     reset_var(self.var, self.type)
                 pause()
 
-    @opnic_check
     def fetch_from_opx(
         self,
         job: Optional[RunningQmJob | JobApi] = None,
@@ -909,10 +1070,14 @@ class Parameter:
             ]
 
         elif self.input_type == InputType.OPNIC:
-            raise RuntimeError(
-                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
-                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+            res = self._require_standalone_opnic_table(context="fetch_from_opx").fetch_from_opx(
+                job=job,
+                fetching_index=fetching_index,
+                fetching_size=fetching_size,
+                verbosity=verbosity,
+                time_out=time_out,
             )
+            return res[self.name]
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io_method = (
                 "get_io1_value" if self.input_type == InputType.IO1 else "get_io2_value"
@@ -941,12 +1106,13 @@ class Parameter:
         self._var = None
         self._stream = None
         self._ctr = None
-        self._opnic_struct = None
-        self._qua_external_stream_in = None
-        self._qua_external_stream_out = None
-        # self._index = -1
-        # self._main_table = None
-        # self._table_indices = {}
+        # Keep OPNIC ownership/binding metadata across resets.
+        # Reset is used to clear declaration/runtime QUA state, not to forget
+        # how this Parameter is wired to module/runtime transport.
+        if self.input_type != InputType.OPNIC:
+            self._opnic_struct = None
+            self._opnic_table = None
+
 
     def reset_var(self):
         """
@@ -989,6 +1155,7 @@ class Parameter:
         new_param._table_indices = {}  # New dictionary for table associations
         new_param._opnic_struct = None
         new_param._main_table = None
+        new_param._opnic_table = None
 
         # If your __init__ sets an _initialized flag, set it here too
         if hasattr(self, "_initialized"):
