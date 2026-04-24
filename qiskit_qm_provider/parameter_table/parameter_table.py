@@ -912,11 +912,16 @@ class ParameterTable:
                 raise ValueError(
                     "Cannot fetch values from outgoing OPNIC parameter tables."
                 )
+            collected: Dict[str, list] = {p.name: [] for p in self.parameters}
+            for i in range(fetching_size):
+                self._var.recv()
+                if i < fetching_index:
+                    continue
+                for p in self.parameters:
+                    collected[p.name].append(getattr(self._var, p.name))
+            for name, values in collected.items():
+                param_dict[name] = np.array(values)
 
-            self._var.recv(fetching_size, fetching_index)
-            
-            for p in self.parameters:
-                param_dict[p.name] = [getattr(self._var, p.name)[i] for i in range(fetching_size)]
 
         else:
             for parameter in self.parameters:
