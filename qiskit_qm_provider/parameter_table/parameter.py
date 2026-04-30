@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import copy
 import warnings
-from typing import Optional, List, Union, Tuple, Literal, Sequence, TYPE_CHECKING, Dict, Any
+from typing import Optional, List, Union, Tuple, Literal, Sequence, TYPE_CHECKING, Dict, Any, Type
 
 import numpy as np
 from qm.qua import (
@@ -35,7 +35,6 @@ from qm.qua import (
     for_,
     advance_input_stream as qua_advance_input_stream,
     declare_stream as qua_declare_stream,
-    declare_output_stream,
     IO1,
     IO2,
     if_,
@@ -62,7 +61,7 @@ if TYPE_CHECKING:
     )
 
 
-def set_type(qua_type: Union[str, type]):
+def set_type(qua_type: str | Type[int | float | bool]) -> Type[int | float | bool]:
     """
     Set the type of the QUA variable to be declared.
     Args: qua_type: Type of the QUA variable to be declared (int, fixed, bool).
@@ -78,7 +77,7 @@ def set_type(qua_type: Union[str, type]):
         raise ValueError("Invalid QUA type. Please use 'fixed', 'int' or 'bool'.")
 
 
-def infer_type(value: Optional[Union[int, float, List, np.ndarray]] = None):
+def infer_type(value: Optional[Union[int, float, bool, List, np.ndarray]] = None) -> Type[int | float | bool]:
     """
     Infer automatically the type of the QUA variable to be declared from the type of the initial parameter value.
     """
@@ -119,7 +118,7 @@ def infer_type(value: Optional[Union[int, float, List, np.ndarray]] = None):
     raise ValueError("Value must be bool, int, float or array")
 
 
-def reset_var(var: QuaScalar, type: Union[str, type]):
+def reset_var(var: QuaScalar, type: Type[int | float | bool]):
     """
     Reset the QUA variable to a 0 value (in the appropriate QUA type).
     """
@@ -131,6 +130,18 @@ def reset_var(var: QuaScalar, type: Union[str, type]):
         assign(var, False)
     else:
         raise ValueError("Invalid QUA type. Please use 'int', 'fixed' or 'bool'.")
+
+
+#: Mapping from a Parameter-level method name (the ``context`` string passed into
+#: :meth:`Parameter._require_standalone_opnic_table`) to the equivalent ParameterTable
+#: method that callers should use when the parameter is field-managed.
+_OPNIC_OWNER_METHOD_MAP: Dict[str, str] = {
+    "declare_variable": "declare_variables",
+    "push_to_opx": "push_to_opx",
+    "fetch_from_opx": "fetch_from_opx",
+    "load_input_value": "load_input_values",
+    "stream_back": "stream_back",
+}
 
 
 def _resolve_struct_stream_ids(handle: Any) -> tuple[Optional[int], Optional[int]]:
@@ -159,81 +170,69 @@ def _resolve_stream_id_for_direction(
     return None
 
 
-class _StandaloneOpnicTableAdapter:
-    """Minimal table-like adapter for a single standalone OPNIC Parameter."""
+def _assert_compatible_existing_parameter(
+    existing: "Parameter",
+    *,
+    requested_value: Any,
+    requested_qua_type: Any,
+    requested_input_type: Optional[InputType],
+    requested_direction: Optional[Direction],
+    requested_units: str,
+) -> None:
+    """Validate that re-declaring ``Parameter(name=existing.name, ...)`` would not change
+    its semantics. If the requested args genuinely differ from ``existing``'s current
+    state, raise :class:`ValueError` with a precise diff. Used by :meth:`Parameter.__new__`.
 
-    def __init__(self, parameter: "Parameter", handle: Any, name: str):
-        self.parameter = parameter
-        self._var = None
-        self._handle = handle
-        self.name = name
-        self._is_standalone_adapter = True
-        incoming_id, outgoing_id = _resolve_struct_stream_ids(handle)
-        self.incoming_stream_id = incoming_id
-        self.outgoing_stream_id = outgoing_id
-        resolved_stream_id = _resolve_stream_id_for_direction(handle, parameter.direction)
-        fallback_stream_id = getattr(handle, "stream_id", None)
-        if resolved_stream_id is None:
-            resolved_stream_id = (
-                fallback_stream_id
-                if fallback_stream_id is not None
-                else id(self) % (2**31 - 1)
+    The caller has already asserted that ``existing.input_type`` is *not* ``OPNIC`` and
+    that the requested ``input_type`` is *not* ``OPNIC`` either — OPNIC collisions are
+    rejected unconditionally before we get here.
+    """
+    diffs: List[str] = []
+
+    # qua_type: either explicitly requested, or omitted (None), in which case we accept.
+    if requested_qua_type is not None:
+        normalized_requested = set_type(requested_qua_type)
+        if existing.type is not normalized_requested:
+            diffs.append(
+                f"qua_type: existing={existing.type!r}, requested={normalized_requested!r}"
             )
-        self.stream_id = resolved_stream_id
-        if self.incoming_stream_id is None:
-            self.incoming_stream_id = resolved_stream_id
-        if self.outgoing_stream_id is None:
-            self.outgoing_stream_id = resolved_stream_id
-        # Register adapter as the parameter's owning table so table-based checks
-        # can rely on main_table/table_indices even for standalone OPNIC fields.
-        self.parameter._main_table = self
-        self.parameter._table_indices[self.name] = 0
 
-    def declare_variables(self, pause_program: bool = False, declare_streams: bool = True):
-        if hasattr(self._handle, "initialize_in_qua"):
-            self._handle.initialize_in_qua()
-            packet = self._handle.qua_struct
+    # input_type: only flag if the user passed a non-None value that disagrees.
+    if requested_input_type is not None and existing.input_type != requested_input_type:
+        diffs.append(
+            f"input_type: existing={existing.input_type!r}, requested={requested_input_type!r}"
+        )
+
+    # direction: only flag if the user passed a non-None value that disagrees.
+    if requested_direction is not None and existing._direction != requested_direction:
+        diffs.append(
+            f"direction: existing={existing._direction!r}, requested={requested_direction!r}"
+        )
+
+    # length / array shape: derived from `value`. Only check if the user actually passed one.
+    if requested_value is not None:
+        existing_length = existing.length
+        if isinstance(requested_value, (list, np.ndarray)):
+            requested_length = len(requested_value)
         else:
-            packet = self._handle
-        var = getattr(packet, self.parameter.name)
-        self.parameter._var = var if self.parameter.is_array else var[0]
-        self.parameter._is_declared = True
-        if declare_streams:
-            self.parameter.declare_stream()
-        if self.parameter.is_array and self.parameter.length > 1 and self.parameter._ctr is None:
-            self.parameter._ctr = declare(int)
-        if pause_program:
-            pause()
-        return packet
+            requested_length = 0
+        if existing_length != requested_length:
+            diffs.append(
+                f"length: existing={existing_length}, requested={requested_length}"
+            )
 
-    def load_input_values(self):
-        self._handle.recv()
+    # units: only flag a non-empty mismatch.
+    if requested_units and existing.units != requested_units:
+        diffs.append(f"units: existing={existing.units!r}, requested={requested_units!r}")
 
-    def push_to_opx(self, values: Dict[str, Any], **kwargs):
-        value = values[self.parameter.name]
-        if isinstance(value, np.ndarray):
-            value = value.tolist()
-        setattr(self._handle, self.parameter.name, value)
-        self._handle.send()
-
-    def stream_back(self, reset: bool = False):
-        if hasattr(self._handle, "send"):
-            self._handle.send()
-        if self.parameter.stream is not None:
-            self.parameter.save_to_stream(reset=reset)
-
-    def fetch_from_opx(
-        self,
-        job: Optional[RunningQmJob | JobApi] = None,
-        fetching_index: int = 0,
-        fetching_size: int = 1,
-        verbosity: int = 1,
-        time_out: int = 30,
-    ):
-        if hasattr(self._handle, "recv"):
-            self._handle.recv(fetching_size, fetching_index)
-        values = [getattr(self._handle, self.parameter.name)[i] for i in range(fetching_size)]
-        return {self.parameter.name: values}
+    if diffs:
+        raise ValueError(
+            f"Parameter named {existing.name!r} already exists in the pool with "
+            f"different attributes. Diffs:\n  - "
+            + "\n  - ".join(diffs)
+            + "\nIf you intended to reuse the existing parameter, drop the conflicting "
+            "constructor arguments. If you intended a fresh one, choose a different name."
+        )
 
 
 class Parameter:
@@ -242,27 +241,67 @@ class Parameter:
     adjusted can be declared explicitly or either be automatically inferred from the type of provided initial value.
     """
 
-    def __new__(cls, name, *args, **kwargs):
+    def __new__(
+        cls,
+        name: str,
+        value: Optional[Union[int, float, bool, List, np.ndarray]] = None,
+        qua_type: Optional[Union[str, type]] = None,
+        input_type: Optional[Union[Literal["OPNIC", "INPUT_STREAM", "IO1", "IO2"], InputType]] = None,
+        direction: Optional[Union[Literal["INCOMING", "OUTGOING", "BOTH"], Direction]] = None,
+        units: str = "",
+    ):
+        """Construct, or look up, the :class:`Parameter` named ``name``.
+
+        Lookup semantics (Option 1 — validating dedup, OPNIC-strict):
+
+        - If no parameter named ``name`` exists in the pool (registry + pending
+          standalone OPNIC list), a fresh instance is constructed and returned.
+        - If a parameter named ``name`` already exists, **and either the existing one
+          or the requested one is OPNIC**, the call is rejected with a
+          :class:`ValueError`: OPNIC parameters are single-owner and cannot be
+          re-declared or shared by re-construction.
+        - Otherwise (both non-OPNIC), the existing instance is returned **only after**
+          validating that all requested constructor arguments match its current state.
+          Mismatches (e.g. different ``qua_type``, ``input_type``, ``direction``,
+          ``length``, ``units``) raise :class:`ValueError` with a per-field diff so the
+          user catches accidental aliasing instead of silently dropping the new args.
+
+        This replaces the historical "warn-and-return-existing" behavior, which silently
+        clobbered the new arguments.
         """
-        Create a new instance of the Parameter class.
-        """
-        for obj in ParameterPool.get_all_objs():
-            if hasattr(obj, "parameters"):
-                for param in obj.parameters:
-                    if param.name == name:
-                        warnings.warn(
-                            f"Parameter with name {name} already exists in parameter table {obj.name}."
-                        )
-                        return param
-            else:
-                if obj.name == name:
-                    warnings.warn(
-                        f"Parameter with name {name} already exists in the parameter pool."
-                    )
-                    return obj
-        # TODO: Handle the case where the parameter is part of a parameter table with indexing
-        obj = super().__new__(cls)
-        return obj
+        # Normalize for the lookup-side comparison.
+        if isinstance(input_type, str):
+            input_type_norm: Optional[InputType] = InputType(input_type)
+        else:
+            input_type_norm = input_type
+        if isinstance(direction, str):
+            direction_norm: Optional[Direction] = Direction(direction)
+        else:
+            direction_norm = direction
+
+        existing = ParameterPool._lookup_parameter_by_name(name)
+        if existing is None:
+            return super().__new__(cls)
+
+        # OPNIC-strict: any collision involving an OPNIC parameter raises.
+        if existing.input_type == InputType.OPNIC or input_type_norm == InputType.OPNIC:
+            raise ValueError(
+                f"Parameter named {name!r} already exists in the pool with "
+                f"input_type={existing.input_type!r}; OPNIC parameters cannot be "
+                f"re-declared or shared. Use a different name, or fetch the existing "
+                f"parameter via ParameterPool._lookup_parameter_by_name(name)."
+            )
+
+        # Non-OPNIC: validate compatibility, then return the existing instance.
+        _assert_compatible_existing_parameter(
+            existing,
+            requested_value=value,
+            requested_qua_type=qua_type,
+            requested_input_type=input_type_norm,
+            requested_direction=direction_norm,
+            requested_units=units,
+        )
+        return existing
 
     def __init__(
         self,
@@ -314,23 +353,30 @@ class Parameter:
                 InputType(input_type) if isinstance(input_type, str) else input_type
             )
         self._input_type: Optional[InputType] = input_type
-        self._opnic_struct = None
         if direction is not None:
             direction = (
                 Direction(direction) if isinstance(direction, str) else direction
             )
         self._direction = direction
         self._table_indices: Dict[str, int] = {}
-        self._main_table = None
-        self._opnic_table = None
+        #: The owning :class:`ParameterTable`, or ``None`` while still pending. For a
+        #: promoted standalone OPNIC parameter, this points to the synthetic
+        #: single-field ``ParameterTable`` (which has ``_is_synthetic_standalone=True``).
+        self._main_table: Optional["ParameterTable"] = None
 
         if self._input_type == InputType.OPNIC and self.direction is None:
             raise ValueError("Direction must be provided for OPNIC input type.")
 
         self._initialized = True
-
-    def get_name(self):
-        return f"{self.name} [{self.units}]"
+        # OPNIC parameters are tracked in :data:`ParameterPool._pending_standalone_opnic`
+        # at construction so that (a) :meth:`Parameter.__new__` can de-dup by name across
+        # the whole pool, and (b) the user can still attach the parameter to a regular
+        # ``ParameterTable`` later. If the parameter is *not* attached to a table by the
+        # time the user calls :meth:`declare_variable` (or any other transport method),
+        # it is promoted into a synthetic single-field ``ParameterTable`` and this entry
+        # is removed from the pending list.
+        if self._input_type == InputType.OPNIC:
+            ParameterPool._register_pending_standalone_opnic(self)
 
     def __repr__(self):
         """
@@ -361,15 +407,30 @@ class Parameter:
     def set_index(self, param_table: ParameterTable, index: int):
         """
         Set the index of the parameter in the parameter table.
+
         Args:
-            param_table: ParameterTable object to set the index for.
+            param_table: ``ParameterTable`` object to attach to.
             index: Index of the parameter in the parameter table.
+
+        For OPNIC parameters, attaching to a regular (non-synthetic) ``ParameterTable``
+        also clears the parameter from :data:`ParameterPool._pending_standalone_opnic`,
+        so the parameter is no longer a standalone candidate. Attempting to attach an
+        already-promoted standalone parameter (whose ``main_table`` is a synthetic
+        single-field table) to a *different* ``ParameterTable`` raises.
         """
-        if self._opnic_table is not None and self._opnic_table is not param_table:
+        # If the parameter was already promoted to a synthetic standalone table, reject
+        # any attempt to attach it elsewhere — the locking semantics require single
+        # ownership for OPNIC fields.
+        if (
+            self._main_table is not None
+            and getattr(self._main_table, "_is_synthetic_standalone", False)
+            and self._main_table is not param_table
+        ):
             raise ValueError(
-                f"Parameter {self.name!r} is already finalized with standalone OPNIC table "
-                f"{getattr(self._opnic_table, 'name', '<unnamed>')!r}; cannot attach to table "
-                f"{param_table.name!r}."
+                f"Parameter {self.name!r} is already finalized as a standalone OPNIC "
+                f"field (synthetic table "
+                f"{getattr(self._main_table, 'name', '<unnamed>')!r}); cannot attach to "
+                f"another ParameterTable {param_table.name!r}."
             )
         if self._index == -1:
             self._index = -2
@@ -383,26 +444,50 @@ class Parameter:
         if self._main_table is None:
             self._main_table = param_table
 
+        # Remove from the pending standalone list when attached to a non-synthetic
+        # multi-or-single-field table. Synthetic standalone tables also call set_index,
+        # but they remove the entry themselves to keep this branch simple.
+        if (
+            self._input_type == InputType.OPNIC
+            and not getattr(param_table, "_is_synthetic_standalone", False)
+        ):
+            ParameterPool._unregister_pending_standalone_opnic(self)
+
     def is_standalone(self) -> bool:
-        """
-        Check if the parameter is standalone (not part of a parameter table).
-        Returns:
-            bool: True if the parameter is standalone, False otherwise.
-        """
-        return self.main_table is None
+        """Backward-compat alias for :pyattr:`is_stand_alone`."""
+        return self.is_stand_alone
 
     @property
     def is_stand_alone(self) -> bool:
-        """Compatibility alias used by higher-level OPNIC ownership checks."""
-        # A standalone parameter backed by _StandaloneOpnicTableAdapter still has
-        # a synthetic table index/owner for compatibility with table-based checks.
-        if self._opnic_table is not None and self._main_table is self._opnic_table:
+        """Whether this parameter is treated as a standalone OPNIC field.
+
+        A parameter is "standalone" if any of:
+
+        - it has no owning ``ParameterTable`` (still pending — has not been attached
+          and has not been promoted yet); or
+        - it has been promoted into a synthetic single-field ``ParameterTable``
+          (``_is_synthetic_standalone == True``).
+
+        Once attached to a regular multi-or-single-field ``ParameterTable``, the
+        parameter is *not* standalone anymore.
+        """
+        if self._main_table is None:
             return True
-        return len(self._table_indices) == 0
+        if getattr(self._main_table, "_is_synthetic_standalone", False):
+            return True
+        return False
 
     @property
     def opnic_table(self):
-        return self._opnic_table
+        """The synthetic single-field ``ParameterTable`` wrapping this parameter, or
+        ``None`` if the parameter has not been promoted yet (still pending) or is part
+        of a regular multi-field table.
+        """
+        if self._main_table is not None and getattr(
+            self._main_table, "_is_synthetic_standalone", False
+        ):
+            return self._main_table
+        return None
 
     @property
     def main_table(self) -> Optional[ParameterTable]:
@@ -516,10 +601,11 @@ class Parameter:
             raise ValueError("Variable already declared. Cannot declare again.")
         else:
             if self.input_type == InputType.INPUT_STREAM:
-                if self.is_array:
-                    self._var = declare_input_stream('client', self.name, self.type, size=self.length)
-                else:
-                    self._var = declare_input_stream('client', self.name, self.type)
+                # if self.is_array:
+                    # self._var = declare_input_stream('client', self.name, self.type, size=self.length)
+                # else:
+                #     self._var = declare_input_stream('client', self.name, self.type)
+                self._var = declare_input_stream(self.name, self.type, value=self.value)
             else:
                 if self.value is not None:
                     self._var = declare(self.type, value=self.value)
@@ -539,7 +625,8 @@ class Parameter:
         Declare the output stream associated with the parameter.
         """
         if self._stream is None:
-            self._stream = declare_output_stream(target='client', stream_id=self.name, dtype=self.type)
+            # self._stream = declare_output_stream(target='client', stream_id=self.name, dtype=self.type)
+            self._stream = qua_declare_stream()
         else:
             warnings.warn(f"Stream {self.name} already declared, skipping declaration.")
         return self._stream
@@ -571,84 +658,64 @@ class Parameter:
 
     @property
     def opnic_struct(self):
-        """
-        OPNIC (QUA) struct associated with the parameter.
-        Can be a reference to a bigger struct describing a ParameterTable (automatically set by the
-        ParameterTable class) or a standalone struct created on the fly.
-        Returns:
+        """The Quarc :class:`QuaStructHandle` (or pybind runtime endpoint) bound to the
+        ``ParameterTable`` that owns this OPNIC parameter.
 
+        For a parameter inside a regular multi-field ``ParameterTable``, returns
+        ``main_table._var``. For a promoted standalone parameter, returns
+        ``opnic_table._var`` (which is the synthetic single-field table's handle).
+        Raises :class:`RuntimeError` if the parameter is OPNIC but still pending (no
+        owning table yet — call :meth:`declare_variable` to promote, or attach it to a
+        ``ParameterTable``).
         """
         if self.input_type != InputType.OPNIC:
             raise ValueError(
-                "Invalid input type for calling opnic_struct property. Must be set to InputType.OPNIC."
+                "Invalid input type for calling opnic_struct property. "
+                "Must be set to InputType.OPNIC."
             )
-        if self._opnic_table is not None and getattr(self._opnic_table, "_var", None) is not None:
-            return self._opnic_table._var
-        if self._opnic_struct is not None:
-            if self.is_stand_alone:
-                self._ensure_standalone_opnic_table(self._opnic_struct, f"{self.name}_standalone")
-            return self._opnic_struct
-        if self.is_stand_alone and self._var is not None:
-            self._ensure_standalone_opnic_table(self._var, f"{self.name}_standalone")
-            return self._var
-        if not self._table_indices and self._opnic_table is None:
+        if self._main_table is None:
             raise RuntimeError(
-                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
-                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+                f"Parameter {self.name!r} is OPNIC but has not been bound to a "
+                f"ParameterTable yet. Either attach it to a ParameterTable or call "
+                f"declare_variable() / to_quarc_module() to promote it as a standalone."
             )
-        return self._opnic_struct
-
-    @opnic_struct.setter
-    def opnic_struct(self, value):
-        if self._opnic_struct is None:
-            self._opnic_struct = value
-        else:
-            raise ValueError("OPNIC struct already set. Cannot change it.")
+        return self._main_table._var
 
     @property
     def stream_id(self) -> int:
-        """
-        ID of the external stream associated with the owning table (relevant only for OPNIC).
-        Returns:
-            Unique ID integer of the external stream.
-
-        """
+        """Stream id of the owning OPNIC table (delegates to the table's id)."""
         if self._input_type != InputType.OPNIC:
             raise ValueError("Stream ID is only defined for OPNIC parameters.")
-        owner = self.main_table if self.main_table is not None else self._opnic_table
-        if owner is None:
+        if self._main_table is None:
             raise RuntimeError(
-                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
-                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable."
             )
-        return owner.stream_id
+        return self._main_table.stream_id
 
     @property
     def incoming_stream_id(self) -> int:
-        """Incoming stream id exposed by the owning OPNIC table/adapter."""
+        """Incoming stream id exposed by the owning OPNIC table."""
         if self._input_type != InputType.OPNIC:
             raise ValueError("Incoming stream ID is only defined for OPNIC parameters.")
-        owner = self.main_table if self.main_table is not None else self._opnic_table
-        if owner is None:
+        if self._main_table is None:
             raise RuntimeError(
-                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
-                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable."
             )
+        owner = self._main_table
         if not hasattr(owner, "incoming_stream_id"):
             return owner.stream_id
         return owner.incoming_stream_id
 
     @property
     def outgoing_stream_id(self) -> int:
-        """Outgoing stream id exposed by the owning OPNIC table/adapter."""
+        """Outgoing stream id exposed by the owning OPNIC table."""
         if self._input_type != InputType.OPNIC:
             raise ValueError("Outgoing stream ID is only defined for OPNIC parameters.")
-        owner = self.main_table if self.main_table is not None else self._opnic_table
-        if owner is None:
+        if self._main_table is None:
             raise RuntimeError(
-                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable. "
-                "Build Quarc-backed tables via ParameterPool.from_quarc_module(module)."
+                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable."
             )
+        owner = self._main_table
         if not hasattr(owner, "outgoing_stream_id"):
             return owner.stream_id
         return owner.outgoing_stream_id
@@ -665,41 +732,73 @@ class Parameter:
             )
         return self._var
 
-    def _ensure_standalone_opnic_table(self, handle: Any, suggested_name: Optional[str] = None) -> None:
-        if self.input_type != InputType.OPNIC or not self.is_stand_alone:
-            return
-        resolved_handle = handle
-        if resolved_handle is None:
-            resolved_handle = self._opnic_struct if self._opnic_struct is not None else self._var
-        if self._opnic_table is not None:
-            if resolved_handle is not None and getattr(self._opnic_table, "_var", None) is None:
-                self._opnic_table._var = resolved_handle
-            # Keep synthetic owner/index in sync for compatibility checks.
-            self._main_table = self._opnic_table
-            self._table_indices[self._opnic_table.name] = 0
-            self._ensure_registered_in_pool()
-            return
-        if resolved_handle is None:
-            return
-        table_name = suggested_name or f"{self.name}_standalone"
-        self._opnic_table = _StandaloneOpnicTableAdapter(self, handle=resolved_handle, name=table_name)
-        # As soon as standalone OPNIC ownership is finalized, register in pool.
-        self._ensure_registered_in_pool()
+    def _require_standalone_opnic_table(self, *, context: str) -> "ParameterTable":
+        """Return the synthetic single-field ``ParameterTable`` that owns this parameter.
 
-    def _ensure_registered_in_pool(self) -> None:
-        """Ensure this parameter is present in ParameterPool registry once finalized."""
-        if any(obj is self for obj in ParameterPool.get_all_objs()):
-            return
-        ParameterPool.get_id(self)
+        Promotes the parameter on first access (P2 model — promote on use): if the
+        parameter is still pending (no owning table), construct a synthetic single-field
+        :class:`ParameterTable` named after the parameter, which will eagerly emit its
+        struct via the pool's Quarc module (lazily creating a default
+        :class:`quarc.BaseModule` if none is bound yet).
 
-    def _require_standalone_opnic_table(self, *, context: str) -> _StandaloneOpnicTableAdapter:
-        self._ensure_standalone_opnic_table(None, self.name)
-        if self._opnic_table is None:
-            raise RuntimeError(
-                f"Standalone OPNIC parameter {self.name!r} has no bound opnic_table during {context}; "
-                "bind from Quarc module/runtime or set opnic_struct first."
+        If the parameter is attached to a regular multi-or-single-field
+        ``ParameterTable``, OPNIC transport is *table-managed* and this method raises
+        :class:`RuntimeError` directing the caller to use the owning table's API.
+
+        ``context`` names the calling Parameter-level method (``"declare_variable"``,
+        ``"push_to_opx"``, …) and is used to suggest the equivalent table-level method
+        in the error message.
+        """
+        if not self.is_stand_alone:
+            owning_table_name = (
+                self.main_table.name if self.main_table is not None else "<unknown>"
             )
-        return self._opnic_table
+            owner_method = _OPNIC_OWNER_METHOD_MAP.get(context, context)
+            raise RuntimeError(
+                f"Parameter.{context}() is table-managed for OPNIC fields "
+                f"(parameter={self.name!r}, table={owning_table_name!r}). "
+                f"Use ParameterTable.{owner_method}() on the owning table instead."
+            )
+
+        # Promote on use if still pending.
+        if self.opnic_table is None:
+            self._promote_to_synthetic_standalone_table()
+
+        synthetic = self.opnic_table
+        if synthetic is None:
+            raise RuntimeError(
+                f"Standalone OPNIC parameter {self.name!r} could not be promoted to a "
+                f"synthetic ParameterTable during {context}."
+            )
+        return synthetic
+
+    def _promote_to_synthetic_standalone_table(self) -> "ParameterTable":
+        """Build the synthetic single-field ``ParameterTable`` that wraps this parameter.
+
+        The synthetic table is constructed with ``_is_synthetic_standalone=True`` so
+        that the hybrid emission rule force-emits its Quarc struct immediately
+        (creating a default :class:`quarc.BaseModule` via
+        :meth:`ParameterPool.quarc_module` if no module is bound yet). After
+        construction this parameter's :attr:`main_table` points at the synthetic table,
+        and the entry is removed from :data:`ParameterPool._pending_standalone_opnic`.
+
+        We remove the parameter from the pending list *before* constructing the
+        synthetic table: pool-level name-uniqueness consults both the registry and the
+        pending list, so leaving the parameter pending while registering a synthetic
+        table named after it would (rightly) trigger a duplicate-name guard.
+        """
+        if self.input_type != InputType.OPNIC:
+            raise RuntimeError(
+                f"Cannot promote non-OPNIC parameter {self.name!r} to a synthetic "
+                f"standalone ParameterTable."
+            )
+        from .parameter_table import ParameterTable
+
+        ParameterPool._unregister_pending_standalone_opnic(self)
+        synthetic = ParameterTable(
+            [self], name=self.name, _is_synthetic_standalone=True
+        )
+        return synthetic
 
     @property
     def tables(self) -> List[ParameterTable]:
@@ -1099,19 +1198,16 @@ class Parameter:
         return value
 
     def reset(self):
-        """
-        Client function: Reset the parameter to its initial state.
+        """Client function: reset transient QUA-side declaration state.
+
+        Clears ``_is_declared``, ``_var``, ``_stream``, ``_ctr``. For OPNIC parameters,
+        deliberately preserves ``_main_table`` (the owning ``ParameterTable``, real or
+        synthetic) so the binding to module/runtime transport survives across resets.
         """
         self._is_declared = False
         self._var = None
         self._stream = None
         self._ctr = None
-        # Keep OPNIC ownership/binding metadata across resets.
-        # Reset is used to clear declaration/runtime QUA state, not to forget
-        # how this Parameter is wired to module/runtime transport.
-        if self.input_type != InputType.OPNIC:
-            self._opnic_struct = None
-            self._opnic_table = None
 
 
     def reset_var(self):
@@ -1153,9 +1249,7 @@ class Parameter:
         # Reset table/OPNIC-specific attributes that will be set by the new table or properties
         new_param._index = -1  # Default for a parameter not (yet) in a table
         new_param._table_indices = {}  # New dictionary for table associations
-        new_param._opnic_struct = None
         new_param._main_table = None
-        new_param._opnic_table = None
 
         # If your __init__ sets an _initialized flag, set it here too
         if hasattr(self, "_initialized"):

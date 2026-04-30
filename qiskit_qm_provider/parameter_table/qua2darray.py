@@ -35,6 +35,20 @@ class QUA2DArray(Parameter):
     QUA array of length n_rows * n_cols and gives 2D indexing.
     """
 
+    def __new__(cls, *args, **kwargs):
+        """Bypass ``Parameter.__new__`` argument parsing.
+
+        ``Parameter.__new__`` expects the ``Parameter`` constructor signature
+        ``(name, value=None, qua_type=None, ...)``. ``QUA2DArray`` adds an extra
+        positional argument (``n_cols``), so calls like
+        ``QUA2DArray(name, n_rows, n_cols, qua_type=fixed)`` can make Python pass
+        two values for ``qua_type`` while resolving ``__new__``.
+
+        Returning a plain instance here lets ``QUA2DArray.__init__`` normalize the
+        2D data and then delegate to ``Parameter.__init__`` safely.
+        """
+        return object.__new__(cls)
+
     def __init__(
         self,
         name: str,

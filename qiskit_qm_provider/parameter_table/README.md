@@ -409,29 +409,118 @@ For a **ParameterTable** with `InputType.OPNIC`, every parameter must share the 
 
 ## ParameterPool and OPNIC
 
-**ParameterPool** manages unique IDs and registrations for parameter objects/tables. In Quarc-backed OPNIC flows, stream transport is table-centric and comes from Quarc struct handles.
+**ParameterPool** manages unique IDs and registrations for parameter objects/tables, and owns the single Quarc `BaseModule` slot used by all OPNIC transport.
 
-- **get_id(obj)**  
-  Returns a new unique ID and optionally registers `obj`.
+### Internal state
 
-- **get_obj(id)**  
-  Returns the object registered for that ID.
+`ParameterPool` is a class-level singleton (every method is a `classmethod`). It tracks four pieces of state:
 
-- **get_all_objs()**  
-  Returns all registered objects.
+| Attribute | Purpose |
+|---|---|
+| `_counter` | Monotonic int allocator for `_id` on every registered `ParameterTable`. |
+| `_registry: dict[int, ParameterTable \| Parameter]` | Main registry. Every `ParameterTable` (regular and synthetic-standalone) appears here. Direct `Parameter` registration is rare — typically only happens through legacy paths. Names are unique across the registry. |
+| `_pending_standalone_opnic: list[Parameter]` | Solo OPNIC `Parameter`\s that have not been attached to any `ParameterTable` and have not been promoted to a synthetic single-field table. Populated at `Parameter.__init__` (OPNIC only); cleared by `set_index` (when the parameter joins a regular table) or by promotion. Names are also unique against the registry. |
+| `_quarc_module: BaseModule \| None` | The single Quarc module slot. Bound either by `from_quarc_module(my_module)` (Pipeline 1) or lazily by `to_quarc_module()` (Pipeline 2). Once bound, calling either method again with a different module raises. Use `reset()` to clear. |
 
-Typical DGX workflow:
+### Public methods
 
-1. Define parameters/tables with `input_type=InputType.OPNIC` and the correct **direction** (they register with the pool).
-2. Build OPNIC tables from your module with **`ParameterPool.from_quarc_module(module)`**.
-3. In QUA: **declare_variables()**, **load_input_values()** (for OUTGOING tables), **stream_back()** (for INCOMING).
-4. From Python: **push_to_opx()** (OUTGOING) or **fetch_from_opx()** (INCOMING).
+- **`get_id(obj=None) -> int`** — allocates a new id and (if `obj` given) registers it. Raises on duplicate names across `_registry` ∪ `_pending_standalone_opnic`.
+- **`get_obj(id) -> ParameterTable | Parameter`** — registry lookup by id.
+- **`get_all_objs() / get_all_ids() / get_all()`** — registry views.
+- **`iter_opnic_parameter_tables()`** — every OPNIC `ParameterTable` (regular + synthetic-standalone), sorted by id.
+- **`iter_standalone_opnic_parameters()`** — union of *(a)* still-pending solo OPNIC `Parameter`\s and *(b)* `Parameter`\s already promoted into a synthetic single-field table.
+- **`has_quarc_module() -> bool`** — whether a Quarc module is currently bound.
+- **`quarc_module() -> BaseModule`** — getter; lazily creates a default `quarc.BaseModule()` if none is bound.
+- **`set_quarc_module(m)`** — explicit setter; raises if a module is already bound.
+- **`from_quarc_module(m) -> dict[str, ParameterTable]`** — Pipeline 1 entry point (see below).
+- **`to_quarc_module(module=None) -> BaseModule`** — Pipeline 2 entry point (see below). Idempotent.
+- **`reset()`** — clears `_registry`, `_counter`, `_pending_standalone_opnic`, and `_quarc_module`.
+
+### Two pipelines (mutually exclusive once a module is bound)
+
+**Pipeline 1 — module-first.** The user has a hand-built `quarc.BaseModule` subclass and wants `ParameterTable` wrappers around its existing structs:
+
+```python
+class MyModule(BaseModule):
+    def __init__(self):
+        super().__init__()
+        self.add_struct(MyStruct, QuarcDirection.INCOMING)
+
+m = MyModule()
+tables = ParameterPool.from_quarc_module(m)
+# tables["my_struct"]._var is the QuaStructHandle for MyStruct.
+# m is now the pool's accumulator: subsequent OPNIC ParameterTables
+# eagerly emit onto m at construction.
+```
+
+**Pipeline 2 — parameters-first.** No pre-built module — the user just declares `Parameter` / `ParameterTable` objects with `input_type=OPNIC`. Tables build the Quarc `Struct` *type* eagerly (cheap; no stream ids consumed) but defer `add_struct` until the user explicitly summons the module:
+
+```python
+mu    = Parameter("mu", [0.0]*4, input_type=OPNIC, direction=OUTGOING)
+sigma = Parameter("sigma", [0.1]*4, input_type=OPNIC, direction=OUTGOING)
+table = ParameterTable([mu, sigma], name="Policy")
+solo  = Parameter("theta", 0.0, input_type=OPNIC, direction=OUTGOING)
+
+# At this point: pool._quarc_module is None; table is "pending" (_is_emitted=False);
+# solo is in pool._pending_standalone_opnic.
+
+m = ParameterPool.to_quarc_module()
+# m is a fresh BaseModule(); table is now emitted onto m and table._var is bound.
+# solo is still pending — to_quarc_module() does NOT promote standalone parameters.
+# It only sweeps tables. Standalone parameters are promoted lazily on first
+# `solo.declare_variable()` (or any transport call), at which point a synthetic
+# single-field ParameterTable named "theta" is constructed and added to m.
+```
+
+After either pipeline binds the module, every newly-constructed OPNIC `ParameterTable` eagerly emits onto that module — no extra ceremony needed.
+
+### Locking semantics for standalone OPNIC `Parameter`\s
+
+A solo OPNIC `Parameter` is in one of three states over its life:
+
+1. **Pending** — created with `input_type=OPNIC`, not yet attached, not yet declared. Lives in `_pending_standalone_opnic`. Free to be attached to a `ParameterTable`.
+2. **Attached** — `set_index` has placed it inside a multi-or-single-field regular `ParameterTable`. Removed from `_pending_standalone_opnic`. `parameter.is_stand_alone == False`. Field-level OPNIC methods (`declare_variable`, `push_to_opx`, …) raise `RuntimeError("table-managed …")` and direct the caller to use the table's API.
+3. **Promoted** — `Parameter.declare_variable` (or any other transport call) was invoked while still pending. The pool builds a synthetic single-field `ParameterTable` named after the parameter, force-emits its struct (lazily creating a default `BaseModule` if none is bound yet), and points `parameter._main_table` at the synthetic. From this moment the parameter is *locked*: trying to attach it to any other `ParameterTable` raises.
+
+`parameter.is_stand_alone` is `True` for states 1 and 3 (pending or promoted) and `False` for state 2 (attached to a regular table).
+
+### Stream-id consumption point
+
+`module.add_struct(...)` is **append-only** in Quarc and consumes one (or two, for `BOTH`) stream id from the global `_incoming_ids` / `_outgoing_ids` counters (capped at 1023 each). All emission paths in the pool consume ids at `add_struct` time:
+- Pipeline 1's `from_quarc_module(m)` — for any pending OPNIC table swept onto `m`.
+- Pipeline 2's `to_quarc_module()` — for every pending OPNIC table swept onto the freshly-built (or previously-bound) module.
+- Eager emission triggered when an OPNIC `ParameterTable` is constructed *after* the module is already bound.
+- Synthetic-table promotion when a standalone `Parameter` is first declared.
+
+A pending table that is never emitted (e.g. user constructed it but never calls `to_quarc_module()` and never enters QUA scope) does *not* consume any stream id. A pending standalone `Parameter` that is never declared is similarly inert.
+
+### Pool's accumulating module — invariants
+
+- One slot, one `BaseModule`. Re-binding raises until `reset()`.
+- Once bound, every OPNIC `ParameterTable.__init__` either (a) eagerly calls `add_struct` on it, (b) accepts an externally-supplied `_quarc_handle` (only used internally by `from_quarc_module`), or (c) — for synthetic standalone tables — force-emits regardless.
+- Once bound, every standalone `Parameter` promotion adds a single-field struct to the same module.
+
+### Parameter dedup (Option 1 — validating, OPNIC-strict)
+
+`Parameter.__new__` looks up the name across `_registry` (parameters inside any registered table) and `_pending_standalone_opnic`:
+
+- **No match** — fresh instance.
+- **Match, either side OPNIC** — `ValueError`. OPNIC parameters are single-owner and cannot be re-declared or shared by re-construction.
+- **Match, both non-OPNIC** — the existing instance is returned **only after** validating that all requested constructor args are compatible (qua_type, input_type, direction, length, units). On mismatch, a `ValueError` with a per-field diff is raised so the user catches accidental aliasing instead of silently dropping new args.
+
+This replaces the historical "warn-and-return-existing" behaviour, which would silently clobber the new args. (See git history: this fixes the line-274 TODO.)
+
+### Cross-process caveat
+
+The `BaseModule` returned by `to_quarc_module()` is a real in-process Quarc module. If the QUA-side and classical-side code execute in the same Python session (typical for `quarc.run()` driven from a single entry point) they share the same module instance and stream ids match by reference. For multi-process deployments, the classical side must rebuild the wrapper tables — typically by calling `from_quarc_module(my_module)` against the same `BaseModule` subclass / serialized representation. Quarc's own dynamic-module workflow (declaring structs at runtime rather than in static source) only works cleanly when both sides share the assembled module.
+
+In QUA: **declare_variables()**, **load_input_values()** (for OUTGOING tables), **stream_back()** (for INCOMING). From Python: **push_to_opx()** (OUTGOING) or **fetch_from_opx()** (INCOMING).
 
 ---
 
 ## Quarc hybrid alignment
 
-Authoritative packet layout and stream ids come from **Quarc** (`quarc build` → generated `module.json`). Build `ParameterTable` instances with :meth:`ParameterPool.from_quarc_module` after constructing your `quarc.BaseModule` subclass (e.g. `rl_qoc.qua.quarc.RLQoCModule`). Each table’s ``_var`` is the **`QuaStructHandle`**; Python **push_to_opx** / **fetch_from_opx** delegate to **send** / **recv** on that handle (or the pybind runtime endpoint after rebinding on the classical host).
+Authoritative packet layout and stream ids come from **Quarc**. Both pipelines (see ParameterPool section above) end up in the same final state: `table._var` is a `QuaStructHandle`; QUA-side declaration runs through `initialize_in_qua()`; transport flows through `send` / `recv`.
 
 **QUA mapping (same `qm.qua` primitives as `QuaStructHandle`):**
 
@@ -443,7 +532,74 @@ Authoritative packet layout and stream ids come from **Quarc** (`quarc build` �
 
 Directions follow the same **`Direction`** enum as elsewhere in this doc (classical-centric: **OUTGOING** = classical → OPX, **INCOMING** = OPX → classical).
 
-For every OPNIC table currently registered in the pool, call **`ParameterPool.iter_opnic_parameter_tables()`**—sorted by table `_id`.
+For every OPNIC table currently registered in the pool, call **`ParameterPool.iter_opnic_parameter_tables()`**—sorted by table `_id`. For every standalone OPNIC parameter (pending or promoted), call **`ParameterPool.iter_standalone_opnic_parameters()`**.
+
+### Lifecycle walkthrough — Pipeline 2 (parameters-first)
+
+```python
+# Phase 0. Empty pool.
+ParameterPool.reset()
+# pool._registry = {}, pool._pending_standalone_opnic = [], pool._quarc_module = None
+
+# Phase 1. Declare a multi-field OPNIC ParameterTable.
+mu    = Parameter("mu", [0.]*4, input_type=OPNIC, direction=OUTGOING)
+sigma = Parameter("sigma", [.1]*4, input_type=OPNIC, direction=OUTGOING)
+# pool._pending_standalone_opnic = [mu, sigma]
+table = ParameterTable([mu, sigma], name="Policy")
+# pool._registry = {1: table}; mu and sigma removed from pending (set_index call).
+# table._struct_type built (cheap), table._is_emitted=False, table._var=None.
+
+# Phase 2. Declare a standalone OPNIC Parameter.
+solo = Parameter("theta", 0., input_type=OPNIC, direction=OUTGOING)
+# pool._pending_standalone_opnic = [solo]; solo is still attachable to any future
+# ParameterTable.
+
+# Phase 3. Summon the module.
+m = ParameterPool.to_quarc_module()
+# pool._quarc_module = m (a fresh BaseModule). table is swept onto m via add_struct
+# (one stream id consumed). table._is_emitted=True, table._var bound to the handle.
+# solo is *not* swept — pending standalone parameters survive to_quarc_module().
+
+# Phase 4. Use solo inside QUA.
+with program() as prog:
+    solo.declare_variable()
+    # Promotion: a synthetic ParameterTable named "theta" is built. solo removed from
+    # pending. Synthetic table eagerly emits onto m (one more stream id consumed).
+    # solo._main_table = synthetic; solo.opnic_table = synthetic.
+    # synthetic_table.declare_variables() runs: m._struct_handles[-1].initialize_in_qua().
+
+# Phase 5. From here on, attempts to attach `solo` to another ParameterTable raise.
+ParameterTable([solo], name="other")  # ValueError: standalone-locked.
+```
+
+### Lifecycle walkthrough — Pipeline 1 (module-first)
+
+```python
+ParameterPool.reset()
+
+# User has a custom quarc.BaseModule subclass with structs already declared.
+class MyModule(BaseModule):
+    def __init__(self):
+        super().__init__()
+        self.add_struct(PolicyStruct, QuarcDirection.INCOMING)
+
+# Optionally, the user creates a few OPNIC ParameterTables BEFORE the module call —
+# these stay pending.
+extra = ParameterTable([Parameter("z", [0.]*2, input_type=OPNIC, direction=OUTGOING)],
+                       name="Extra")
+# extra._is_emitted=False (pool._quarc_module still None).
+
+# Module-first call:
+my_module = MyModule()
+wrappers = ParameterPool.from_quarc_module(my_module)
+# - wrappers["policy_struct"]._var is the existing QuaStructHandle for PolicyStruct.
+# - pool._quarc_module = my_module.
+# - extra was pending; now swept onto my_module.add_struct (one stream id consumed),
+#   extra._is_emitted=True, extra._var bound.
+
+# After this, any new OPNIC ParameterTable / standalone declare_variable() emits
+# eagerly onto my_module — same shared accumulator.
+```
 
 ---
 

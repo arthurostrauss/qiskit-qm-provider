@@ -85,6 +85,9 @@ class ParameterTable:
             List[Parameter],
         ],
         name: Optional[str] = None,
+        *,
+        _quarc_handle: Optional[Any] = None,
+        _is_synthetic_standalone: bool = False,
     ):
         """
         Class enabling the mapping of parameters to be updated to their corresponding "to-be-declared" QUA variables.
@@ -121,11 +124,31 @@ class ParameterTable:
         self._usable_for_opnic_communication = False
         self._incoming_stream_id: Optional[int] = None
         self._outgoing_stream_id: Optional[int] = None
-        #: Quarc ``QuaStructHandle`` (or pybind runtime endpoint) exposing ``send`` / ``recv`` / field access;
-        #: set by :meth:`ParameterPool.from_quarc_module` on the QUA side and rebound to the OPNIC runtime
-        #: endpoint (``runtime.<snake_case_struct>``) before calling :meth:`push_to_opx` / :meth:`fetch_from_opx`
-        #: on the classical side. All struct transport flows through this single handle.
-        self._var: Optional[Any] = None
+        #: Quarc ``QuaStructHandle`` (or pybind runtime endpoint) exposing ``send`` /
+        #: ``recv`` / field access. Bound either at construction time (via
+        #: ``_quarc_handle``, used by :meth:`ParameterPool.from_quarc_module`), eagerly
+        #: by :meth:`_emit_to_module` (when a Quarc module is already bound to the pool
+        #: at the time the table is constructed, or when this table is synthetic), or
+        #: lazily by :meth:`ParameterPool.to_quarc_module` (which sweeps unemitted
+        #: tables onto the freshly-allocated module).
+        self._var: Optional[Any] = _quarc_handle
+        #: Quarc ``Struct`` *type* (a class with annotations) — built eagerly for OPNIC
+        #: tables at the end of :meth:`__init__`. This costs no stream ids and does not
+        #: require a Quarc :class:`BaseModule`. It is the input to ``module.add_struct``
+        #: when the table is later emitted (by :meth:`to_quarc_module` /
+        #: :meth:`from_quarc_module`).
+        self._struct_type: Optional[type] = None
+        #: ``True`` once the table's struct has been added to a Quarc module via
+        #: ``module.add_struct`` (or once a pre-built handle was bound via
+        #: ``_quarc_handle``). Append-only — there is no "un-emit".
+        self._is_emitted: bool = _quarc_handle is not None
+        #: ``True`` for the synthetic single-field table that wraps a standalone OPNIC
+        #: ``Parameter`` after promotion (see
+        #: :meth:`Parameter._require_standalone_opnic_table`). Synthetic tables
+        #: force-emit at construction even if no Quarc module was bound yet (lazily
+        #: creating a default :class:`quarc.BaseModule` if needed) because the QUA
+        #: program needs a real ``QuaStructHandle`` to declare against.
+        self._is_synthetic_standalone: bool = bool(_is_synthetic_standalone)
 
         if isinstance(parameters_dict, Dict):
             for index, (parameter_name, parameter) in enumerate(
@@ -217,6 +240,63 @@ class ParameterTable:
                             "All parameters in the table must have the same direction."
                         )
 
+        # OPNIC tables: build the Quarc Struct *type* eagerly (cheap, no stream ids
+        # consumed). Emission to a module — the step that actually consumes stream ids
+        # via ``module.add_struct`` — is governed by the hybrid emission rule below.
+        if self._input_type == InputType.OPNIC:
+            if self._var is not None:
+                # Pipeline 1 wrap path: a pre-existing handle was supplied (caller is
+                # ``ParameterPool.from_quarc_module``). Don't rebuild the type or call
+                # add_struct; just hydrate stream ids from the handle.
+                self._sync_stream_ids_from_handle(self._var)
+            else:
+                from .quarc_emit import build_quarc_struct
+
+                self._struct_type = build_quarc_struct(self)
+                # Hybrid emission rule:
+                # - If the pool already has a Quarc module bound (Pipeline 1 after a
+                #   from_quarc_module call, or Pipeline 2 after a to_quarc_module call),
+                #   eagerly emit onto it.
+                # - If this is a synthetic single-field standalone table, force-emit
+                #   regardless (lazily creating a default ``BaseModule`` if needed),
+                #   because the parameter is being promoted right now and the caller
+                #   immediately needs a handle.
+                # - Otherwise leave the table unemitted — :meth:`to_quarc_module` will
+                #   sweep it later.
+                pool_module = ParameterPool._quarc_module
+                if pool_module is not None:
+                    self._emit_to_module(pool_module)
+                elif self._is_synthetic_standalone:
+                    self._emit_to_module(ParameterPool.quarc_module())
+
+    def _emit_to_module(self, module: Any) -> Any:
+        """Add this table's Quarc struct to ``module`` and bind the resulting handle.
+
+        Idempotent: if this table has already been emitted (``_is_emitted == True``)
+        the existing handle is returned and no second ``add_struct`` is performed.
+        Otherwise calls ``module.add_struct(self._struct_type, ...)``, consuming one or
+        two stream ids from Quarc's global counters and producing a fresh
+        :class:`QuaStructHandle` which is stored on ``self._var``. Stream ids on the
+        table are hydrated from the produced handle.
+        """
+        if self._is_emitted:
+            return self._var
+        if self._struct_type is None:
+            from .quarc_emit import build_quarc_struct
+
+            self._struct_type = build_quarc_struct(self)
+        from .quarc_emit import quarc_direction_for
+
+        if self._direction is None:
+            raise RuntimeError(
+                f"ParameterTable {self.name!r} has no direction; cannot emit."
+            )
+        handle = module.add_struct(self._struct_type, quarc_direction_for(self._direction))
+        self._var = handle
+        self._is_emitted = True
+        self._sync_stream_ids_from_handle(handle)
+        return handle
+
     def _sync_stream_ids_from_handle(self, handle: Any) -> None:
         """Hydrate stream ids from Quarc handle._struct_spec when available."""
         struct_spec = getattr(handle, "_struct_spec", None)
@@ -241,8 +321,11 @@ class ParameterTable:
         if self.input_type == InputType.OPNIC:
             if self._var is None:
                 raise RuntimeError(
-                    f"ParameterTable {self.name!r} has no Quarc struct handle. Build it via "
-                    "ParameterPool.from_quarc_module(module) before declaring QUA variables."
+                    f"ParameterTable {self.name!r} has no Quarc struct handle (table is "
+                    f"unemitted). Call ParameterPool.to_quarc_module() to flush pending "
+                    f"OPNIC tables onto a Quarc module, or use "
+                    f"ParameterPool.from_quarc_module(my_module) if you have a "
+                    f"hand-built BaseModule."
                 )
             self._var.initialize_in_qua()
             self._packet = self._var.qua_struct
@@ -827,8 +910,10 @@ class ParameterTable:
 
         if self._var is None:
             raise RuntimeError(
-                f"ParameterTable {self.name!r} has no OPNIC endpoint; bind one via "
-                "QMEnvironment.from_quarc_module or ParameterPool.from_quarc_module before pushing."
+                f"ParameterTable {self.name!r} has no OPNIC endpoint (table is "
+                f"unemitted). Call ParameterPool.to_quarc_module() or "
+                f"ParameterPool.from_quarc_module(my_module) so the struct is "
+                f"registered and the handle is bound."
             )
         if self.direction == Direction.INCOMING:
             raise ValueError("Cannot push values to incoming OPNIC parameter tables.")
@@ -905,8 +990,10 @@ class ParameterTable:
         if self.input_type == InputType.OPNIC:
             if self._var is None:
                 raise RuntimeError(
-                    f"ParameterTable {self.name!r} has no OPNIC endpoint; bind one via "
-                    "QMEnvironment.from_quarc_module or ParameterPool.from_quarc_module before fetching."
+                    f"ParameterTable {self.name!r} has no OPNIC endpoint (table is "
+                    f"unemitted). Call ParameterPool.to_quarc_module() or "
+                    f"ParameterPool.from_quarc_module(my_module) so the struct is "
+                    f"registered and the handle is bound."
                 )
             if self.direction == Direction.OUTGOING:
                 raise ValueError(

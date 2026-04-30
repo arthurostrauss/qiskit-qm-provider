@@ -51,6 +51,19 @@ class QUAArray(Parameter):
         - Element assign:    ``arr.assign((i, j), val)``  (delegates to view for partial)
     """
 
+    def __new__(cls, *args, **kwargs):
+        """Bypass ``Parameter.__new__`` constructor-argument parsing.
+
+        ``Parameter.__new__`` assumes the ``Parameter`` signature
+        ``(name, value=None, qua_type=None, ...)``. ``QUAArray`` adds ``shape`` and
+        ``value`` kwargs with different semantics, so positional calls can
+        accidentally bind ``qua_type`` twice before ``__init__`` executes.
+
+        Returning a plain instance here allows ``QUAArray.__init__`` to normalize the
+        user-provided shape/data and then call ``Parameter.__init__`` safely.
+        """
+        return object.__new__(cls)
+
     def __init__(
         self,
         name: str,
