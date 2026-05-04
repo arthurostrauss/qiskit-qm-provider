@@ -48,6 +48,7 @@ from qualang_tools.results import wait_until_job_is_paused
 
 from .parameter_pool import ParameterPool
 from .input_type import Direction, InputType
+from ._deprecation import _DeprecatedAlias
 
 if TYPE_CHECKING:
     from .parameter_table import ParameterTable
@@ -136,12 +137,18 @@ def reset_var(var: QuaScalar, type: Type[int | float | bool]):
 #: :meth:`Parameter._require_standalone_opnic_table`) to the equivalent ParameterTable
 #: method that callers should use when the parameter is field-managed.
 _OPNIC_OWNER_METHOD_MAP: Dict[str, str] = {
-    "declare_variable": "declare_variables",
+    "declare_variable": "declare",
+    "declare": "declare",
     "push_to_opx": "push_to_opx",
     "fetch_from_opx": "fetch_from_opx",
-    "load_input_value": "load_input_values",
+    "load_input_value": "rcv",
+    "rcv": "rcv",
     "stream_back": "stream_back",
 }
+
+#: Sentinel used by :meth:`Parameter.push_to_opx` to detect a missing ``value`` argument
+#: so that zero-argument calls read from ``self.value`` (the stored Python-side float).
+_PUSH_SENTINEL = object()
 
 
 def _resolve_struct_stream_ids(handle: Any) -> tuple[Optional[int], Optional[int]]:
@@ -584,7 +591,7 @@ class Parameter:
                     )
                 assign_with_condition(self.var, value, value_cond)
 
-    def declare_variable(self, pause_program=False, declare_stream=True):
+    def declare(self, pause_program=False, declare_stream=True):
         """
         Declare the QUA variable associated with the parameter.
         Args: pause_program: Boolean indicating if the program should be paused after declaring the variable.
@@ -592,9 +599,9 @@ class Parameter:
         declare_stream: Boolean indicating if an output stream should be declared to save the QUA variable.
         """
         if self.input_type == InputType.OPNIC:
-            opnic_table = self._require_standalone_opnic_table(context="declare_variable")
-            opnic_table.declare_variables(
-                pause_program=pause_program, declare_streams=declare_stream
+            opnic_table = self._require_standalone_opnic_table(context="declare")
+            opnic_table.declare(
+                pause_program=pause_program, declare_stream=declare_stream
             )
             return self._var
         if self.is_declared:
@@ -962,7 +969,7 @@ class Parameter:
                 with if_(self.var > max_val):
                     assign(self.var, max_val)
 
-    def load_input_value(self):
+    def rcv(self):
         """
         QUA Macro: Load a value from the input mechanism associated with the parameter.
         This should be corresponding to one call of the `fetch_from_opx` method on the client side.
@@ -976,7 +983,7 @@ class Parameter:
             qua_advance_input_stream(self.var)
 
         elif self.input_type == InputType.OPNIC:
-            self._require_standalone_opnic_table(context="load_input_value").load_input_values()
+            self._require_standalone_opnic_table(context="rcv").rcv()
 
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io = IO1 if self.input_type == InputType.IO1 else IO2
@@ -997,7 +1004,7 @@ class Parameter:
 
     def push_to_opx(
         self,
-        value: Union[int, float, bool, Sequence[Union[int, float, bool]]],
+        value: Union[int, float, bool, Sequence[Union[int, float, bool]]] = _PUSH_SENTINEL,
         job: Optional[RunningQmJob | JobApi] = None,
         qm: Optional[QuantumMachine] = None,
         verbosity: int = 1,
@@ -1005,14 +1012,26 @@ class Parameter:
     ):
         """
         Client function: pass an input value to the OPX from client/server side.
-        This should be corresponding to one call of the `load_input_value` method on the QUA side.
+        This should be corresponding to one call of the `rcv` / `load_input_value` method on the QUA side.
+
+        When called with no positional ``value`` argument, the stored ``self.value``
+        (Python-side float) is used — so you can set ``param.value = x`` once and then
+        call ``param.push_to_opx()`` without repeating the value.
+
         Args:
-            value: Value to be passed to the OPX.
+            value: Value to be passed to the OPX. Defaults to ``self.value`` when omitted.
             job: RunningQmJob object (required if input_type is IO1 or IO2 or input_stream).
             qm: QuantumMachine object (required if input_type is IO1 or IO2).
             verbosity: Verbosity level. Default is 1.
             time_out: Time out for waiting for the job to be paused. Default is 90 seconds.
         """
+        if value is _PUSH_SENTINEL:
+            if self.value is None:
+                raise ValueError(
+                    f"Parameter {self.name!r}: no value provided and self.value is None. "
+                    "Pass an explicit value or set self.value before calling push_to_opx()."
+                )
+            value = self.value
 
         if self.is_array:
             if not isinstance(value, (List, np.ndarray)):
@@ -1210,7 +1229,7 @@ class Parameter:
         self._ctr = None
 
 
-    def reset_var(self):
+    def reset_qua(self):
         """
         QUA Macro: Assign the QUA variable to 0 (in the appropriate QUA type).
         """
@@ -1219,6 +1238,14 @@ class Parameter:
                 reset_var(self.var[self._ctr], self.type)
         else:
             reset_var(self.var, self.type)
+
+    # ------------------------------------------------------------------
+    # Deprecated aliases — removed in v1.2. Use the canonical names instead.
+    # ------------------------------------------------------------------
+    declare_variable = _DeprecatedAlias("declare",    removal="1.2")
+    load_input_value = _DeprecatedAlias("rcv",        removal="1.2")
+    reset_var        = _DeprecatedAlias("reset_qua",  removal="1.2")
+    # declare_stream is already the canonical name — no alias needed
 
     def __deepcopy__(self, memodict=None):
         if memodict is None:

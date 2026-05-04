@@ -82,15 +82,16 @@ If `value` is a list or 1D numpy array, the parameter is an array of that length
 
 ### Declaration (inside QUA)
 
-- **declare_variable(pause_program=False, declare_stream=True)**  
-  Declares the QUA variable (and optionally an output stream). For OPNIC, parameters are table-managed and must be declared via `ParameterTable.declare_variables()` from Quarc-built tables.
+- **`declare(pause_program=False, declare_stream=True)`** *(canonical name)*  
+  Declares the QUA variable (and optionally an output stream). For OPNIC, parameters are table-managed and the call delegates automatically through the owning table’s struct handle.  
+  *Deprecated alias:* `declare_variable(...)` — identical behaviour, kept for backwards-compatibility.
 
-- **declare_stream()**  
+- **`declare_stream()`**  
   Declares the output stream for this parameter (used for `save_to_stream` / stream processing).
 
 ### Assignment (inside QUA)
 
-- **assign(value, condition=None, value_cond=None)**  
+- **`assign(value, condition=None, value_cond=None)`**  
   Assigns to the parameter’s QUA variable.  
   - **value**: Python scalar, list, another `Parameter`’s `.var`, or a QUA array variable. For arrays, length must match.  
   - **condition** / **value_cond**: Optional QUA boolean and else-value; both must be provided together.  
@@ -98,8 +99,9 @@ If `value` is a list or 1D numpy array, the parameter is an array of that length
 
 ### Loading input (inside QUA)
 
-- **load_input_value()**  
-  Loads one value from the parameter’s input mechanism: advances `INPUT_STREAM` or reads from IO1/IO2. For OPNIC, field-level loading is table-managed via `ParameterTable.load_input_values()`.
+- **`rcv()`** *(canonical name)*  
+  Loads one value from the parameter’s input mechanism: advances `INPUT_STREAM` or reads from IO1/IO2. For OPNIC, the call delegates through the owning table’s `recv()`.  
+  *Deprecated alias:* `load_input_value()` — identical behaviour, kept for backwards-compatibility.
 
 ### Streaming and saving (inside QUA)
 
@@ -119,10 +121,16 @@ If `value` is a list or 1D numpy array, the parameter is an array of that length
 
 ### Python-side (outside QUA)
 
-- **push_to_opx(value, job=None, qm=None, verbosity=1, time_out=30)**  
-  Sends `value` from Python to the OPX so that the next `load_input_value()` in QUA receives it. Uses input stream, IO1/IO2, or OPNIC OPNIC depending on `input_type`.
+- **`push_to_opx(value=<stored>, job=None, qm=None, verbosity=1, time_out=30)`**  
+  Sends `value` from Python to the OPX so that the next `rcv()` call in QUA receives it.  
+  Uses input stream, IO1/IO2, or OPNIC depending on `input_type`.  
+  **Zero-argument form:** when `value` is omitted, `self.value` (the Python-side stored float set at construction or later) is used. This lets you update the stored value once and call `push_to_opx()` without repeating the argument:
+  ```python
+  param.value = new_angle
+  param.push_to_opx()   # streams new_angle
+  ```
 
-- **fetch_from_opx(job=None, fetching_index=0, fetching_size=1, verbosity=1, time_out=30)**  
+- **`fetch_from_opx(job=None, fetching_index=0, fetching_size=1, verbosity=1, time_out=30)`**  
   Retrieves value(s) from the OPX (IOs, stream processing if `InputType.INPUT_STREAM` or OPNIC packet) and returns them (scalar or array).
 
 ---
@@ -163,11 +171,13 @@ When `input_type == InputType.OPNIC`, the table builds a QUA struct (packet) who
 
 ### Declaration and streams (inside QUA)
 
-- **declare_variables(pause_program=False, declare_streams=True)**  
-  Declares all parameters. For DGX, declares the packet struct and external stream(s), and binds each parameter to the packet; for non-DGX, calls `declare_variable()` on each parameter. Returns the declared variable(s) (single var or list; for DGX, the packet).
+- **`declare(pause_program=False, declare_streams=True)`** *(canonical name)*  
+  Declares all parameters. For OPNIC, declares the packet struct and external stream(s), and binds each parameter to the packet; for non-OPNIC, calls `declare()` on each parameter. Returns the declared variable(s) (single var or list; for OPNIC, the packet).  
+  *Deprecated alias:* `declare_variables(...)` — identical behaviour, kept for backwards-compatibility.
 
-- **declare_streams()**  
-  Declares output streams for all parameters that do not already have one.
+- **`declare_stream()`** *(canonical name)*  
+  Declares output streams for all parameters that do not already have one.  
+  *Deprecated alias:* `declare_streams()` — identical behaviour.
 
 ### Assignment (inside QUA)
 
@@ -179,11 +189,12 @@ When `input_type == InputType.OPNIC`, the table builds a QUA struct (packet) who
 
 ### Loading and streaming (inside QUA)
 
-- **load_input_values(filter_function=None)**  
-  For each parameter (optionally filtered), calls `load_input_value()`. For DGX OUTGOING/BOTH, receives one packet into the table’s struct.
+- **`rcv(filter_function=None)`** *(canonical name)*  
+  For each parameter (optionally filtered), calls `rcv()` on it. For OPNIC OUTGOING/BOTH, receives one packet into the table’s struct.  
+  *Deprecated alias:* `load_input_values(...)` — identical behaviour.
 
-- **stream_back(reset=False)**  
-  For each parameter (or for DGX INCOMING, sends the whole packet) streams values out; see Parameter’s `stream_back`. Optionally resets after send.
+- **`stream_back(reset=False)`**  
+  For each parameter (or for OPNIC INCOMING, sends the whole packet) streams values out; see Parameter’s `stream_back`. Optionally resets after send.
 
 - **save_to_stream(reset=False)**  
   Calls `save_to_stream()` on each parameter. Optionally resets after saving.
@@ -432,7 +443,7 @@ For a **ParameterTable** with `InputType.OPNIC`, every parameter must share the 
 - **`has_quarc_module() -> bool`** — whether a Quarc module is currently bound.
 - **`quarc_module() -> BaseModule`** — getter; lazily creates a default `quarc.BaseModule()` if none is bound.
 - **`set_quarc_module(m)`** — explicit setter; raises if a module is already bound.
-- **`from_quarc_module(m) -> dict[str, ParameterTable]`** — Pipeline 1 entry point (see below).
+- **`from_quarc_module(m) -> dict[str, ParameterTable | Parameter]`** — Pipeline 1 entry point (see below). **1-field structs are automatically promoted to a standalone `Parameter`** rather than a `ParameterTable` (see [1-field promotion rule](#1-field-struct-promotion-in-from_quarc_module) below).
 - **`to_quarc_module(module=None) -> BaseModule`** — Pipeline 2 entry point (see below). Idempotent.
 - **`reset()`** — clears `_registry`, `_counter`, `_pending_standalone_opnic`, and `_quarc_module`.
 
@@ -514,7 +525,7 @@ This replaces the historical "warn-and-return-existing" behaviour, which would s
 
 The `BaseModule` returned by `to_quarc_module()` is a real in-process Quarc module. If the QUA-side and classical-side code execute in the same Python session (typical for `quarc.run()` driven from a single entry point) they share the same module instance and stream ids match by reference. For multi-process deployments, the classical side must rebuild the wrapper tables — typically by calling `from_quarc_module(my_module)` against the same `BaseModule` subclass / serialized representation. Quarc's own dynamic-module workflow (declaring structs at runtime rather than in static source) only works cleanly when both sides share the assembled module.
 
-In QUA: **declare_variables()**, **load_input_values()** (for OUTGOING tables), **stream_back()** (for INCOMING). From Python: **push_to_opx()** (OUTGOING) or **fetch_from_opx()** (INCOMING).
+In QUA: **`declare()`**, **`rcv()`** (for OUTGOING tables), **`stream_back()`** (for INCOMING). From Python: **`push_to_opx()`** (OUTGOING) or **`fetch_from_opx()`** (INCOMING).
 
 ---
 
@@ -524,10 +535,10 @@ Authoritative packet layout and stream ids come from **Quarc**. Both pipelines (
 
 **QUA mapping (same `qm.qua` primitives as `QuaStructHandle`):**
 
-| `ParameterTable` (OPNIC) | Quarc `QuaStructHandle` |
-|--------------------------|-------------------------|
-| `declare_variables()` (`declare_struct` + `declare_external_stream`) | `initialize_in_qua()` |
-| `load_input_values()` → `receive_from_external_stream` | `recv()` |
+| `ParameterTable` / `Parameter` (OPNIC) | Quarc `QuaStructHandle` |
+|----------------------------------------|-------------------------|
+| `declare()` (`declare_struct` + `declare_external_stream`) | `initialize_in_qua()` |
+| `rcv()` → `receive_from_external_stream` | `recv()` |
 | `stream_back()` → `send_to_external_stream` | `send()` |
 
 Directions follow the same **`Direction`** enum as elsewhere in this doc (classical-centric: **OUTGOING** = classical → OPX, **INCOMING** = OPX → classical).
@@ -562,11 +573,11 @@ m = ParameterPool.to_quarc_module()
 
 # Phase 4. Use solo inside QUA.
 with program() as prog:
-    solo.declare_variable()
+    solo.declare()
     # Promotion: a synthetic ParameterTable named "theta" is built. solo removed from
     # pending. Synthetic table eagerly emits onto m (one more stream id consumed).
     # solo._main_table = synthetic; solo.opnic_table = synthetic.
-    # synthetic_table.declare_variables() runs: m._struct_handles[-1].initialize_in_qua().
+    # synthetic_table.declare() runs: m._struct_handles[-1].initialize_in_qua().
 
 # Phase 5. From here on, attempts to attach `solo` to another ParameterTable raise.
 ParameterTable([solo], name="other")  # ValueError: standalone-locked.
@@ -603,13 +614,77 @@ wrappers = ParameterPool.from_quarc_module(my_module)
 
 ---
 
+## Uniform Interface — `Parameter` and `ParameterTable` speak the same language
+
+`Parameter` and `ParameterTable` now expose the same canonical method names for every common operation so that callers never need to branch on the concrete type.
+
+| Concept | Canonical name | Deprecated alias (still works) |
+|---|---|---|
+| Declare QUA variable(s) | `declare(...)` | `declare_variable()` / `declare_variables()` |
+| Receive / load input | `rcv(...)` | `load_input_value()` / `load_input_values()` |
+| Declare output stream(s) | `declare_stream()` | `declare_stream()` / `declare_streams()` |
+| Zero-reset QUA variable(s) | `reset_qua()` | `reset_var()` / `reset_vars()` |
+
+This means code that holds a `param` variable typed as `Parameter | ParameterTable` (or just "one scalar field vs many") can call `param.declare()` and `param.rcv()` uniformly without an `isinstance` check.
+
+```python
+# Before: had to know the concrete type
+if isinstance(param, Parameter):
+    param.declare_variable()
+    ...
+    param.load_input_value()
+else:
+    param.declare_variables()
+    ...
+    param.load_input_values()
+
+# After: one line, works for both
+param.declare()
+...
+param.rcv()
+```
+
+The old singular/plural names are preserved as **deprecated aliases** on both classes; they call through to the same implementation and will continue to work until an explicit deprecation removal pass.
+
+---
+
+## 1-field struct promotion in `from_quarc_module()`
+
+When `ParameterPool.from_quarc_module(module)` deserializes a Quarc module, any struct that contains **exactly one field** is automatically promoted to a standalone `Parameter` instead of a `ParameterTable`. The wrapper table is created and registered as a *synthetic-standalone* table (same mechanism used for parameters promoted on first `declare()` call in Pipeline 2), so all OPNIC transport delegates through it correctly.
+
+**Why this matters:** scalar runtime quantities (e.g. `n_shots`, `circuit_choice_var`, `n_reps_var`) are serialized as 1-field Quarc structs. Without promotion, the deserializing side would receive a 1-element `ParameterTable` and have to manually extract the single `Parameter`, reattach it to a synthetic table, and copy stream IDs. The promotion rule makes this automatic.
+
+```python
+# Pipeline 1: module has three structs —
+#   PolicyParams  (4 fields: mu[4], sigma[4])
+#   RewardParams  (1 field:  reward[1])
+#   NShots        (1 field:  n_shots scalar)
+tables = ParameterPool.from_quarc_module(module)
+
+# Multi-field structs remain ParameterTable:
+assert isinstance(tables["policy_params"], ParameterTable)   # True
+assert isinstance(tables["reward_params"], ParameterTable)   # True
+
+# Single-field structs are promoted to Parameter:
+assert isinstance(tables["n_shots"], Parameter)              # True
+# The Parameter still holds a reference to its owning synthetic table,
+# so OPNIC transport (declare, rcv, push_to_opx …) works identically:
+tables["n_shots"].declare()      # ok — delegates through opnic_table
+tables["n_shots"].rcv()          # ok — delegates through opnic_table._var.recv()
+tables["n_shots"].push_to_opx()  # ok — uses self.value if set, or pass a scalar
+```
+
+Callers that previously checked `len(table.parameters) == 1` and did manual downconversion can now simply use whatever `from_quarc_module` returns, treating scalars and multi-field tables uniformly through the `declare()` / `rcv()` interface.
+
+---
+
 ## Usage in QUA Programs
 
 1. **Declare**  
-   Call **ParameterTable.declare_variables()** at the start of the program. Use **declare_streams=True** if you want to save results to streams.
+   Call **`param.declare()`** at the start of the program (works for both `Parameter` and `ParameterTable`). Use `declare_streams=True` if you want output streams for saving.
 
 2. **Load input**  
-   Where the program should read new values, call **load_input_values()** on the table (or **load_input_value()** on a parameter). For DGX OUTGOING, this receives one packet.
+   Where the program should read new values, call **`param.rcv()`** (works for both types; an optional `filter_function` is supported by `ParameterTable`). For OPNIC OUTGOING, this receives one struct packet.
 
 3. **Assign**  
    Use **assign** / **assign_parameters** or **table[name] = value** to set variables inside the program. For **QUAArray** / **QUA2DArray**, use their indexing and **assign** methods.

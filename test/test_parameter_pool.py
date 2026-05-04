@@ -90,7 +90,34 @@ class TestParameterPoolFromQuarcModule:
         m = Mini()
         tables = ParameterPool.from_quarc_module(m)
         assert "mini_packet" in tables
-        t = tables["mini_packet"]
-        assert t.name == "MiniPacket"
-        assert t._var is not None
-        assert t.direction == Direction.OUTGOING
+        field = tables["mini_packet"]
+        # One-field structs are promoted to the field Parameter; Quarc handle lives on
+        # the synthetic wrapper table (see ParameterPool module docstring).
+        assert isinstance(field, Parameter)
+        assert field.name == "x"
+        wrapper = field.opnic_table
+        assert wrapper is not None
+        assert wrapper.name == "MiniPacket"
+        assert wrapper._var is not None
+        assert field.direction == Direction.OUTGOING
+
+    def test_from_quarc_module_struct_name_equals_field_name(self):
+        """Regression: Quarc struct key can match the sole field name (snake_case)."""
+        pytest.importorskip("quarc")
+        from quarc import BaseModule, Direction as QuarcDirection, Scalar, Struct
+
+        class Dup(BaseModule):
+            def __init__(self) -> None:
+                super().__init__()
+                st = Struct(
+                    struct_name="max_input_state",
+                    max_input_state=Scalar[int],
+                )
+                self.add_struct(st, QuarcDirection.INCOMING)
+
+        tables = ParameterPool.from_quarc_module(Dup())
+        field = tables["max_input_state"]
+        assert isinstance(field, Parameter)
+        assert field.name == "max_input_state"
+        assert field.opnic_table is not None
+        assert field.opnic_table.name == "max_input_state"

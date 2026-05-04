@@ -27,11 +27,13 @@ The pool serves two intertwined purposes:
    ``_quarc_module``. Two pipelines populate it:
 
    * **Pipeline 1 — module-first.** ``ParameterPool.from_quarc_module(my_module)`` wraps
-     each pre-declared struct in ``my_module`` as a :class:`ParameterTable` (binding the
-     existing :class:`QuaStructHandle` to ``table._var``), sets the pool slot to
-     ``my_module``, and sweeps any *previously-pending* OPNIC ``ParameterTable``\\ s — i.e.
-     tables the user already constructed before calling ``from_quarc_module`` — onto
-     ``my_module`` via ``my_module.add_struct``.
+     each pre-declared struct in ``my_module`` as a :class:`ParameterTable`, *or* — for
+     structs with exactly **one field** — as a standalone :class:`Parameter` (the wrapper
+     table is still created and marked ``_is_synthetic_standalone=True`` so all OPNIC
+     transport delegates through it correctly; see *1-field struct promotion* below).
+     The pool sets the slot to ``my_module`` and sweeps any *previously-pending* OPNIC
+     ``ParameterTable``\\ s — i.e. tables the user already constructed before calling
+     ``from_quarc_module`` — onto ``my_module`` via ``my_module.add_struct``.
 
    * **Pipeline 2 — parameters-first.** The user declares ``Parameter``/``ParameterTable``
      objects with ``input_type=InputType.OPNIC`` and *later* calls
@@ -308,8 +310,8 @@ class ParameterPool:
     # ------------------------------------------------------------------------
 
     @classmethod
-    def from_quarc_module(cls, module: Any) -> Dict[str, "ParameterTable"]:
-        """Wrap every struct in ``module`` as a :class:`ParameterTable` (Pipeline 1).
+    def from_quarc_module(cls, module: Any) -> Dict[str, "ParameterTable | Parameter"]:
+        """Wrap every struct in ``module`` (Pipeline 1).
 
         For each ``StructSpec`` already registered in ``module._structs`` the matching
         :class:`QuaStructHandle` is bound to the produced ``ParameterTable._var``
@@ -329,8 +331,18 @@ class ParameterPool:
         Raises :class:`RuntimeError` if a module is already bound — call :meth:`reset`
         first if you really want to rebind.
 
-        Returns a ``dict`` mapping the snake-case struct name to the wrapper
-        :class:`ParameterTable`, for convenience.
+        **1-field struct promotion rule:** structs whose annotation contains exactly one
+        field are returned as a standalone :class:`Parameter` rather than a
+        :class:`ParameterTable`.  The wrapper table is created internally and flagged as
+        ``_is_synthetic_standalone=True`` so that all OPNIC transport methods
+        (``declare``, ``rcv``, ``push_to_opx``, …) delegate through it correctly.
+        Callers can therefore treat single-field entries uniformly with scalars produced
+        by Pipeline 2's standalone promotion path — both expose the same
+        ``Parameter``-level interface.
+
+        Returns a ``dict`` mapping the snake-case struct name to the wrapper object
+        (:class:`ParameterTable` for multi-field structs, :class:`Parameter` for
+        1-field structs).
         """
         if cls._quarc_module is not None:
             raise RuntimeError(
@@ -373,7 +385,7 @@ class ParameterPool:
                 f"{len(structs)} struct specs vs {len(handles)} struct handles."
             )
 
-        result: Dict[str, ParameterTable] = {}
+        result: Dict[str, ParameterTable | Parameter] = {}
         for (struct_name, struct_spec), handle in zip(structs.items(), handles):
             has_incoming = struct_spec.incoming_stream_spec is not None
             has_outgoing = struct_spec.outgoing_stream_spec is not None
@@ -418,9 +430,15 @@ class ParameterPool:
                 )
 
             table = ParameterTable(params, name=struct_name, _quarc_handle=handle)
-            table._direction = direction
-            table._input_type = InputType.OPNIC
-            result[pascal_to_snake_case(struct_name)] = table
+            snake_name = pascal_to_snake_case(struct_name)
+            if len(params) == 1:
+                # Promote 1-field structs to a standalone Parameter. Mark the wrapper
+                # table as synthetic-standalone so that Parameter.is_stand_alone is True
+                # and OPNIC transport delegates back through this table's handle.
+                table._is_synthetic_standalone = True
+                result[snake_name] = params[0]
+            else:
+                result[snake_name] = table
 
         # Bind the slot *before* sweeping, so the sweep's `add_struct` calls happen on
         # the user-provided module (not on a freshly-allocated default one).

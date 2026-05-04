@@ -46,6 +46,7 @@ from quam.utils.qua_types import QuaVariable
 from .parameter_pool import ParameterPool
 from .parameter import Parameter
 from .input_type import InputType, Direction
+from ._deprecation import _DeprecatedAlias
 
 if TYPE_CHECKING:
     from qiskit.circuit.classical.expr import Var
@@ -118,7 +119,12 @@ class ParameterTable:
         else:  # Generate a unique name
             self.name = f"ParameterTable_{id(self)}"
         self._input_type = None
-        self._id = ParameterPool.get_id(self)
+        # Defer pool registration until parameters are attached: fresh OPNIC
+        # ``Parameter`` instances register in ``_pending_standalone_opnic`` first;
+        # ``set_index`` clears them. Registering the table before that step would make
+        # ``_assert_unique_registered_name`` reject a 1-field struct whose Quarc struct
+        # key equals the field name (same string as the pending parameter).
+        self._id: int = 0  # assigned via ParameterPool.get_id(self) below
         self._packet = None
         self._direction = None
         self._usable_for_opnic_communication = False
@@ -240,6 +246,8 @@ class ParameterTable:
                             "All parameters in the table must have the same direction."
                         )
 
+        self._id = ParameterPool.get_id(self)
+
         # OPNIC tables: build the Quarc Struct *type* eagerly (cheap, no stream ids
         # consumed). Emission to a module — the step that actually consumes stream ids
         # via ``module.add_struct`` — is governed by the hybrid emission rule below.
@@ -307,15 +315,15 @@ class ParameterTable:
         self._incoming_stream_id = getattr(incoming, "id", None)
         self._outgoing_stream_id = getattr(outgoing, "id", None)
 
-    def declare_variables(
-        self, pause_program=False, declare_streams=True
+    def declare(
+        self, pause_program=False, declare_stream=True
     ) -> QuaVariable | List[QuaVariable | QuaArrayVariable]:
         """
         QUA Macro to declare all QUA variables associated with the parameter table.
         Should be called at the beginning of the QUA program.
         Args:
             pause_program: Boolean indicating if the program should pause after declaring the variables.
-            declare_streams: Boolean indicating if output streams should be declared for all the parameters.
+            declare_stream: Boolean indicating if output streams should be declared for all the parameters.
 
         """
         if self.input_type == InputType.OPNIC:
@@ -345,7 +353,7 @@ class ParameterTable:
                 parameter._var =  var if parameter.is_array else var[0]
                 parameter._is_declared = True
                 parameter._main_table = self
-                if declare_streams:
+                if declare_stream:
                     parameter.declare_stream()
                 if parameter.is_array:
                     parameter._ctr = declare(int)
@@ -370,7 +378,7 @@ class ParameterTable:
                 if parameter.is_declared:
                     warnings.warn(f"Variable {parameter.name} already declared.")
                     continue
-                parameter.declare_variable(declare_stream=declare_streams)
+                parameter.declare(declare_stream=declare_stream)
             if pause_program:
                 pause()
             if len(self.variables) == 1:
@@ -378,7 +386,7 @@ class ParameterTable:
             else:
                 return self.variables
 
-    def declare_streams(self) -> List[ResultStreamSource]:
+    def declare_stream(self) -> List[ResultStreamSource]:
         """
         QUA Macro to declare all the output streams associated with the parameters in the parameter table.
         This macro is expected to be called at the beginning of the QUA program.
@@ -396,7 +404,7 @@ class ParameterTable:
 
         return streams
 
-    def load_input_values(
+    def rcv(
         self, filter_function: Optional[Callable[[Parameter], bool]] = None
     ):
         """
@@ -427,7 +435,7 @@ class ParameterTable:
         else:
             for parameter in self.parameters:
                 if filter_function is None or filter_function(parameter):
-                    parameter.load_input_value()
+                    parameter.rcv()
 
     def save_to_stream(self):
         """
@@ -755,7 +763,7 @@ class ParameterTable:
             else:
                 raise ValueError(
                     f"No QUA variable found for parameter {item}. Please use "
-                    f"ParameterTable.declare_variables() within QUA program first."
+                    f"ParameterTable.declare() within QUA program first."
                 )
         elif isinstance(item, int):
             for parameter in self.table.values():
@@ -765,7 +773,7 @@ class ParameterTable:
                     else:
                         raise ValueError(
                             f"No QUA variable found for parameter with index {item}. Please use "
-                            f"ParameterTable.declare_variables() within QUA program first."
+                            f"ParameterTable.declare() within QUA program first."
                         )
             raise IndexError(f"No parameter with index {item} in the parameter table.")
         else:
@@ -966,7 +974,7 @@ class ParameterTable:
                 if parameter.stream is not None:
                     parameter.save_to_stream()
                 if reset:
-                    parameter.reset_var()
+                    parameter.reset_qua()
 
     def fetch_from_opx(
         self,
@@ -1164,12 +1172,20 @@ class ParameterTable:
         for parameter in self.parameters:
             parameter.reset()
 
-    def reset_vars(self):
+    def reset_qua(self):
         """
         QUA Macro: Reset the QUA variables of the parameter table to 0 (in the appropriate QUA type).
         """
         for parameter in self.parameters:
-            parameter.reset_var()
+            parameter.reset_qua()
+
+    # ------------------------------------------------------------------
+    # Deprecated aliases — removed in v1.2. Use the canonical names instead.
+    # ------------------------------------------------------------------
+    declare_variables = _DeprecatedAlias("declare",       removal="1.2")
+    load_input_values = _DeprecatedAlias("rcv",           removal="1.2")
+    declare_streams   = _DeprecatedAlias("declare_stream", removal="1.2")
+    reset_vars        = _DeprecatedAlias("reset_qua",     removal="1.2")
 
     def __deepcopy__(self, memo=None):
         if memo is None:
