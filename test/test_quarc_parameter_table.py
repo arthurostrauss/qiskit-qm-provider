@@ -78,12 +78,13 @@ def test_from_quarc_module_policy_like_struct():
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline2_table_is_pending_until_to_quarc_module():
+def test_pipeline2_table_is_pending_until_module_binding():
     """Constructing an OPNIC ParameterTable before any module is bound leaves the table
     pending: ``_struct_type`` is built (cheap), but ``_is_emitted`` is False and
-    ``_var`` is None until ``to_quarc_module()`` flushes it onto a fresh module."""
+    ``_var`` is None until a :class:`QiskitQMModule` is constructed (which binds the
+    pool slot and runs ``_sweep_preexisting_opnic``)."""
     pytest.importorskip("quarc")
-    from quarc import BaseModule
+    from qiskit_qm_provider import QiskitQMModule
 
     p_mu = Parameter(
         "mu", [0.0, 0.0], input_type=InputType.OPNIC, direction=Direction.OUTGOING
@@ -99,16 +100,32 @@ def test_pipeline2_table_is_pending_until_to_quarc_module():
     assert table._var is None
     assert ParameterPool.has_quarc_module() is False
 
-    module = ParameterPool.to_quarc_module()
-    assert isinstance(module, BaseModule)
+    module = QiskitQMModule()
     assert "PolicyParams" in module._structs
     assert table._is_emitted is True
     assert table._var is module._struct_handles[0]
 
-    # Idempotent — no extra structs added on a second call.
+    # Idempotent — to_quarc_module after binding returns the same module.
     module2 = ParameterPool.to_quarc_module()
     assert module2 is module
     assert len(module._struct_handles) == 1
+
+
+def test_to_quarc_module_does_not_sweep_for_plain_base_module():
+    """``to_quarc_module()`` (without a :class:`QiskitQMModule`) only binds the slot.
+    Pre-existing OPNIC tables are *not* swept onto a plain ``BaseModule`` — that
+    responsibility lives on :class:`QiskitQMModule`'s ``__init__``."""
+    pytest.importorskip("quarc")
+    from quarc import BaseModule
+
+    p = Parameter("z", [0.0], input_type=InputType.OPNIC, direction=Direction.OUTGOING)
+    table = ParameterTable([p], name="Pre")
+    assert table._is_emitted is False
+
+    module = ParameterPool.to_quarc_module()  # plain BaseModule
+    assert isinstance(module, BaseModule)
+    assert "Pre" not in module._structs
+    assert table._is_emitted is False
 
 
 def test_pipeline2_table_eagerly_emits_after_module_is_bound():
@@ -175,6 +192,7 @@ def test_pending_parameter_can_still_be_attached_to_a_regular_table():
     multi-field ParameterTable. After attachment, it is no longer pending and not
     treated as standalone."""
     pytest.importorskip("quarc")
+    from qiskit_qm_provider import QiskitQMModule
 
     p = Parameter("phi", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
     assert p in ParameterPool._pending_standalone_opnic
@@ -185,7 +203,7 @@ def test_pending_parameter_can_still_be_attached_to_a_regular_table():
     assert p not in ParameterPool._pending_standalone_opnic
     assert p.is_stand_alone is False
 
-    module = ParameterPool.to_quarc_module()
+    module = QiskitQMModule()
     assert "Holder" in module._structs
     assert "phi" not in module._structs
 
@@ -195,9 +213,14 @@ def test_pending_parameter_can_still_be_attached_to_a_regular_table():
 # ---------------------------------------------------------------------------
 
 
-def test_from_quarc_module_binds_pool_module_and_sweeps_pending_tables():
-    """``from_quarc_module(my_module)`` should bind ``my_module`` as the pool's module
-    AND emit any *previously* pending OPNIC ParameterTables onto it."""
+def test_from_quarc_module_binds_pool_module_without_sweeping_plain_base_module():
+    """``from_quarc_module(my_module)`` binds ``my_module`` as the pool's module but
+    does **not** sweep pre-existing pool state onto a plain ``BaseModule``.
+
+    Sweeping pre-existing OPNIC ``ParameterTable``\\ s and pending standalone OPNIC
+    ``Parameter``\\ s is a :class:`QiskitQMModule` responsibility (run during its
+    ``__init__``); plain ``BaseModule`` callers must perform that step themselves.
+    """
     pytest.importorskip("quarc")
     from quarc import Array, BaseModule, Direction as QuarcDirection, Struct
 
@@ -218,14 +241,38 @@ def test_from_quarc_module_binds_pool_module_and_sweeps_pending_tables():
     my_module = M()
     wrappers = ParameterPool.from_quarc_module(my_module)
 
-    # The wrapper for ExistingStruct was produced.
+    # The wrapper for ExistingStruct was produced (Pipeline 1 reverse-mapping).
     assert "existing_struct" in wrappers
-    # ``Pre`` got swept onto my_module.
-    assert pre._is_emitted is True
-    assert "Pre" in my_module._structs
-    assert pre._var is my_module._struct_handles[-1]
+    # ``Pre`` is NOT swept onto a plain BaseModule.
+    assert pre._is_emitted is False
+    assert "Pre" not in my_module._structs
     # ``my_module`` is now the pool slot.
     assert ParameterPool.quarc_module() is my_module
+
+
+def test_qiskitqmmodule_sweeps_pending_tables_at_construction():
+    """:class:`QiskitQMModule` runs ``_sweep_preexisting_opnic`` during ``__init__``,
+    emitting every unemitted OPNIC ``ParameterTable`` and promoting every pending
+    standalone OPNIC ``Parameter`` onto itself."""
+    pytest.importorskip("quarc")
+    from qiskit_qm_provider import QiskitQMModule
+
+    p = Parameter("z", [0.0, 0.0], input_type=InputType.OPNIC, direction=Direction.OUTGOING)
+    pre = ParameterTable([p], name="Pre")
+    assert pre._is_emitted is False
+
+    standalone = Parameter(
+        "alone", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING
+    )
+    assert standalone in ParameterPool._pending_standalone_opnic
+
+    module = QiskitQMModule()
+    assert pre._is_emitted is True
+    assert "Pre" in module._structs
+    # Pending standalone parameters are promoted to synthetic single-field tables and
+    # land in the module's struct list under their parameter name.
+    assert "alone" in module._structs
+    assert standalone not in ParameterPool._pending_standalone_opnic
 
 
 def test_from_quarc_module_then_to_quarc_module_returns_same_module():

@@ -460,6 +460,40 @@ class Parameter:
         ):
             ParameterPool._unregister_pending_standalone_opnic(self)
 
+    def _unset_index(self, param_table: ParameterTable) -> None:
+        """Inverse of :meth:`set_index`. Detach this parameter from ``param_table``.
+
+        - Removes ``param_table.name`` from :attr:`_table_indices`. Silently no-op if
+          this parameter was never attached to ``param_table``.
+        - If ``_main_table`` was ``param_table``, repoints it at any remaining attached
+          table (or ``None`` if none remain).
+        - If no tables remain, resets :attr:`_index` to ``-1`` so the parameter is
+          treated as fresh again.
+        - For OPNIC parameters that lose their last attachment to a non-synthetic
+          table, re-registers in :data:`ParameterPool._pending_standalone_opnic` so
+          the parameter becomes a standalone candidate again.
+
+        Used by :meth:`ParameterTable.remove_parameter` to keep the back-references
+        coherent.
+        """
+        if param_table.name not in self._table_indices:
+            return
+        del self._table_indices[param_table.name]
+
+        if self._main_table is param_table:
+            remaining_tables = self.tables
+            self._main_table = remaining_tables[0] if remaining_tables else None
+
+        if not self._table_indices:
+            self._index = -1
+
+        if (
+            self._input_type == InputType.OPNIC
+            and self._main_table is None
+            and not getattr(param_table, "_is_synthetic_standalone", False)
+        ):
+            ParameterPool._register_pending_standalone_opnic(self)
+
     def is_standalone(self) -> bool:
         """Backward-compat alias for :pyattr:`is_stand_alone`."""
         return self.is_stand_alone
@@ -625,6 +659,16 @@ class Parameter:
         self._is_declared = True
         if declare_stream:
             self.declare_stream()
+        # Auto-register non-OPNIC standalone parameters on the pool's bound module
+        # (if any). Table-managed parameters are registered via their owning
+        # ParameterTable.declare() instead — guarded here by ``not self.tables``.
+        # Duck-typed via ``hasattr(..., "parameter_specs")`` to avoid any circular
+        # import with QiskitQMModule. Idempotent by parameter name.
+        if self.input_type != InputType.OPNIC and not self.tables:
+            _mod = ParameterPool._quarc_module
+            if _mod is not None and hasattr(_mod, "parameter_specs"):
+                if not any(s.get("name") == self.name for s in _mod.parameter_specs):
+                    _mod.parameter_specs.append(self.to_spec())
         return self._var
 
     def declare_stream(self):
@@ -1246,6 +1290,45 @@ class Parameter:
     load_input_value = _DeprecatedAlias("rcv",        removal="1.2")
     reset_var        = _DeprecatedAlias("reset_qua",  removal="1.2")
     # declare_stream is already the canonical name — no alias needed
+
+    def to_spec(self) -> Dict[str, Any]:
+        """Serialize this parameter to a plain dict suitable for JSON persistence."""
+        _qua_type_str = {fixed: "fixed", int: "int", bool: "bool"}
+        spec: Dict[str, Any] = {
+            "name": self.name,
+            "qua_type": _qua_type_str.get(self._type, "fixed"),
+            "is_array": self.is_array,
+            "length": self._length,
+            "input_type": self._input_type.value if self._input_type is not None else None,
+        }
+        if self._input_type == InputType.OPNIC:
+            spec["direction"] = self._direction.value if self._direction is not None else None
+        return spec
+
+    @classmethod
+    def from_spec(cls, spec: Dict[str, Any]) -> "Parameter":
+        """Reconstruct a Parameter from a spec dict produced by to_spec().
+
+        Uses pool deduplication: if a Parameter with the same name already exists
+        in the pool (e.g. shared across multiple tables), the existing instance is
+        returned automatically via __new__.
+        """
+        length = spec.get("length", 0)
+        qua_type_str = spec.get("qua_type", "fixed")
+        if length > 0:
+            _zero: Dict[str, Any] = {"fixed": 0.0, "int": 0, "bool": False}
+            value: Any = [_zero.get(qua_type_str, 0.0)] * length
+            qua_type_arg = None  # infer from value
+        else:
+            value = None
+            qua_type_arg = qua_type_str
+        return cls(
+            name=spec["name"],
+            value=value,
+            qua_type=qua_type_arg,
+            input_type=spec.get("input_type"),
+            direction=spec.get("direction"),
+        )
 
     def __deepcopy__(self, memodict=None):
         if memodict is None:

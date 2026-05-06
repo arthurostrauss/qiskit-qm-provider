@@ -18,6 +18,8 @@ Author: Arthur Strauss
 Date: 2026-02-08
 """
 
+import warnings
+
 from .backend import (
     QMBackend,
     QISKIT_PULSE_AVAILABLE,
@@ -25,6 +27,18 @@ from .backend import (
     QMInstructionProperties,
 )
 from .providers.qm_provider import QMProvider
+
+try:  # Quarc-backed module (hybrid classical / QUA entrypoints)
+    from .qiskit_qm_module import QiskitQMModule
+
+    QUARC_AVAILABLE = True
+except ImportError:
+    warnings.warn(
+        "The `quarc` package is not available; `QiskitQMModule` and related Quarc "
+        "integration features are not loaded. Install `quarc` to use them.",
+        ImportWarning,
+    )
+    QUARC_AVAILABLE = False
 
 if QISKIT_PULSE_AVAILABLE:
     from .pulse.quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
@@ -60,7 +74,11 @@ __all__ = [
     "dump_qua_script",
     "get_qua_script",
     "QMProvider",
+    "QUARC_AVAILABLE",
 ]
+
+if QUARC_AVAILABLE:
+    __all__.append("QiskitQMModule")
 
 try:
     from .providers.qm_saas_provider import QmSaasProvider

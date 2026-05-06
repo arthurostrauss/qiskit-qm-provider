@@ -379,6 +379,14 @@ class ParameterTable:
                     warnings.warn(f"Variable {parameter.name} already declared.")
                     continue
                 parameter.declare(declare_stream=declare_stream)
+            # Auto-register this non-OPNIC table on the pool's bound module (if any) so
+            # that ``module.parameter_specs`` reflects every table that participates in
+            # the QUA program. Duck-typed via ``hasattr(..., "parameter_specs")`` to
+            # avoid a circular import on ``QiskitQMModule``. Idempotent by name.
+            _mod = ParameterPool._quarc_module
+            if _mod is not None and hasattr(_mod, "parameter_specs"):
+                if not any(s.get("name") == self.name for s in _mod.parameter_specs):
+                    _mod.parameter_specs.append(self.to_spec())
             if pause_program:
                 pause()
             if len(self.variables) == 1:
@@ -653,9 +661,12 @@ class ParameterTable:
         next available index in the table.
         Args: parameters: (List of) Parameter(s) object(s) to be added to the current parameter table.
         """
-        if self.is_declared:
+        if self._is_emitted:
             raise ValueError(
-                "Cannot add parameters to a table that has already been declared."
+                f"Cannot add parameters to ParameterTable {self.name!r}: its Quarc "
+                "struct has already been emitted to the module (add_struct is "
+                "append-only). Modify the table before QiskitQMModule is created or "
+                "before ParameterPool.to_quarc_module() is called."
             )
         if isinstance(parameters, Parameter):
             parameters = [parameters]
@@ -691,20 +702,26 @@ class ParameterTable:
         Remove a parameter from the parameter table.
         Args: parameter_value: Name of the parameter to be removed or ParameterValue object to be removed.
         """
-        if self.is_declared:
+        if self._is_emitted:
             raise ValueError(
-                "Cannot remove parameters from a parameter table that has already been declared."
+                f"Cannot remove parameters from ParameterTable {self.name!r}: its "
+                "Quarc struct has already been emitted to the module (add_struct is "
+                "append-only). Modify the table before QiskitQMModule is created or "
+                "before ParameterPool.to_quarc_module() is called."
             )
         if isinstance(parameter_value, str):
             if parameter_value not in self.table.keys():
                 raise KeyError(
                     f"No parameter named {parameter_value} in the parameter table."
                 )
+            removed = self.table[parameter_value]
             del self.table[parameter_value]
+            removed._unset_index(self)
         elif isinstance(parameter_value, Parameter):
             if parameter_value not in self.parameters:
                 raise KeyError("Provided ParameterValue not in this ParameterTable.")
             del self.table[parameter_value.name]
+            parameter_value._unset_index(self)
         else:
             raise ValueError(
                 "Invalid parameter name. Please use a string or a ParameterValue object."
@@ -891,9 +908,9 @@ class ParameterTable:
 
     def push_to_opx(
         self,
-        param_dict: Dict[
+        param_dict: Optional[Dict[
             Union[str, Parameter], Union[float, int, bool, List, np.ndarray]
-        ],
+        ]] = None,
         job: Optional[RunningQmJob | JobApi] = None,
         qm: Optional[QuantumMachine] = None,
         verbosity: int = 1,
@@ -906,14 +923,18 @@ class ParameterTable:
         normally the OPNIC runtime endpoint (``runtime.<snake_case_struct>``) on the classical side.
 
         Args:
-            param_dict: Dictionary of the form ``{parameter_name: parameter_value}``.
+            param_dict: Optional dictionary of the form ``{parameter_name: parameter_value}``. If None, the values of the parameters are used.
             job: ``RunningQmJob`` (only needed for IO/input-stream parameters).
             qm: ``QuantumMachine`` (only needed for IO parameters).
             verbosity: Verbosity level of the pushing process.
         """
         if self.input_type != InputType.OPNIC:
+            if param_dict is None:
+                for parameter in self.parameters:
+                    parameter.push_to_opx(job=job, qm=qm, verbosity=verbosity)
+                return
             for parameter, value in param_dict.items():
-                self.get_parameter(parameter).push_to_opx(value, job, qm, verbosity)
+                self.get_parameter(parameter).push_to_opx(value, job=job, qm=qm, verbosity=verbosity)
             return
 
         if self._var is None:
@@ -1163,6 +1184,57 @@ class ParameterTable:
         )
 
         return new_table
+
+    def to_spec(self) -> Dict[str, Any]:
+        """Serialize this table to a plain dict suitable for JSON persistence."""
+        _qua_type_str = {fixed: "fixed", int: "int", bool: "bool"}
+        spec: Dict[str, Any] = {
+            "name": self.name,
+            "input_type": self._input_type.value if self._input_type is not None else None,
+            "is_table": True,
+            "fields": {
+                p.name: {
+                    "qua_type": _qua_type_str.get(p.type, "fixed"),
+                    "is_array": p.is_array,
+                    "length": p._length,
+                }
+                for p in self.parameters
+            },
+        }
+        if self._input_type == InputType.OPNIC:
+            spec["direction"] = self._direction.value if self._direction is not None else None
+        return spec
+
+    @classmethod
+    def from_spec(cls, spec: Dict[str, Any]) -> "ParameterTable":
+        """Reconstruct a ParameterTable from a spec dict produced by to_spec().
+
+        Uses pool deduplication for individual Parameter objects: Parameters shared
+        across multiple tables are automatically restored as the same Python object.
+        """
+        input_type = spec.get("input_type")
+        direction = spec.get("direction")
+        params = []
+        for fname, fspec in spec.get("fields", {}).items():
+            length = fspec.get("length", 0)
+            qua_type_str = fspec.get("qua_type", "fixed")
+            if length > 0:
+                _zero: Dict[str, Any] = {"fixed": 0.0, "int": 0, "bool": False}
+                value: Any = [_zero.get(qua_type_str, 0.0)] * length
+                qua_type_arg = None
+            else:
+                value = None
+                qua_type_arg = qua_type_str
+            params.append(
+                Parameter(
+                    name=fname,
+                    value=value,
+                    qua_type=qua_type_arg,
+                    input_type=input_type,
+                    direction=direction,
+                )
+            )
+        return cls(parameters_dict=params, name=spec["name"])
 
     def reset(self):
         """

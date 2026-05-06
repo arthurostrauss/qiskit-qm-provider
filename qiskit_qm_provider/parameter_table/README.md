@@ -215,16 +215,24 @@ When `input_type == InputType.OPNIC`, the table builds a QUA struct (packet) who
 | **table[name]** or **table[index]** (after declare) | Returns the QUA variable. |
 | **table.name** (attribute) | Same as `table["name"]` for existing parameter names. |
 
-### Mutating the table (before declaration)
+### Mutating the table (before emission)
 
-- **add_parameters(Parameter \| List[Parameter])**  
-  Appends parameter(s); indices are assigned automatically. All must have the same `input_type` (and direction for OPNIC).
+- **add_parameters(Parameter \| List[Parameter])**
+  Appends parameter(s); indices are assigned automatically. All must have the same
+  `input_type` (and direction for OPNIC). Allowed only while
+  `table._is_emitted == False` — once the table's struct has been emitted to a
+  module (eager construction or sweep), `add_parameters` raises because Quarc's
+  `add_struct` is append-only and cannot retroactively grow a struct's field set.
 
-- **remove_parameter(name \| Parameter)**  
-  Removes a parameter.
+- **remove_parameter(name \| Parameter)**
+  Removes a parameter and properly detaches it (`Parameter._unset_index`); for
+  OPNIC parameters that lose their last attachment to a non-synthetic table, the
+  parameter is re-registered in `ParameterPool._pending_standalone_opnic`. Same
+  emission lock as `add_parameters`.
 
-- **add_table(ParameterTable \| List[ParameterTable])**  
-  Merges another table(s) by adding its parameters.
+- **add_table(ParameterTable \| List[ParameterTable])**
+  Merges another table(s) by adding its parameters. Same emission lock as
+  `add_parameters`.
 
 ### Properties
 
@@ -449,6 +457,11 @@ For a **ParameterTable** with `InputType.OPNIC`, every parameter must share the 
 
 ### Two pipelines (mutually exclusive once a module is bound)
 
+The pool's two pipelines reflect *who creates the module*. In both cases, OPNIC
+registration is **contract-first / eager** — every OPNIC `ParameterTable` ends up emitted
+onto the module before the QUA program runs — and non-OPNIC registration is
+**declare-time** (registered into `parameter_specs` when `declare()` runs in QUA scope).
+
 **Pipeline 1 — module-first.** The user has a hand-built `quarc.BaseModule` subclass and wants `ParameterTable` wrappers around its existing structs:
 
 ```python
@@ -464,7 +477,7 @@ tables = ParameterPool.from_quarc_module(m)
 # eagerly emit onto m at construction.
 ```
 
-**Pipeline 2 — parameters-first.** No pre-built module — the user just declares `Parameter` / `ParameterTable` objects with `input_type=OPNIC`. Tables build the Quarc `Struct` *type* eagerly (cheap; no stream ids consumed) but defer `add_struct` until the user explicitly summons the module:
+**Pipeline 2 — parameters-first.** No pre-built module — the user declares `Parameter` / `ParameterTable` objects with `input_type=OPNIC` first, then constructs the module. Tables build the Quarc `Struct` *type* eagerly (cheap; no stream ids consumed) but defer `add_struct` until the module slot is bound:
 
 ```python
 mu    = Parameter("mu", [0.0]*4, input_type=OPNIC, direction=OUTGOING)
@@ -475,15 +488,32 @@ solo  = Parameter("theta", 0.0, input_type=OPNIC, direction=OUTGOING)
 # At this point: pool._quarc_module is None; table is "pending" (_is_emitted=False);
 # solo is in pool._pending_standalone_opnic.
 
-m = ParameterPool.to_quarc_module()
-# m is a fresh BaseModule(); table is now emitted onto m and table._var is bound.
-# solo is still pending — to_quarc_module() does NOT promote standalone parameters.
-# It only sweeps tables. Standalone parameters are promoted lazily on first
-# `solo.declare_variable()` (or any transport call), at which point a synthetic
-# single-field ParameterTable named "theta" is constructed and added to m.
+from qiskit_qm_provider import QiskitQMModule
+
+m = QiskitQMModule()  # binds the slot AND sweeps pre-existing pool state.
+# - ``table`` is emitted onto m (one stream id consumed). ``table._is_emitted=True``,
+#   ``table._var`` is the QuaStructHandle.
+# - ``solo`` is promoted to a synthetic single-field ParameterTable named "theta" and
+#   emitted onto m as well (one more stream id consumed). It is no longer pending.
+# - ``m._structs`` now contains both ``Policy`` and ``theta``.
 ```
 
-After either pipeline binds the module, every newly-constructed OPNIC `ParameterTable` eagerly emits onto that module — no extra ceremony needed.
+The **module's `__init__` is the unique trigger that sweeps pre-existing OPNIC pool
+state onto itself** (see `QiskitQMModule._sweep_preexisting_opnic`). After that point,
+every newly-constructed OPNIC `ParameterTable` eagerly emits onto the bound module — no
+extra ceremony needed.
+
+> **Plain `BaseModule` callers.** `ParameterPool.to_quarc_module()` (or
+> `from_quarc_module(m)` with a non-`QiskitQMModule`) only binds the slot — it does
+> *not* sweep pre-existing OPNIC tables / pending standalone parameters. The
+> automatic sweep belongs to `QiskitQMModule.__init__`. Callers who use a plain
+> `BaseModule` must perform that step themselves (typically by walking the registry
+> and calling `obj._emit_to_module(m)` on each unemitted OPNIC `ParameterTable`).
+
+> **Single-module-per-process invariant.** `QiskitQMModule.__init__` raises
+> `RuntimeError` if the pool already has a module bound. To create another module
+> in the same process, call `ParameterPool.reset()` first. Test suites typically
+> add an autouse fixture for this; see `tests/conftest.py` in `rl_qoc`.
 
 ### Locking semantics for standalone OPNIC `Parameter`\s
 
@@ -491,9 +521,17 @@ A solo OPNIC `Parameter` is in one of three states over its life:
 
 1. **Pending** — created with `input_type=OPNIC`, not yet attached, not yet declared. Lives in `_pending_standalone_opnic`. Free to be attached to a `ParameterTable`.
 2. **Attached** — `set_index` has placed it inside a multi-or-single-field regular `ParameterTable`. Removed from `_pending_standalone_opnic`. `parameter.is_stand_alone == False`. Field-level OPNIC methods (`declare_variable`, `push_to_opx`, …) raise `RuntimeError("table-managed …")` and direct the caller to use the table's API.
-3. **Promoted** — `Parameter.declare_variable` (or any other transport call) was invoked while still pending. The pool builds a synthetic single-field `ParameterTable` named after the parameter, force-emits its struct (lazily creating a default `BaseModule` if none is bound yet), and points `parameter._main_table` at the synthetic. From this moment the parameter is *locked*: trying to attach it to any other `ParameterTable` raises.
+3. **Promoted** — promotion happens via two paths: (a) `QiskitQMModule.__init__` sweeps every pending standalone OPNIC `Parameter` and promotes each one to a synthetic single-field `ParameterTable` (so pre-existing standalone OPNIC parameters land in the deployment artifact even without a transport call); (b) `Parameter.declare_variable` (or any other transport call) is invoked while still pending and the parameter is promoted on the spot. In either case the synthetic table force-emits its struct and `parameter._main_table` points at the synthetic. From this moment the parameter is *locked*: trying to attach it to any other `ParameterTable` raises.
 
 `parameter.is_stand_alone` is `True` for states 1 and 3 (pending or promoted) and `False` for state 2 (attached to a regular table).
+
+> **Post-binding standalone OPNIC parameters** (created *after* `QiskitQMModule.__init__`)
+> are not part of the pre-existing sweep. They are promoted on first transport-level
+> use; the synthetic table emits eagerly because the pool slot is already bound. The
+> consequence: if `to_dict()` / `quarc.init_module()` is called *before* the
+> parameter has been used in any transport call, its struct will be absent from the
+> deployment artifact. Document constraint: post-binding standalone OPNIC parameters
+> must be promoted (any transport call) before serialisation.
 
 ### Stream-id consumption point
 
@@ -565,22 +603,52 @@ solo = Parameter("theta", 0., input_type=OPNIC, direction=OUTGOING)
 # pool._pending_standalone_opnic = [solo]; solo is still attachable to any future
 # ParameterTable.
 
-# Phase 3. Summon the module.
-m = ParameterPool.to_quarc_module()
-# pool._quarc_module = m (a fresh BaseModule). table is swept onto m via add_struct
-# (one stream id consumed). table._is_emitted=True, table._var bound to the handle.
-# solo is *not* swept — pending standalone parameters survive to_quarc_module().
+# Phase 3. Construct the module (binds the pool slot AND sweeps the pre-existing
+# pool state).
+from qiskit_qm_provider import QiskitQMModule
 
-# Phase 4. Use solo inside QUA.
+m = QiskitQMModule()
+# - pool._quarc_module = m.
+# - _sweep_preexisting_opnic Path 1: ``table`` is emitted onto m via add_struct
+#   (one stream id consumed); table._is_emitted=True, table._var bound.
+# - _sweep_preexisting_opnic Path 2: ``solo`` is promoted to a synthetic single-field
+#   ParameterTable named "theta" (one more stream id consumed); pending list cleared.
+#   solo._main_table = synthetic; solo.opnic_table = synthetic.
+# - m._structs == {"Policy": ..., "theta": ...}.
+
+# Phase 4. Inside QUA, all OPNIC tables / standalone params are already wired up; just
+# call ``declare`` / ``rcv`` / ``stream_back`` as usual. No promotion happens here
+# since promotion already occurred during ``QiskitQMModule.__init__``.
 with program() as prog:
-    solo.declare()
-    # Promotion: a synthetic ParameterTable named "theta" is built. solo removed from
-    # pending. Synthetic table eagerly emits onto m (one more stream id consumed).
-    # solo._main_table = synthetic; solo.opnic_table = synthetic.
-    # synthetic_table.declare() runs: m._struct_handles[-1].initialize_in_qua().
+    table.declare()
+    solo.declare()  # delegates to synthetic._var.initialize_in_qua()
 
-# Phase 5. From here on, attempts to attach `solo` to another ParameterTable raise.
+# Phase 5. From this point, attempts to attach ``solo`` to another ParameterTable
+# raise (it is locked into its synthetic single-field table).
 ParameterTable([solo], name="other")  # ValueError: standalone-locked.
+```
+
+### Lifecycle walkthrough — non-OPNIC (declare-time registration)
+
+```python
+# Module bound first (or via Pipeline 2 sweep — order doesn't matter for non-OPNIC).
+m = QiskitQMModule()
+
+# Construct a non-OPNIC ParameterTable AFTER the module exists.
+n_reps   = Parameter("n_reps_var", 0, qua_type="int", input_type=InputType.INPUT_STREAM)
+n_shots  = Parameter("n_shots",    0, qua_type="int", input_type=InputType.INPUT_STREAM)
+ctx      = ParameterTable([n_reps, n_shots], name="ctx_table")
+# parameter_specs is unchanged — non-OPNIC objects do not eagerly register at
+# construction; they wait until declare() runs in QUA scope.
+
+# Inside the QUA program, ``declare()`` triggers registration.
+with program() as prog:
+    ctx.declare()      # appends ctx.to_spec() to m.parameter_specs (idempotent by name)
+
+# Now m.parameter_specs == [
+#   {"name": "ctx_table", "input_type": "INPUT_STREAM", "is_table": True,
+#    "fields": {"n_reps_var": ..., "n_shots": ...}},
+# ]
 ```
 
 ### Lifecycle walkthrough — Pipeline 1 (module-first)
@@ -675,6 +743,311 @@ tables["n_shots"].push_to_opx()  # ok — uses self.value if set, or pass a scal
 ```
 
 Callers that previously checked `len(table.parameters) == 1` and did manual downconversion can now simply use whatever `from_quarc_module` returns, treating scalars and multi-field tables uniformly through the `declare()` / `rcv()` interface.
+
+---
+
+## JSON serialization — `to_spec()` / `from_spec()`
+
+`Parameter` and `ParameterTable` both expose **`to_spec()` / `from_spec()`** for round-tripping
+through plain JSON. This is the channel used by `QiskitQMModule` (see next section) to persist
+**non-OPNIC** parameters in `rl_qoc_state.json` alongside the Quarc-native `_structs` channel
+that handles OPNIC structs.
+
+### `Parameter.to_spec() -> dict`
+
+Serializes a single parameter to a JSON-friendly dict:
+
+| Key | Always present | Notes |
+|---|---|---|
+| `name` | yes | |
+| `qua_type` | yes | one of `"fixed"`, `"int"`, `"bool"` |
+| `is_array` | yes | `True` iff `length > 0` |
+| `length` | yes | `0` for scalar, `>=1` for array |
+| `input_type` | yes | one of `"OPNIC"`, `"INPUT_STREAM"`, `"IO1"`, `"IO2"`, or `None` |
+| `direction` | **OPNIC only** | omitted entirely for non-OPNIC parameters (their `.direction` is undefined) |
+
+```python
+from qiskit_qm_provider import Parameter, InputType
+
+p = Parameter("n_reps", 5, qua_type="int", input_type=InputType.INPUT_STREAM)
+p.to_spec()
+# {'name': 'n_reps', 'qua_type': 'int', 'is_array': False, 'length': 0,
+#  'input_type': 'INPUT_STREAM'}
+```
+
+### `Parameter.from_spec(spec) -> Parameter`
+
+Reverse of `to_spec()`. The `length` field controls scalar-vs-array:
+* `length == 0` → constructs a scalar with `value=None` (caller assigns later)
+* `length > 0`  → constructs an array of zeros of that length
+
+```python
+spec = {'name': 'n_reps', 'qua_type': 'int', 'is_array': False, 'length': 0,
+        'input_type': 'INPUT_STREAM'}
+p = Parameter.from_spec(spec)
+assert p.input_type == InputType.INPUT_STREAM
+assert p.length == 0
+```
+
+Pool dedup applies: if a `Parameter` with the same `name` already exists in the pool, the
+existing instance is returned (after compatibility checks).
+
+### `ParameterTable.to_spec() -> dict`
+
+```python
+{
+  "name": "n_reps_table",
+  "input_type": "INPUT_STREAM",          # shared by every field
+  "is_table": True,
+  "fields": {
+      "n_reps_var": {"qua_type": "int", "is_array": False, "length": 0},
+      "n_shots":    {"qua_type": "int", "is_array": False, "length": 0},
+  },
+  # "direction": "OUTGOING"      ← present only when input_type=="OPNIC"
+}
+```
+
+### `ParameterTable.from_spec(spec) -> ParameterTable`
+
+Reconstructs the table; each field becomes a `Parameter` (deduped via the pool by name).
+
+```python
+table = ParameterTable.from_spec({
+    "name": "ctx_table",
+    "input_type": "IO1",
+    "is_table": True,
+    "fields": {"theta": {"qua_type": "fixed", "length": 0, "is_array": False}},
+})
+assert table.parameters[0].name == "theta"
+assert table.input_type.value == "IO1"
+```
+
+### When to use `to_spec()` / `from_spec()`
+
+* You are persisting non-OPNIC `Parameter` / `ParameterTable` shapes to JSON for replay.
+* You want a *transport-light* serialization that does **not** carry runtime handles.
+* You are inspecting `QiskitQMModule.parameter_specs` — its entries are exactly the
+  per-object `to_spec()` outputs collected by `_sweep_preexisting_non_opnic` (at
+  module-init time) and by the `declare()`-driven hook on `Parameter` / `ParameterTable`.
+
+For OPNIC parameters, prefer the `_structs` channel (handled automatically by
+`QiskitQMModule.to_dict()` / `add_struct()`). `to_spec()` *does* support OPNIC parameters
+(it includes the `direction` field), but the canonical OPNIC serialization route is the
+Quarc-native struct channel — `to_spec()` is exposed for OPNIC mainly for symmetry and
+unit-testing convenience.
+
+---
+
+## `QiskitQMModule` — unified non-OPNIC + OPNIC serialization
+
+### When (not) to use `QiskitQMModule` over a plain `BaseModule`
+
+`QiskitQMModule` is the recommended module type for any program that mixes **OPNIC** and
+non-OPNIC parameter transports. The two practical regimes:
+
+* **OPNIC only.** A plain `quarc.BaseModule` with hand-rolled `add_struct` calls is
+  enough; `QiskitQMModule` adds nothing for this case. Use Pipeline 1
+  (`from_quarc_module`) when classical-side reconstruction is desired.
+
+* **Mixed transports** (typical for RL-style workflows that mix tight-latency
+  OPNIC packets with slower asynchronous channels):
+  - `INPUT_STREAM` parameters: pushed from Python between shots via `push_to_opx()`,
+    fetched back through the `RunningQmJob` / `JobApi`. Ideal for parameters that
+    change between shots but not within a shot (sweep angles, Hamiltonian
+    coefficients, …).
+  - `IO1` / `IO2` parameters: pushed asynchronously through OPX hardware IO
+    registers — useful for simple scalar control signals when the OPNIC channel
+    is reserved for tight-latency reward / policy traffic.
+  - Plain QUA vars: tracked in `parameter_specs` so the classical entrypoint
+    can reconstruct them via `from_quarc_module(state, opnic_runtime)` /
+    `module.reconstruct_non_opnic()` without a runtime dependency.
+
+  `QiskitQMModule.to_dict()` produces a single JSON artifact with both channels
+  populated (`_structs` for OPNIC, `parameter_specs` for non-OPNIC), so a single
+  `rl_qoc_state.json` (or equivalent) is enough to round-trip the entire program.
+
+### Behaviour
+
+`qiskit_qm_provider.qiskit_qm_module.QiskitQMModule` is a `quarc.BaseModule` subclass that adds
+**non-OPNIC parameter persistence** on top of Quarc's existing OPNIC struct channel
+*and* **automatic registration** of every `Parameter` / `ParameterTable` constructed
+through the pool. There is no `add_parameter` method anymore — registration is driven
+entirely by the pool / module binding lifecycle:
+
+| Constructed... | Registered... |
+|---|---|
+| OPNIC `ParameterTable` *before* the module exists | swept onto the module by `QiskitQMModule.__init__` (`_sweep_preexisting_opnic`); its struct is in `m._structs` immediately. |
+| OPNIC `ParameterTable` *after* the module exists | eagerly emits in `ParameterTable.__init__` (sees the bound pool slot). |
+| Standalone OPNIC `Parameter` *before* the module | promoted to a synthetic single-field table by `_sweep_preexisting_opnic` and emitted onto the module. |
+| Standalone OPNIC `Parameter` *after* the module | promoted on first transport call (declare / `push_to_opx` / …); synthetic table emits eagerly. |
+| Non-OPNIC `Parameter` / `ParameterTable` *before* the module | captured into `m.parameter_specs` by `_sweep_preexisting_non_opnic`. |
+| Non-OPNIC `Parameter` / `ParameterTable` *after* the module | registered into `m.parameter_specs` at `declare()` time (inside `with program():`). |
+
+```python
+from qiskit_qm_provider import (
+    Direction, InputType, Parameter, ParameterTable, ParameterPool, QiskitQMModule,
+)
+
+class MyModule(QiskitQMModule):
+    pass
+
+# Pipeline 2: parameters first, then module — a single QiskitQMModule() call wires
+# everything up. No add_parameter() / add_struct() calls.
+mu    = Parameter("mu",    [0.0]*4, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
+sigma = Parameter("sigma", [0.1]*4, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
+policy = ParameterTable([mu, sigma], name="PolicyParams")
+
+n_reps = Parameter("n_reps_var", 5, qua_type="int", input_type=InputType.INPUT_STREAM)
+
+m = MyModule()
+# - m._structs["PolicyParams"] populated; m._struct_handles[-1] is the QuaStructHandle.
+# - m.parameter_specs already includes n_reps (preexisting non-OPNIC sweep).
+# - subsequent `n_reps.declare()` inside a QUA program is idempotent; the spec is
+#   re-checked by name and not duplicated.
+
+state = m.to_dict()
+# state["_structs"]         → {"PolicyParams": {...}}
+# state["parameter_specs"]  → [{"name": "n_reps_var", ...}]
+```
+
+### `_sweep_preexisting_opnic()` and `_sweep_preexisting_non_opnic()`
+
+Both run automatically during `QiskitQMModule.__init__`, immediately after the module
+binds itself as the pool slot:
+
+* `_sweep_preexisting_opnic` walks `ParameterPool._registry` for unemitted OPNIC
+  `ParameterTable`\s and calls `obj._emit_to_module(self)` on each. It then walks
+  `ParameterPool._pending_standalone_opnic` and calls
+  `param._promote_to_synthetic_standalone_table()` on every solo OPNIC `Parameter`
+  so its struct lands in the deployment artifact.
+* `_sweep_preexisting_non_opnic` walks the registry for non-OPNIC tables / standalone
+  parameters and appends each `obj.to_spec()` to `parameter_specs` (idempotent by
+  parameter / table name).
+
+### `reconstruct_non_opnic() -> dict[str, Parameter | ParameterTable]`
+
+Walks `self.parameter_specs` and rebuilds the original objects via
+`Parameter.from_spec()` / `ParameterTable.from_spec()`.  Keys come from each spec's
+`attr_name` (legacy artifacts only) — current artifacts use
+`pascal_to_snake_case(spec["name"])` so PascalCase parameter names map cleanly onto
+snake_case Python attributes (e.g. on `QMEnvironment.circuit_params`).
+
+```python
+m2 = MyModule(**state)                  # rebuilds OPNIC structs + carries parameter_specs
+non_opnic = m2.reconstruct_non_opnic()  # {'n_reps_var': Parameter('n_reps_var', ...)}
+```
+
+### `iter_all_params() -> Iterator[(kind, name, handle_or_spec)]`
+
+Unified iterator over *both* channels:
+
+```python
+for kind, name, payload in m.iter_all_params():
+    if kind == "opnic":
+        # payload is the QuaStructHandle (post add_struct)
+        ...
+    else:  # kind == "non_opnic"
+        # payload is the parameter_specs dict
+        ...
+```
+
+### Re-instantiation from JSON — replay vs fresh
+
+`QiskitQMModule.__init__` pops `_structs` from incoming `**data` (Pydantic cannot consume a
+private attr) and passes it to `_replay_from_structs_data()`, which calls `add_struct()` once
+per entry to rebuild `_struct_handles` deterministically. This works *without* a live runtime
+— the handles are pure-Python `QuaStructHandle` objects.
+
+```python
+state = json.loads(Path("rl_qoc_state.json").read_text())
+m = MyModule(**state)
+# m._struct_handles is populated (handles, no runtime endpoints yet).
+# m.parameter_specs is the non-OPNIC list — call m.reconstruct_non_opnic() to get live objects.
+```
+
+---
+
+## Dual-mode `ParameterPool.from_quarc_module(module_or_dict, opnic_runtime=None)`
+
+The classical-side entry point for rebuilding `ParameterTable` / `Parameter` objects from a
+serialized Quarc module. It accepts **either** a live module object **or** a plain dict
+(loaded directly from `rl_qoc_state.json`).
+
+### Signature
+
+```python
+@classmethod
+def from_quarc_module(
+    cls,
+    module: Union["QiskitQMModule", "BaseModule", Dict[str, Any]],
+    opnic_runtime: Optional[Any] = None,
+) -> Dict[str, "ParameterTable | Parameter"]:
+```
+
+### Mode 1 — module object (quantum / generation side)
+
+```python
+from qiskit_qm_provider import (
+    Direction, InputType, Parameter, ParameterTable, ParameterPool, QiskitQMModule,
+)
+
+# Constructed in Pipeline 2 style: tables / standalone params first, then module.
+policy_table = ParameterTable(
+    [Parameter("mu", [0.0]*4, input_type=InputType.OPNIC, direction=Direction.OUTGOING),
+     Parameter("sigma", [0.1]*4, input_type=InputType.OPNIC, direction=Direction.OUTGOING)],
+    name="PolicyParams",
+)
+n_reps_var = Parameter("n_reps_var", 5, qua_type="int", input_type=InputType.INPUT_STREAM)
+
+m = QiskitQMModule()      # binds the pool, sweeps both pre-existing OPNIC and non-OPNIC
+
+tables = ParameterPool.from_quarc_module(m)   # opnic_runtime=None
+# tables == {
+#   "policy_params": ParameterTable(_var=<QuaStructHandle>),
+#   "n_reps_var":    Parameter(input_type=INPUT_STREAM),
+# }
+```
+
+* OPNIC entries are read from `m._struct_handles` (already built at `add_struct` time).
+  Each `ParameterTable` ends up with `_var = QuaStructHandle`.
+* Non-OPNIC entries are reconstructed via `m.reconstruct_non_opnic()`.
+* `opnic_runtime` is optional; if provided, callers may bind handles afterwards via
+  `bind_quarc_runtime()` (the legacy path).
+
+### Mode 2 — plain dict (classical entrypoint)
+
+This is the path used by `classical.py` after `setup_opnic()`:
+
+```python
+import json
+from pathlib import Path
+import rl_qoc_module_opnic as opnic
+from qiskit_qm_provider import ParameterPool
+
+state = json.loads(Path("rl_qoc_state.json").read_text())
+runtime = opnic.setup_opnic(init_now=True)
+
+tables = ParameterPool.from_quarc_module(state, opnic_runtime=runtime)
+# tables["policy_params"]._var  → runtime.policy_params  (live OPNIC endpoint)
+# tables["reward_params"]._var  → runtime.reward_params
+# tables["n_reps_var"]          → Parameter(INPUT_STREAM)  (no runtime needed)
+```
+
+* `opnic_runtime` is **required** in this mode. For each name in `state["_structs"]`, the pool
+  reads `getattr(opnic_runtime, snake_case(struct_name))` and assigns it as `_var` directly —
+  there is no separate `bind_quarc_runtime()` step.
+* Non-OPNIC entries come from `state.get("parameter_specs", [])` and are rebuilt via
+  `ParameterTable.from_spec()` / `Parameter.from_spec()` (no runtime dependency).
+* Direction is inferred from the presence of `incoming_stream_spec` / `outgoing_stream_spec`
+  on each struct (the same convention Quarc uses internally).
+
+### Choosing between the two modes
+
+| You have... | Use... |
+|---|---|
+| A live `QiskitQMModule` instance (e.g. just built via `RLQoCModule.from_env_and_agent`) | Mode 1 |
+| A plain dict from JSON, plus a live OPNIC runtime | Mode 2 |
+| A plain dict but **no** runtime (e.g. unit tests, dry-run shape inspection) | Mode 1 — pass the dict to `MyModule(**state)` first to materialize handles, then call `from_quarc_module(m)` |
 
 ---
 
