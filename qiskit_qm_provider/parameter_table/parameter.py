@@ -847,9 +847,37 @@ class Parameter:
 
         ParameterPool._unregister_pending_standalone_opnic(self)
         synthetic = ParameterTable(
-            [self], name=self.name, _is_synthetic_standalone=True
+            [self],
+            name=self._synthetic_standalone_table_name(),
+            _is_synthetic_standalone=True,
         )
         return synthetic
+
+    def _synthetic_standalone_table_name(self) -> str:
+        """Return a Quarc-safe unique struct/table name for standalone OPNIC promotion.
+
+        We intentionally do *not* use ``self.name`` directly: generated C++ packets can
+        fail to compile when the struct name and single field name are identical
+        (e.g. ``struct n_reps { ... QM_DECLARE_PACKET(n_reps, n_reps); }``).
+
+        This method keeps field access stable (field remains ``self.name``) while giving
+        the synthetic struct a distinct identifier.
+        """
+        base = f"{self.name}_packet"
+        used = {
+            getattr(obj, "name", None)
+            for obj in ParameterPool.get_all_objs()
+            if isinstance(getattr(obj, "name", None), str)
+        }
+        used.update(p.name for p in ParameterPool._pending_standalone_opnic if p is not self)
+
+        if base not in used:
+            return base
+
+        idx = 2
+        while f"{base}_{idx}" in used:
+            idx += 1
+        return f"{base}_{idx}"
 
     @property
     def tables(self) -> List[ParameterTable]:
