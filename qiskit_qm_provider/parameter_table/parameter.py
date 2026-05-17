@@ -646,7 +646,7 @@ class Parameter:
                     # self._var = declare_input_stream('client', self.name, self.type, size=self.length)
                 # else:
                 #     self._var = declare_input_stream('client', self.name, self.type)
-                self._var = declare_input_stream(self.name, self.type, value=self.value)
+                self._var = declare_input_stream(self.type, name=self.name, value=self.value)
             else:
                 if self.value is not None:
                     self._var = declare(self.type, value=self.value)
