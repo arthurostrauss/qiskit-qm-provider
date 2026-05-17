@@ -112,6 +112,18 @@ class QiskitQMModule(BaseModule):
         description="Serialisable spec dicts for non-OPNIC parameters/tables.",
     )
 
+    # ------------------------------------------------------------------
+    # QMM connection metadata — serialised into the module JSON so the
+    # classical entrypoint can reconnect after quarc's deploy phase and
+    # discover the running job via qmm.get_jobs() / list_open_qms().
+    # ------------------------------------------------------------------
+    qmm_host: Optional[str] = Field(
+        default=None, description="QMM server host."
+    )
+    qmm_port: Optional[int] = Field(
+        default=None, description="QMM server port."
+    )
+
     def __init__(self, **data: Any) -> None:
         # Pop private-attr keys that Pydantic can't consume as fields.
         structs_data: Dict[str, Any] = data.pop("_structs", None) or {}
@@ -285,6 +297,87 @@ class QiskitQMModule(BaseModule):
             else:
                 result[key] = Parameter.from_spec(spec)
         return result
+
+    # ------------------------------------------------------------------
+    # QMM / QM context binding and job retrieval
+    # ------------------------------------------------------------------
+
+    def bind_connection(
+        self,
+        qmm: Any,
+    ) -> None:
+        """Store QMM connection details so they survive JSON serialisation.
+
+        Called automatically from :attr:`QMBackend.qm` on first open. In pure-quarc
+        flows (no ``QMBackend``) call this manually before ``quarc.run()``:
+
+        .. code-block:: python
+
+            module.bind_connection(qmm)
+            quarc.run(module=module, ...)
+
+        Args:
+            qmm: The :class:`qm.QuantumMachinesManager` (or cloud equivalent) whose
+                 ``host`` and ``port`` are stored for later job discovery.
+        """
+        self.qmm_host = getattr(qmm, "host", None)
+        self.qmm_port = getattr(qmm, "port", None)
+
+    def get_running_job(
+        self,
+        *,
+        timeout: float = 30.0,
+        poll_interval: float = 0.1,
+    ) -> Any:
+        """Return the currently running QM job — works in all execution modes.
+
+        Resolution order:
+
+        1. **IQCC sync-hook mode** — detected when ``-j`` / ``--jobId`` is present in
+           ``sys.argv``.  The job is reconstructed from ``-j/-q/-i/-p`` arguments,
+           mirroring ``iqcc_cloud_client.runtime.get_qm_job()``.
+
+        2. **Local / QMBackend mode** — reconnects to the QMM using the stored
+           :attr:`qmm_host` / :attr:`qmm_port` (bound automatically when
+           ``QMBackend.qm`` is first accessed) and polls for a running job.
+           On QOP 3.x: ``qmm.get_jobs(status=["Running"])``.
+           Fallback (QOP 2.x): iterates ``qmm.list_open_qms()`` and probes each
+           machine with ``qm.get_running_job()``.
+
+        Args:
+            timeout: Seconds to wait for a running job before raising
+                :class:`TimeoutError` (local mode only, default 30 s).
+            poll_interval: Polling cadence in seconds (local mode only, default 0.1 s).
+
+        Raises:
+            RuntimeError: If neither IQCC args nor stored QMM details are available.
+            TimeoutError: If no running job appears within *timeout* seconds.
+        """
+        from .runtime import (
+            _is_sync_hook_mode,
+            _job_from_sync_hook_args,
+            _poll_running_job_from_qmm,
+        )
+
+        if _is_sync_hook_mode():
+            return _job_from_sync_hook_args()
+
+        if not self.qmm_host:
+            raise RuntimeError(
+                "No QMM connection details available. Either:\n"
+                "  • Use the QMBackend flow (QMBackend.qm auto-binds QMM details), or\n"
+                "  • Call module.bind_connection(qmm) before quarc.run(), or\n"
+                "  • Run in IQCC sync-hook mode (pass -j/-q/-i/-p as CLI args)."
+            )
+
+        import logging
+
+        from qm import QuantumMachinesManager
+
+        qmm = QuantumMachinesManager(
+            host=self.qmm_host, port=self.qmm_port, log_level=logging.ERROR
+        )
+        return _poll_running_job_from_qmm(qmm, timeout=timeout, poll_interval=poll_interval)
 
     # ------------------------------------------------------------------
     # Unified iterator

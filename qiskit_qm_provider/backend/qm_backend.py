@@ -433,6 +433,10 @@ class QMBackend(Backend):
         """
         if self._qm is None:
             self._qm = self.qmm.open_qm(self.qm_config, close_other_machines=True)
+            from ..parameter_table.parameter_pool import ParameterPool
+
+            if ParameterPool.has_quarc_module():
+                ParameterPool.quarc_module().bind_connection(self.qmm)
         return self._qm
 
     def close_all_qms(self):
