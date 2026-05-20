@@ -239,7 +239,7 @@ def add_basic_macros(
     :param machine: The BaseQuam instance to which macros will be added.
     :param reset_type: The type of reset to use. Can be 'active' or 'thermalize'.
     """
-    from iqcc_calibration_tools.quam_config.components.gate_macros import (
+    from quam_macros.superconducting.single_qubit_macros import (
         ResetMacro,
         VirtualZMacro,
         MeasureMacro,
@@ -257,35 +257,37 @@ def add_basic_macros(
     machine = backend.machine if isinstance(backend, QMBackend) else backend
 
     for qubit in machine.active_qubits:
-        x180_pulse = qubit.get_pulse("x180").get_reference()
-        readout_pulse = qubit.get_pulse("readout").get_reference()
-        x90_pulse = qubit.get_pulse("x90").get_reference()
-        y90_pulse = qubit.get_pulse("y90").get_reference()
-        my90_pulse = qubit.get_pulse("-y90").get_reference()
-        qubit.macros["x"] = PulseMacro(pulse=x180_pulse)
-        qubit.macros["rz"] = VirtualZMacro()
-        qubit.macros["sx"] = PulseMacro(pulse=x90_pulse)
-        qubit.macros["sy"] = PulseMacro(pulse=y90_pulse)
-        qubit.macros["sydg"] = PulseMacro(pulse=my90_pulse)
-        qubit.macros["measure"] = MeasureMacro(pulse=readout_pulse)
-        qubit.macros["reset"] = ResetMacro(
-            reset_type=reset_type, pi_pulse=x180_pulse, readout_pulse=readout_pulse
-        )
-        qubit.macros["delay"] = DelayMacro()
-        qubit.macros["id"] = IdMacro()
+        if not qubit.macros:
+            x180_pulse = qubit.get_pulse("x180").get_reference()
+            readout_pulse = qubit.get_pulse("readout").get_reference()
+            x90_pulse = qubit.get_pulse("x90").get_reference()
+            y90_pulse = qubit.get_pulse("y90").get_reference()
+            my90_pulse = qubit.get_pulse("-y90").get_reference()
+            qubit.macros["x"] = PulseMacro(pulse=x180_pulse)
+            qubit.macros["rz"] = VirtualZMacro()
+            qubit.macros["sx"] = PulseMacro(pulse=x90_pulse)
+            qubit.macros["sy"] = PulseMacro(pulse=y90_pulse)
+            qubit.macros["sydg"] = PulseMacro(pulse=my90_pulse)
+            qubit.macros["measure"] = MeasureMacro(pulse=readout_pulse)
+            qubit.macros["reset"] = ResetMacro(
+                reset_type=reset_type, pi_pulse=x180_pulse, readout_pulse=readout_pulse
+            )
+            qubit.macros["delay"] = DelayMacro()
+            qubit.macros["id"] = IdMacro()
 
     for qubit_pair in machine.active_qubit_pairs:
-        try:
-            qubit_pair.macros["cz"] = None
-            qubit_pair.macros["cz"] = CZGate(
-                flux_pulse_control=qubit_pair.qubit_control.z.operations[
-                    "const"
-                ].get_reference(),
-            )
-        except ValueError as e:
-            warnings.warn(
-                f"Could not add default two qubit gates. Add it manually if necessary. Error: {e}"
-            )
+        if 'cz' not in qubit_pair.macros:
+            try:
+                qubit_pair.macros["cz"] = None
+                qubit_pair.macros["cz"] = CZGate(
+                    flux_pulse_control=qubit_pair.qubit_control.z.operations[
+                        "const"
+                    ].get_reference(),
+                )
+            except ValueError as e:
+                warnings.warn(
+                    f"Could not add default two qubit gates. Add it manually if necessary. Error: {e}"
+                )
 
 
 def get_measurement_outcomes(

@@ -3,11 +3,14 @@
 Provides job-access utilities that work across local QMBackend mode and
 IQCC sync-hook mode without modifying quarc or the qm-qua SDK.
 """
-
+from __future__ import annotations
 import argparse
 import logging
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from qm import QuantumMachinesManager
 
 
 def _is_sync_hook_mode() -> bool:
@@ -31,7 +34,7 @@ def _job_from_sync_hook_args() -> Any:
     return qmm.get_job(args.jobId)
 
 
-def _poll_running_job_from_qmm(qmm: Any, timeout: float, poll_interval: float) -> Any:
+def _poll_running_job_from_qmm(qmm: QuantumMachinesManager, timeout: float, poll_interval: float) -> Any:
     """Poll the QMM for a running job until one appears or timeout expires.
 
     Two discovery strategies are tried in order:
@@ -54,13 +57,11 @@ def _poll_running_job_from_qmm(qmm: Any, timeout: float, poll_interval: float) -
     raise TimeoutError(f"No running job found on QMM within {timeout}s")
 
 
-def _try_get_running_job(qmm: Any) -> Any:
+def _try_get_running_job(qmm: QuantumMachinesManager) -> Any:
     """Single probe attempt — returns the job or None."""
     # QOP 3.x path
     try:
-        from qm.api.v2.job_api import JobStatus
-
-        jobs = qmm.get_jobs(status=[JobStatus("Running")])
+        jobs = qmm.get_jobs(status=["Running"])
         if jobs:
             return qmm.get_job(jobs[0].id)
     except (NotImplementedError, Exception):
