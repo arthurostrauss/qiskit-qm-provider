@@ -239,7 +239,7 @@ def add_basic_macros(
     :param machine: The BaseQuam instance to which macros will be added.
     :param reset_type: The type of reset to use. Can be 'active' or 'thermalize'.
     """
-    from quam_macros.superconducting.single_qubit_macros import (
+    from qiskit_qm_provider.quam_macros.superconducting.single_qubit_macros import (
         ResetMacro,
         VirtualZMacro,
         MeasureMacro,
