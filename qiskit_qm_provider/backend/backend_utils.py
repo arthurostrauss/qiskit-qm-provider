@@ -235,7 +235,8 @@ def add_basic_macros(
     reset_type: Literal["active", "thermalize"] = "thermalize",
 ):
     """
-    Add macros to the machine.
+    Add macros to the machine. One can either pass a BaseQuam instance or a QMBackend instance.
+    If the latter is passed, the target will be updated accordingly.
     :param machine: The BaseQuam instance to which macros will be added.
     :param reset_type: The type of reset to use. Can be 'active' or 'thermalize'.
     """
@@ -288,6 +289,8 @@ def add_basic_macros(
                 warnings.warn(
                     f"Could not add default two qubit gates. Add it manually if necessary. Error: {e}"
                 )
+    if isinstance(backend, QMBackend):
+        backend.update_target()
 
 
 def get_measurement_outcomes(
