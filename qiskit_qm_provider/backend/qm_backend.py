@@ -159,6 +159,7 @@ class QMBackend(Backend):
         init_macro: Optional[Callable] = None,
         qmm: QuantumMachinesManager | CloudQuantumMachinesManager | None = None,
         name: Optional[str] = None,
+        max_circuits: Optional[int] = 30,
         **fields,
     ):
         """
@@ -174,6 +175,11 @@ class QMBackend(Backend):
             init_macro: Optional macro to be called at the beginning of the QUA program to initialize the QPU.
             qmm: Optional QuantumMachinesManager or CloudQuantumMachinesManager instance. If not provided, inferred from the machine
             name: Optional name of the backend
+            max_circuits: Maximum number of circuits packed into a single QUA program (default 30).
+                When ``backend.run`` receives more circuits than this, the batch is split into
+                several QUA programs that are queued sequentially and whose results are stitched
+                back into a single Qiskit ``Result``. Set to ``None`` to disable splitting and
+                always build one program.
             fields: Optional kwargs for the values to use to override the default
                 options. The options are:
                 - shots: The number of shots to run the circuit for (default is 1024)
@@ -193,6 +199,7 @@ class QMBackend(Backend):
                 name = "QMBackend"
         Backend.__init__(self, name=name, **fields)
 
+        self._max_circuits = max_circuits
         self._custom_instructions = {}
         self.machine = validate_machine(machine)
         self._qmm: Optional[QuantumMachinesManager | CloudQuantumMachinesManager] = qmm
@@ -457,7 +464,12 @@ class QMBackend(Backend):
 
     @property
     def max_circuits(self):
-        return None
+        """Maximum number of circuits packed into a single QUA program.
+
+        ``backend.run`` splits larger batches into several queued QUA programs.
+        ``None`` disables splitting (a single program is always built).
+        """
+        return self._max_circuits
 
     def _populate_target(self) -> None:
         """

@@ -97,12 +97,30 @@ class QMJob(JobV1):
         meas_level: MeasLevel,
         meas_return: MeasReturnType,
         memory: bool,
+        chunk_layout: Optional[List[List[int]]] = None,
     ) -> Callable[[RunningQmJob | List[RunningQmJob] | CloudJob | Dict], Result]:
         """Create a Result-building callback for standard circuit execution.
 
         This function encapsulates the data plumbing that was previously
         implemented as an inner closure in ``QMBackend.run``.
+
+        ``chunk_layout`` maps each QUA program to the global circuit indices it
+        holds (``chunk_layout[c]`` lists the global indices in program ``c``).
+        Within a program, results are saved under stream key ``f"{creg}_{l}"``
+        where ``l`` is the circuit's *local* index in that program. We invert
+        this into a ``global index -> (chunk, local index)`` locator so each
+        circuit's data is fetched from the right handle and key. When omitted
+        (or a single program), the layout is a single chunk and the local index
+        equals the global index, matching the historical behaviour.
         """
+        if chunk_layout is None:
+            chunk_layout = [list(range(num_circuits))]
+        # global circuit index -> (chunk/program index, local index within chunk)
+        locator: Dict[int, tuple] = {
+            g: (c, l)
+            for c, chunk in enumerate(chunk_layout)
+            for l, g in enumerate(chunk)
+        }
 
         def result_function(
             qm_job: RunningQmJob | List[RunningQmJob] | CloudJob | Dict,
@@ -135,22 +153,26 @@ class QMJob(JobV1):
             all_data: List[SamplerPubResult] = []
             for i in range(num_circuits):
                 qc_meas_data = {}
+                # Locate circuit i: which program (chunk) holds it and at which
+                # local index, which determines the stream key f"{creg}_{local}".
+                chunk_idx, local_idx = locator[i]
                 for creg, creg_size in cregs_dicts[i].items():
+                    key = f"{creg}_{local_idx}"
                     if is_job_list:
                         data = (
-                            np.array(results_handle[i].get(f"{creg}_{i}").fetch_all())  # type: ignore[index]
+                            np.array(results_handle[chunk_idx].get(key).fetch_all())  # type: ignore[index]
                             .flatten()
                             .tolist()
                         )
                     elif isinstance(results_handle, result_handle_types):
                         data = (
-                            np.array(results_handle.get(f"{creg}_{i}").fetch_all())  # type: ignore[index]
+                            np.array(results_handle.get(key).fetch_all())  # type: ignore[index]
                             .flatten()
                             .tolist()
                         )
                     else:
                         data = (
-                            np.array(results_handle.get(f"{creg}_{i}"))  # type: ignore[index]
+                            np.array(results_handle.get(key))  # type: ignore[index]
                             .flatten()
                             .tolist()
                         )
@@ -226,7 +248,7 @@ class QMJob(JobV1):
             from iqcc_cloud_client.qmm_cloud import CloudQuantumMachinesManager  # type: ignore[import]
         except ImportError:
             CloudQuantumMachinesManager = None
-        from .qua_programs import get_run_program
+        from .qua_programs import plan_run_programs
 
         # Merge explicit options into backend defaults (preserving current behaviour)
         options_ = deepcopy(backend.options.__dict__)
@@ -252,8 +274,16 @@ class QMJob(JobV1):
             for qc in new_circuits:
                 backend.update_calibrations(qc)
 
-        # Build the QUA program the QM will execute
-        run_program = get_run_program(backend, num_shots, new_circuits)
+        # Build the QUA program(s) the QM will execute. Large batches are split
+        # into several programs (<= backend.max_circuits circuits each) that are
+        # queued sequentially; ``chunk_layout`` records which global circuit
+        # indices live in each program so results can be stitched back together.
+        programs, chunk_layout = plan_run_programs(
+            backend, num_shots, new_circuits, backend.max_circuits
+        )
+        # Keep a bare Program (not a 1-element list) for the single-program case
+        # to preserve the qm.execute() / qm.simulate() fast path.
+        run_program = programs[0] if len(programs) == 1 else programs
         qm = backend.qm
 
         job_id = "pending"
@@ -276,6 +306,7 @@ class QMJob(JobV1):
             meas_level=meas_level,
             meas_return=meas_return,
             memory=memory,
+            chunk_layout=chunk_layout,
         )
 
         # Decide between local QM job and IQCCCloud job
@@ -305,7 +336,6 @@ class QMJob(JobV1):
         """Return the job status."""
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")
-        status = self._qm_job.status if hasattr(self._qm_job, "status") else "unknown"
         mapping = {
             "unknown": JobStatus.ERROR,
             "pending": JobStatus.QUEUED,
@@ -315,6 +345,24 @@ class QMJob(JobV1):
             "loading": JobStatus.VALIDATING,
             "error": JobStatus.ERROR,
         }
+        if isinstance(self._qm_job, list):
+            # Aggregate over queued chunk jobs: surface the least-advanced
+            # status so the batch reads as DONE only once every program is done.
+            statuses = [
+                mapping.get(getattr(job, "status", "unknown"), JobStatus.ERROR)
+                for job in self._qm_job
+            ]
+            for state in (
+                JobStatus.ERROR,
+                JobStatus.CANCELLED,
+                JobStatus.VALIDATING,
+                JobStatus.QUEUED,
+                JobStatus.RUNNING,
+            ):
+                if state in statuses:
+                    return state
+            return JobStatus.DONE
+        status = self._qm_job.status if hasattr(self._qm_job, "status") else "unknown"
         return mapping.get(status, JobStatus.ERROR)
 
     def submit(self):
@@ -333,16 +381,27 @@ class QMJob(JobV1):
             if "timeout" in self.metadata:
                 kwargs["options"] = {"timeout": self.metadata["timeout"]}
         if isinstance(simulate, SimulationConfig):
-            self._qm_job = self.qm.simulate(
-                self.program, simulate=simulate, compiler_options=compiler_options
-            )
+            if isinstance(self.program, list):
+                self._qm_job = [
+                    self.qm.simulate(
+                        prog, simulate=simulate, compiler_options=compiler_options
+                    )
+                    for prog in self.program
+                ]
+                self._job_id = ",".join(
+                    getattr(job, "id", "") for job in self._qm_job
+                )
+            else:
+                self._qm_job = self.qm.simulate(
+                    self.program, simulate=simulate, compiler_options=compiler_options
+                )
+                self._job_id = getattr(self._qm_job, "id", "")
         else:
             if isinstance(self.program, list):
-                self._job_id = ""
                 self._qm_job = []
                 for prog in self.program:
                     self._qm_job.append(self.qm.queue.add(prog, **kwargs))
-                self._job_id += ",".join([job.id for job in self._qm_job])
+                self._job_id = ",".join([job.id for job in self._qm_job])
             else:
                 self._qm_job = self.qm.execute(self.program, **kwargs)
                 self._job_id = self._qm_job.id if hasattr(self._qm_job, "id") else ""
