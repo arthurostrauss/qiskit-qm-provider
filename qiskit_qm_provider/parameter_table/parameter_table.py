@@ -152,8 +152,8 @@ class ParameterTable:
         #: ``Parameter`` after promotion (see
         #: :meth:`Parameter._require_standalone_opnic_table`). Synthetic tables
         #: force-emit at construction even if no Quarc module was bound yet (lazily
-        #: creating a default :class:`quarc.BaseModule` if needed) because the QUA
-        #: program needs a real ``QuaStructHandle`` to declare against.
+        #: creating a default :class:`~qiskit_qm_provider.QiskitQMModule` if needed)
+        #: because the QUA program needs a real ``QuaStructHandle`` to declare against.
         self._is_synthetic_standalone: bool = bool(_is_synthetic_standalone)
 
         if isinstance(parameters_dict, Dict):
@@ -266,7 +266,7 @@ class ParameterTable:
                 #   from_quarc_module call, or Pipeline 2 after a to_quarc_module call),
                 #   eagerly emit onto it.
                 # - If this is a synthetic single-field standalone table, force-emit
-                #   regardless (lazily creating a default ``BaseModule`` if needed),
+                #   regardless (lazily creating a default ``QiskitQMModule`` if needed),
                 #   because the parameter is being promoted right now and the caller
                 #   immediately needs a handle.
                 # - Otherwise leave the table unemitted — :meth:`to_quarc_module` will

@@ -9,14 +9,12 @@ Quick mental map:
   ``my_module`` as the pool's accumulator. Tables built *after* this point eagerly
   emit onto ``my_module``.
 - **Pipeline 2 (parameters-first)**: the user declares ``Parameter`` / ``ParameterTable``
-  objects with ``input_type=OPNIC`` and calls ``ParameterPool.to_quarc_module()`` to
-  lazily allocate a default ``BaseModule`` and sweep every unemitted OPNIC table onto
-  it.
+  objects with ``input_type=OPNIC`` and calls ``ParameterPool.to_quarc_module()`` (or
+  constructs ``QiskitQMModule()``) to bind a default :class:`QiskitQMModule` and sweep
+  every unemitted OPNIC table and pending standalone parameter onto it.
 
-In both cases solo OPNIC ``Parameter``\\ s are promoted to a synthetic single-field
-``ParameterTable`` only on first ``Parameter.declare_variable()`` call (P2 model:
-"promote on use") — ``to_quarc_module()`` itself does *not* promote pending solo
-parameters.
+Pending solo OPNIC ``Parameter``\\ s can also be promoted on first transport call
+(``declare_variable``, etc.) if no module has been bound yet.
 """
 
 import pytest
@@ -111,21 +109,27 @@ def test_pipeline2_table_is_pending_until_module_binding():
     assert len(module._struct_handles) == 1
 
 
-def test_to_quarc_module_does_not_sweep_for_plain_base_module():
-    """``to_quarc_module()`` (without a :class:`QiskitQMModule`) only binds the slot.
-    Pre-existing OPNIC tables are *not* swept onto a plain ``BaseModule`` — that
-    responsibility lives on :class:`QiskitQMModule`'s ``__init__``."""
+def test_to_quarc_module_allocates_qiskitqmmodule_and_sweeps_preexisting():
+    """``to_quarc_module()`` lazily allocates :class:`QiskitQMModule`, which sweeps
+    pre-existing OPNIC tables and pending standalone parameters in ``__init__``."""
     pytest.importorskip("quarc")
-    from quarc import BaseModule
+    from qiskit_qm_provider import QiskitQMModule
 
     p = Parameter("z", [0.0], input_type=InputType.OPNIC, direction=Direction.OUTGOING)
     table = ParameterTable([p], name="Pre")
     assert table._is_emitted is False
 
-    module = ParameterPool.to_quarc_module()  # plain BaseModule
-    assert isinstance(module, BaseModule)
-    assert "Pre" not in module._structs
-    assert table._is_emitted is False
+    standalone = Parameter(
+        "alone", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING
+    )
+    assert standalone in ParameterPool._pending_standalone_opnic
+
+    module = ParameterPool.to_quarc_module()
+    assert isinstance(module, QiskitQMModule)
+    assert table._is_emitted is True
+    assert "Pre" in module._structs
+    assert standalone not in ParameterPool._pending_standalone_opnic
+    assert "alone_packet" in module._structs
 
 
 def test_pipeline2_table_eagerly_emits_after_module_is_bound():
@@ -133,7 +137,7 @@ def test_pipeline2_table_eagerly_emits_after_module_is_bound():
     onto it at construction time (no extra to_quarc_module() call needed)."""
     pytest.importorskip("quarc")
 
-    module = ParameterPool.to_quarc_module()  # binds default BaseModule
+    module = ParameterPool.to_quarc_module()  # binds default QiskitQMModule
     p = Parameter("x", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
     t = ParameterTable([p], name="EagerTable")
 
@@ -143,9 +147,9 @@ def test_pipeline2_table_eagerly_emits_after_module_is_bound():
     assert t._var is module._struct_handles[-1]
 
 
-def test_to_quarc_module_does_not_promote_pending_standalone_parameters():
-    """to_quarc_module() is side-effect-free w.r.t. pending standalone OPNIC Parameters
-    — only declare_variable() (or another transport-level call) promotes them."""
+def test_to_quarc_module_promotes_pending_standalone_parameters():
+    """``to_quarc_module()`` allocates :class:`QiskitQMModule`, whose ``__init__``
+    promotes every pending standalone OPNIC parameter onto the module."""
     pytest.importorskip("quarc")
 
     p = Parameter("theta", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
@@ -153,9 +157,9 @@ def test_to_quarc_module_does_not_promote_pending_standalone_parameters():
     assert p.opnic_table is None
 
     module = ParameterPool.to_quarc_module()
-    assert "theta" not in module._structs
-    assert p in ParameterPool._pending_standalone_opnic
-    assert p.opnic_table is None
+    assert "theta_packet" in module._structs
+    assert p not in ParameterPool._pending_standalone_opnic
+    assert p.opnic_table is not None
 
 
 def test_standalone_promote_via_require_table_creates_synthetic_and_locks():
@@ -170,7 +174,7 @@ def test_standalone_promote_via_require_table_creates_synthetic_and_locks():
     synthetic = p._require_standalone_opnic_table(context="declare_variable")
 
     # Synthetic table created, parameter locked into it.
-    assert synthetic.name == "theta"
+    assert synthetic.name == "theta_packet"
     assert synthetic._is_synthetic_standalone is True
     assert p.main_table is synthetic
     assert p.opnic_table is synthetic
@@ -179,7 +183,7 @@ def test_standalone_promote_via_require_table_creates_synthetic_and_locks():
 
     # Module was lazily created and the synthetic struct is in it.
     module = ParameterPool.quarc_module()
-    assert "theta" in module._structs
+    assert "theta_packet" in module._structs
     assert synthetic._var is not None
 
     # Re-attach to a different table fails.
@@ -270,8 +274,8 @@ def test_qiskitqmmodule_sweeps_pending_tables_at_construction():
     assert pre._is_emitted is True
     assert "Pre" in module._structs
     # Pending standalone parameters are promoted to synthetic single-field tables and
-    # land in the module's struct list under their parameter name.
-    assert "alone" in module._structs
+    # land in the module's struct list under the synthetic table name.
+    assert "alone_packet" in module._structs
     assert standalone not in ParameterPool._pending_standalone_opnic
 
 
@@ -290,7 +294,7 @@ def test_double_bind_raises():
     pytest.importorskip("quarc")
     from quarc import BaseModule
 
-    ParameterPool.to_quarc_module()  # auto-allocates default BaseModule
+    ParameterPool.to_quarc_module()  # auto-allocates default QiskitQMModule
     with pytest.raises(RuntimeError, match="already has a Quarc module"):
         ParameterPool.from_quarc_module(BaseModule())
 

@@ -41,10 +41,9 @@ The pool serves two intertwined purposes:
      objects with ``input_type=InputType.OPNIC`` and *later* either creates a
      :class:`~qiskit_qm_provider.QiskitQMModule` (whose ``__init__`` binds the slot and
      sweeps the registry / pending-list) or calls
-     :meth:`ParameterPool.to_quarc_module`. The latter binds (or lazily creates) a plain
-     :class:`quarc.BaseModule` and returns it; sweeping pre-existing tables onto a plain
-     ``BaseModule`` is the caller's responsibility — use ``QiskitQMModule`` for the
-     automated sweep.
+     :meth:`ParameterPool.to_quarc_module`. The latter binds (or lazily creates) a
+     :class:`~qiskit_qm_provider.QiskitQMModule`, whose ``__init__`` performs the same
+     sweep as an explicit ``QiskitQMModule()`` construction.
 
    Once a module is bound (whichever pipeline got there first), every *new* OPNIC
    ``ParameterTable`` created afterwards eagerly emits its struct onto that bound module
@@ -303,11 +302,12 @@ class ParameterPool:
 
     @classmethod
     def quarc_module(cls) -> Any:
-        """Return the bound Quarc module, lazily creating a default ``BaseModule()`` if
-        none has been bound yet.
+        """Return the bound Quarc module, lazily creating a default
+        :class:`~qiskit_qm_provider.QiskitQMModule` if none has been bound yet.
 
         After this method is called once with no pre-bound module, ``_quarc_module`` is
-        set to a default :class:`quarc.BaseModule` instance and that becomes the slot;
+        set to a :class:`~qiskit_qm_provider.QiskitQMModule` instance (which sweeps
+        pre-existing OPNIC pool state during ``__init__``) and that becomes the slot;
         subsequent OPNIC ``ParameterTable`` constructions emit eagerly into it.
         """
         if cls._quarc_module is None:
@@ -412,6 +412,7 @@ class ParameterPool:
         try:
             from quarc import Array as QuarcArray, Scalar as QuarcScalar
             from quarc.naming import pascal_to_snake_case
+
             from ..qiskit_qm_module import QiskitQMModule
         except ImportError as exc:
             raise ImportError(
@@ -496,7 +497,7 @@ class ParameterPool:
         # to sweep (the registry is owned by qiskit-qm-provider, not by Quarc).
         cls._quarc_module = module
 
-        # Non-OPNIC reconstruction (QiskitQMModule subclasses only)
+        # Non-OPNIC reconstruction (QiskitQMModule and subclasses only)
         if isinstance(module, QiskitQMModule) and module.parameter_specs:
             result.update(module.reconstruct_non_opnic())
 
@@ -626,24 +627,21 @@ class ParameterPool:
     @classmethod
     def to_quarc_module(cls, module: Optional[Any] = None) -> Any:
         """Bind the pool slot to ``module`` (or lazily create a default
-        :class:`quarc.BaseModule`) and return it.
+        :class:`~qiskit_qm_provider.QiskitQMModule`) and return it.
 
         Behaviour:
 
         * If ``module`` is provided, behaves like :meth:`set_quarc_module` — binds the
           slot, raising :class:`RuntimeError` if a different module is already bound.
-        * If no module is bound yet, lazily creates a default ``quarc.BaseModule()``
-          and binds it to the pool.
-        * Pre-existing OPNIC ``ParameterTable``\\s and pending standalone OPNIC
-          ``Parameter``\\s are *not* swept by this call. When ``module`` is a
-          :class:`~qiskit_qm_provider.QiskitQMModule`, sweeping is performed by
-          :meth:`QiskitQMModule._sweep_preexisting_opnic` during the module's own
-          ``__init__``. Plain ``BaseModule`` callers must perform that step themselves
-          (or rely on the eager emission path inside ``ParameterTable.__init__`` for
-          tables created *after* binding).
+          Sweeping pre-existing pool state is only automatic when ``module`` is a
+          :class:`~qiskit_qm_provider.QiskitQMModule` (via
+          :meth:`QiskitQMModule._sweep_preexisting_opnic` in ``__init__``).
+        * If no module is bound yet, lazily creates a default
+          :class:`~qiskit_qm_provider.QiskitQMModule` (same sweep semantics as an
+          explicit ``QiskitQMModule()`` construction).
         * Idempotent on subsequent calls — returns the same module reference.
 
-        Returns the bound ``BaseModule``.
+        Returns the bound module (typically :class:`~qiskit_qm_provider.QiskitQMModule`).
         """
         if module is not None:
             cls.set_quarc_module(module)

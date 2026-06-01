@@ -18,6 +18,7 @@ Author: Arthur Strauss
 Date: 2026-02-08
 """
 
+import importlib.util
 import warnings
 
 from .backend import (
@@ -28,17 +29,15 @@ from .backend import (
 )
 from .providers.qm_provider import QMProvider
 
-try:  # Quarc-backed module (hybrid classical / QUA entrypoints)
-    from .qiskit_qm_module import QiskitQMModule
+# Probe availability without importing quarc (``qiskit_qm_module`` pulls quarc in).
+QUARC_AVAILABLE = importlib.util.find_spec("quarc") is not None
 
-    QUARC_AVAILABLE = True
-except ImportError:
+if not QUARC_AVAILABLE:
     warnings.warn(
         "The `quarc` package is not available; `QiskitQMModule` and related Quarc "
         "integration features are not loaded. Install `quarc` to use them.",
         ImportWarning,
     )
-    QUARC_AVAILABLE = False
 
 if QISKIT_PULSE_AVAILABLE:
     from .pulse.quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
@@ -93,3 +92,17 @@ try:
     __all__.append("IQCCProvider")
 except ImportError:
     pass
+
+
+def __getattr__(name: str):
+    """Lazy-load Quarc-backed symbols so ``import qiskit_qm_provider`` stays quarc-free."""
+    if name == "QiskitQMModule":
+        if not QUARC_AVAILABLE:
+            raise ImportError(
+                "QiskitQMModule requires the `quarc` package. Install `quarc` to use it."
+            ) from None
+        from .qiskit_qm_module import QiskitQMModule
+
+        globals()["QiskitQMModule"] = QiskitQMModule
+        return QiskitQMModule
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

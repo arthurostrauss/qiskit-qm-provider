@@ -828,7 +828,7 @@ class Parameter:
 
         The synthetic table is constructed with ``_is_synthetic_standalone=True`` so
         that the hybrid emission rule force-emits its Quarc struct immediately
-        (creating a default :class:`quarc.BaseModule` via
+        (creating a default :class:`~qiskit_qm_provider.QiskitQMModule` via
         :meth:`ParameterPool.quarc_module` if no module is bound yet). After
         construction this parameter's :attr:`main_table` points at the synthetic table,
         and the entry is removed from :data:`ParameterPool._pending_standalone_opnic`.
@@ -1073,6 +1073,37 @@ class Parameter:
 
         else:
             raise ValueError("Invalid input stream type.")
+
+    def assign_from_io(self, io_index: Literal[1, 2]):
+        """
+        QUA Macro: eagerly assign the value of a global IO register into this parameter's
+        QUA variable, **without** any ``pause()``.
+
+        Unlike :meth:`rcv` for ``IO1``/``IO2`` (which pauses the program so a client-side
+        ``push_to_opx`` can synchronize), this is a non-blocking, fire-and-forget read of
+        the global IO register: the OPX keeps running. It is the correct primitive for
+        program-level control flags whose value the server writes on the *running* job via
+        ``qm.set_io_values(...)`` (a global operation that is intentionally not tied to any
+        single parameter).
+
+        Because IO registers are scalar and global, this is only valid for a single
+        declared scalar variable (it raises for array-backed parameters).
+
+        Args:
+            io_index: Which global IO register to read — ``1`` for ``IO1``, ``2`` for ``IO2``.
+        """
+        if io_index not in (1, 2):
+            raise ValueError(f"io_index must be 1 or 2, got {io_index!r}.")
+        if not self.is_declared:
+            raise ValueError(
+                f"Parameter {self.name!r} must be declared before assign_from_io()."
+            )
+        if self.is_array:
+            raise ValueError(
+                f"Parameter {self.name!r}: assign_from_io is only valid for a single "
+                "scalar variable (IO registers are scalar and global)."
+            )
+        assign(self.var, IO1 if io_index == 1 else IO2)
 
     def push_to_opx(
         self,

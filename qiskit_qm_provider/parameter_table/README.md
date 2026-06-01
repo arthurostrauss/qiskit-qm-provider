@@ -449,10 +449,10 @@ For a **ParameterTable** with `InputType.OPNIC`, every parameter must share the 
 - **`iter_opnic_parameter_tables()`** — every OPNIC `ParameterTable` (regular + synthetic-standalone), sorted by id.
 - **`iter_standalone_opnic_parameters()`** — union of *(a)* still-pending solo OPNIC `Parameter`\s and *(b)* `Parameter`\s already promoted into a synthetic single-field table.
 - **`has_quarc_module() -> bool`** — whether a Quarc module is currently bound.
-- **`quarc_module() -> BaseModule`** — getter; lazily creates a default `quarc.BaseModule()` if none is bound.
+- **`quarc_module() -> QiskitQMModule`** — getter; lazily creates a default `QiskitQMModule()` if none is bound (sweeping pre-existing OPNIC pool state in `__init__`).
 - **`set_quarc_module(m)`** — explicit setter; raises if a module is already bound.
 - **`from_quarc_module(m) -> dict[str, ParameterTable | Parameter]`** — Pipeline 1 entry point (see below). **1-field structs are automatically promoted to a standalone `Parameter`** rather than a `ParameterTable` (see [1-field promotion rule](#1-field-struct-promotion-in-from_quarc_module) below).
-- **`to_quarc_module(module=None) -> BaseModule`** — Pipeline 2 entry point (see below). Idempotent.
+- **`to_quarc_module(module=None) -> QiskitQMModule`** — Pipeline 2 entry point (see below). Idempotent; default allocation is `QiskitQMModule()`.
 - **`reset()`** — clears `_registry`, `_counter`, `_pending_standalone_opnic`, and `_quarc_module`.
 
 ### Two pipelines (mutually exclusive once a module is bound)
@@ -503,12 +503,12 @@ state onto itself** (see `QiskitQMModule._sweep_preexisting_opnic`). After that 
 every newly-constructed OPNIC `ParameterTable` eagerly emits onto the bound module — no
 extra ceremony needed.
 
-> **Plain `BaseModule` callers.** `ParameterPool.to_quarc_module()` (or
-> `from_quarc_module(m)` with a non-`QiskitQMModule`) only binds the slot — it does
-> *not* sweep pre-existing OPNIC tables / pending standalone parameters. The
-> automatic sweep belongs to `QiskitQMModule.__init__`. Callers who use a plain
-> `BaseModule` must perform that step themselves (typically by walking the registry
-> and calling `obj._emit_to_module(m)` on each unemitted OPNIC `ParameterTable`).
+> **Custom `BaseModule` callers (Pipeline 1 only).** `ParameterPool.to_quarc_module()`
+> always allocates a `QiskitQMModule` when the slot is empty. Passing a hand-built
+> module via `from_quarc_module(m)` or `set_quarc_module(m)` with a plain
+> `quarc.BaseModule` subclass only binds the slot — it does *not* sweep pre-existing
+> OPNIC tables / pending standalone parameters. That automatic sweep belongs to
+> `QiskitQMModule.__init__` only.
 
 > **Single-module-per-process invariant.** `QiskitQMModule.__init__` raises
 > `RuntimeError` if the pool already has a module bound. To create another module
@@ -842,12 +842,15 @@ unit-testing convenience.
 
 ### When (not) to use `QiskitQMModule` over a plain `BaseModule`
 
-`QiskitQMModule` is the recommended module type for any program that mixes **OPNIC** and
-non-OPNIC parameter transports. The two practical regimes:
+`QiskitQMModule` is the **default** module type for this interface:
+`ParameterPool.to_quarc_module()` and `ParameterPool.quarc_module()` lazily allocate
+`QiskitQMModule()` when the slot is empty. Use a plain `quarc.BaseModule` subclass only
+when you intentionally own struct layout yourself (Pipeline 1) and pass that instance
+via `from_quarc_module(m)` or `set_quarc_module(m)` — pre-existing pool state is **not**
+swept onto plain modules.
 
-* **OPNIC only.** A plain `quarc.BaseModule` with hand-rolled `add_struct` calls is
-  enough; `QiskitQMModule` adds nothing for this case. Use Pipeline 1
-  (`from_quarc_module`) when classical-side reconstruction is desired.
+`QiskitQMModule` is required for programs that mix **OPNIC** and non-OPNIC parameter
+transports. The two practical regimes:
 
 * **Mixed transports** (typical for RL-style workflows that mix tight-latency
   OPNIC packets with slower asynchronous channels):
