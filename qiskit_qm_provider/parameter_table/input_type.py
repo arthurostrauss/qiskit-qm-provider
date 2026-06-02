@@ -23,6 +23,8 @@ from typing import Optional, Union, ClassVar
 
 
 class InputType(Enum):
+    """How parameter values are delivered to the OPX during program execution."""
+
     DGX_Q = "DGX_Q"
     INPUT_STREAM = "INPUT_STREAM"
     IO1 = "IO1"
@@ -33,6 +35,17 @@ class InputType(Enum):
 
     @classmethod
     def from_string(cls, value: Optional[str]) -> Optional["InputType"]:
+        """Parse an input type from its string value.
+
+        Args:
+            value: Enum value string (e.g. ``\"INPUT_STREAM\"``) or ``None``.
+
+        Returns:
+            Matching :class:`InputType`, or ``None`` when ``value`` is ``None``.
+
+        Raises:
+            ValueError: If the string does not match a known input type.
+        """
         if value is None:
             return None
         for input_type in cls:

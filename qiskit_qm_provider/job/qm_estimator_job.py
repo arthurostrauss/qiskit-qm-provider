@@ -227,13 +227,26 @@ def observables_to_indices(
 
 
 class QMEstimatorJob(QMPrimitiveJob):
+    """Job handle for :class:`~qiskit_qm_provider.primitives.QMEstimatorV2` execution.
+
+    Builds a QUA estimator program from pubs and returns expectation values via
+    :meth:`result`.
+    """
+
     @property
     def result_handles(self):
+        """Underlying QM result handles after job submission."""
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")
         return self._qm_job.result_handles
 
     def result(self) -> ResultT:
+        """Build and return primitive estimator results from QM streaming data.
+
+        Returns:
+            :class:`~qiskit.primitives.PrimitiveResult` with per-pub expectation
+            values and standard errors.
+        """
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")
         return self._result_function(self._qm_job)
@@ -246,6 +259,15 @@ class QMEstimatorJob(QMPrimitiveJob):
         switch_obs_circuit: QuantumCircuit,
         **kwargs,
     ):
+        """Create an estimator job.
+
+        Args:
+            backend: Backend that compiled the circuits.
+            pubs: Coerced estimator pubs to execute.
+            input_type: How circuit parameters are streamed to the OPX.
+            switch_obs_circuit: Pre-transpiled circuit used to rotate observables.
+            **kwargs: Estimator options forwarded to execution planning.
+        """
         super().__init__(backend, pubs, input_type, **kwargs)
         ParameterPool.reset()
         self._execution_plans: List[_ExecutionPlan] = [

@@ -20,7 +20,20 @@ Date: 2026-02-08
 
 
 class FixedPoint:
+    """Fixed-point numeric type for QUA-compatible saturated arithmetic.
+
+    Values are stored as signed integers scaled by ``2**fractional_bits`` within
+    a configurable bit width.
+    """
+
     def __init__(self, value, fractional_bits=28, bit_width=32):
+        """Create a fixed-point value from a float or integer scale.
+
+        Args:
+            value: Initial value (float interpreted in fixed-point units).
+            fractional_bits: Number of fractional bits in the representation.
+            bit_width: Total signed bit width including the sign bit.
+        """
         self.fractional_bits = fractional_bits
         self.scale = 1 << fractional_bits
         self.bit_width = bit_width
@@ -138,14 +151,27 @@ class FixedPoint:
         return f"{self.value / self.scale:.10f}"
 
     def to_int(self) -> int:
+        """Return the value rounded toward zero as a Python integer."""
         return self.value >> self.fractional_bits
 
     def to_unsafe_int(self) -> int:
+        """Return the raw scaled integer without fractional-bit shifting."""
         return self.value
 
     def to_float(self) -> float:
+        """Return the value as a Python float."""
         return self.value / self.scale
 
     @classmethod
     def from_int(cls, int_value, fractional_bits=28, bit_width=32):
+        """Construct a :class:`FixedPoint` from an integer fixed-point representation.
+
+        Args:
+            int_value: Scaled integer value (already in fixed-point units).
+            fractional_bits: Number of fractional bits.
+            bit_width: Total signed bit width.
+
+        Returns:
+            New :class:`FixedPoint` instance.
+        """
         return cls(int_value / (1 << fractional_bits), fractional_bits, bit_width)

@@ -1,6 +1,6 @@
 # Providers
 
-Providers are **environment adapters**: they answer "how do I obtain a `QMBackend` for my setup?" while remaining hardware-agnostic through bring-your-own `QuamRoot` and `QMBackend` subclasses.
+Providers are **environment adapters**: they answer "how do I obtain a [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) for my setup?" while remaining hardware-agnostic through bring-your-own `QuamRoot` and [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) subclasses.
 
 For method signatures and constructor parameters, see the [Providers API reference](apidocs/qm_providers.rst).
 
@@ -8,11 +8,11 @@ For method signatures and constructor parameters, see the [Providers API referen
 
 Each provider connects a specific execution environment (local QOP, cloud simulator, or IQCC) to the same backend interface. Once you have a backend, workflows are identical: transpile circuits, then use `backend.run()`, primitives, or hybrid embedding.
 
-The default QuAM class when none is supplied is **`FluxTunableQuam`** from [quam-builder](https://github.com/Quantum-Machines/quam-builder). The default backend class is the base `QMBackend`. Custom labs should pass explicit `quam_cls` and `backend_cls` matching their hardware.
+The default QuAM class when none is supplied is **`FluxTunableQuam`** from [quam-builder](https://github.com/Quantum-Machines/quam-builder). The default backend class is the base [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst). Custom labs should pass explicit `quam_cls` and `backend_cls` matching their hardware.
 
-## Seeding gate macros with `add_basic_macros`
+## Seeding gate macros with add_basic_macros
 
-After obtaining a backend, you can populate standard operations with `add_basic_macros`:
+After obtaining a backend, populate standard operations with [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.add_basic_macros.rst):
 
 ```python
 from qiskit_qm_provider import QMProvider
@@ -25,9 +25,9 @@ add_basic_macros(backend)
 
 **Important:** these macros (`x`, `sx`, `rz`, `sy`, `sydg`, `measure`, `reset`, `delay`, `id`, `cz`) are **currently tailored to flux-tunable transmon** topology. They assume pulse and macro naming conventions from `FluxTunableQuam` / quam-builder (e.g. `x180`, `x90`, readout pulses, `CZGate` on pairs). They are a **starting point**, not a universal hardware definition. Users on other platforms should override or replace macros on their own `QuamRoot`, and coordinate with the **Quantum Machines team** for appropriate [quam-builder](https://github.com/Quantum-Machines/quam-builder) extensions for their architecture.
 
-## QMProvider — local QOP
+## [`QMProvider`](apidocs/stubs/qiskit_qm_provider.providers.QMProvider.rst) — local QOP
 
-Use `QMProvider` when you have a local QOP stack and a QuAM state folder on disk.
+Use [`QMProvider`](apidocs/stubs/qiskit_qm_provider.providers.QMProvider.rst) when you have a local QOP stack and a QuAM state folder on disk.
 
 ```python
 from qiskit_qm_provider import QMProvider, FluxTunableTransmonBackend
@@ -43,9 +43,9 @@ backend = provider.get_backend(backend_cls=FluxTunableTransmonBackend)
 
 Access the underlying machine via `backend.machine`.
 
-## QmSaasProvider — cloud simulation
+## [`QmSaasProvider`](apidocs/stubs/qiskit_qm_provider.providers.qm_saas_provider.QmSaasProvider.rst) — cloud simulation
 
-Use `QmSaasProvider` for QM's cloud simulator. Requires `pip install qiskit-qm-provider[qm_saas]`.
+Use [`QmSaasProvider`](apidocs/stubs/qiskit_qm_provider.providers.qm_saas_provider.QmSaasProvider.rst) for QM's cloud simulator. Requires `pip install qiskit-qm-provider[qm_saas]`.
 
 ```python
 from qiskit_qm_provider import QmSaasProvider, FluxTunableTransmonBackend
@@ -59,9 +59,9 @@ backend = provider.get_backend(
 
 Credentials can be read from `~/qm_saas_config.json` when omitted.
 
-## IQCCProvider — IQCC cloud devices
+## [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst) — IQCC cloud devices
 
-Use `IQCCProvider` for devices at the Israeli Quantum Computing Center. Requires `pip install qiskit-qm-provider[iqcc]`. Always returns `FluxTunableTransmonBackend`.
+Use [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst) for devices at the Israeli Quantum Computing Center. Requires `pip install qiskit-qm-provider[iqcc]`. Always returns [`FluxTunableTransmonBackend`](apidocs/stubs/qiskit_qm_provider.backend.FluxTunableTransmonBackend.rst).
 
 This is a common entry point for **Qiskit Experiments** characterization — see the [Qiskit Experiments caveats on the home page](index.md#using-qiskit-experiments-with-this-provider).
 
@@ -79,9 +79,9 @@ backend = provider.get_backend(
 
 | Provider | Environment | Extra install | Backend type | Typical use |
 |----------|-------------|---------------|--------------|-------------|
-| `QMProvider` | Local QOP + on-disk QuAM | — | User-chosen (default `QMBackend`) | Lab hardware |
-| `QmSaasProvider` | QM cloud simulator | `[qm_saas]` | User-chosen | Cloud simulation |
-| `IQCCProvider` | IQCC remote devices | `[iqcc]` | `FluxTunableTransmonBackend` | IQCC + Experiments |
+| [`QMProvider`](apidocs/stubs/qiskit_qm_provider.providers.QMProvider.rst) | Local QOP + on-disk QuAM | — | User-chosen (default [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst)) | Lab hardware |
+| [`QmSaasProvider`](apidocs/stubs/qiskit_qm_provider.providers.qm_saas_provider.QmSaasProvider.rst) | QM cloud simulator | `[qm_saas]` | User-chosen | Cloud simulation |
+| [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst) | IQCC remote devices | `[iqcc]` | [`FluxTunableTransmonBackend`](apidocs/stubs/qiskit_qm_provider.backend.FluxTunableTransmonBackend.rst) | IQCC + Experiments |
 
 ## Related
 

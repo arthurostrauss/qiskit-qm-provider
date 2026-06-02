@@ -33,10 +33,10 @@ Runnable scripts live in the [examples](https://github.com/arthurostrauss/qiskit
 
 The provider supports **two layers of use**:
 
-1. **Traditional** — `backend.run()` and V2 primitives (`QMSamplerV2`, `QMEstimatorV2`) compile Qiskit circuits to QUA and execute them on QOP, with optional real-time parameter streaming.
-2. **Extended (hybrid)** — embed Qiskit circuits as **QUA macros** inside larger programs via `quantum_circuit_to_qua`, with `ParameterTable` as the classical–quantum contract.
+1. **Traditional** — [`QMBackend.run()`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) and V2 primitives ([`QMSamplerV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerV2.rst), [`QMEstimatorV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMEstimatorV2.rst)) compile Qiskit circuits to QUA and execute them on QOP, with optional real-time parameter streaming.
+2. **Extended (hybrid)** — embed Qiskit circuits as **QUA macros** inside larger programs via [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst), with [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) as the classical-quantum contract.
 
-Underneath both paths, the backend reads your [QuAM](https://qua-platform.github.io/quam/) machine description to build a Qiskit `Target` (connectivity, native gates, qubit properties), so the full transpiler stack applies. You can bring your own `QuamRoot` and `QMBackend` subclasses, or start from `FluxTunableTransmonBackend`.
+Underneath both paths, the backend reads your [QuAM](https://qua-platform.github.io/quam/) machine description to build a Qiskit `Target` (connectivity, native gates, qubit properties), so the full transpiler stack applies. You can bring your own `QuamRoot` and [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) subclasses, or start from [`FluxTunableTransmonBackend`](apidocs/stubs/qiskit_qm_provider.backend.FluxTunableTransmonBackend.rst).
 
 ## Installation
 
@@ -53,7 +53,7 @@ pip install qiskit-qm-provider[qm_saas]
 
 ## Using Qiskit Experiments with this provider
 
-Many users want to combine [Qiskit Experiments](https://quantum.cloud.ibm.com/docs/en/guides/qiskit-experiments) with this provider (especially via `IQCCProvider`). Two caveats are worth reading **before** you start:
+Many users want to combine [Qiskit Experiments](https://quantum.cloud.ibm.com/docs/en/guides/qiskit-experiments) with this provider (especially via [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst)). Two caveats are worth reading **before** you start:
 
 ### 1. Match the tool to the execution model
 
@@ -63,7 +63,7 @@ QUA is designed differently: one program with **real-time loops, streaming, and 
 
 This provider shines when you **invert the usual assumption**: use Qiskit for circuit *authoring* (synthesis, visualization, transpilation, portability) and wrap those circuits as **QUA macros** inside richer real-time programs — not when you treat Qiskit as the *entire* control stack and never engage with QUA.
 
-IQCC + Experiments (see `examples/iqcc_t1_experiment.py`) is supported and useful, but ask whether a batch-of-circuits experiment is really what you need, or whether a parameterized QUA loop (with `ParameterTable` / `quantum_circuit_to_qua`) would be more efficient on QOP. See [Workflows — Qiskit Experiments](workflows.md#qiskit-experiments-iqcc-with-caveats) for the full discussion.
+IQCC + Experiments (see `examples/iqcc_t1_experiment.py`) is supported and useful, but ask whether a batch-of-circuits experiment is really what you need, or whether a parameterized QUA loop (with [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) / [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst)) would be more efficient on QOP. See [Workflows — Qiskit Experiments](workflows.md#qiskit-experiments-iqcc-with-caveats) for the full discussion.
 
 ### 2. Classified measurement outcomes only
 
@@ -77,10 +77,10 @@ Use the sidebar to browse guides, then dive into the [API Reference](apidocs/qm.
 
 - **[Workflows](workflows.md)** — routing guide for the five main paths through the toolbox.
 - **[Providers](providers.md)** — obtain a backend for local QOP, QM SaaS, or IQCC.
-- **[Backend & Utilities](backend.md)** — `QMBackend`, embedding, utilities, custom gates.
-- **[Primitives](primitives.md)** — QOP-aware Sampler and Estimator.
-- **[Parameter Table](parameter_table.md)** — real-time parameters and classical–quantum data flow.
-- **[Error-Correction Workflow](error_correction.md)** — hybrid EC pattern with `ParameterTable`.
+- **[Backend & Utilities](backend.md)** — [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst), embedding, utilities, custom gates.
+- **[Primitives](primitives.md)** — [`QMSamplerV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerV2.rst) and [`QMEstimatorV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMEstimatorV2.rst).
+- **[Parameter Table](parameter_table.md)** — [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) and real-time data flow.
+- **[Error-Correction Workflow](error_correction.md)** — hybrid EC pattern with [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst).
 - **[API Reference](apidocs/qm.rst)** — autodoc pages for all public classes and functions.
 
 ## Design philosophy

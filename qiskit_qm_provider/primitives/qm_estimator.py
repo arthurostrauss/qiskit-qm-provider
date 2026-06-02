@@ -83,15 +83,26 @@ class QMEstimatorOptions:
             )
 
     def as_dict(self) -> dict:
+        """Return options as a plain dictionary suitable for serialization."""
         return asdict(self)
 
 
 class QMEstimatorV2(BaseEstimatorV2):
-    """QM Estimator V2 class for Qiskit Quantum Machine backend."""
+    """QOP-aware Qiskit V2 Estimator for :class:`~.QMBackend`.
+
+    Computes expectation values and standard errors from QUA execution with
+    optional abelian grouping and real-time parameter streaming.
+    """
 
     def __init__(
         self, backend: QMBackend, options: QMEstimatorOptions | dict | None = None
     ):
+        """Create an estimator bound to a QM backend.
+
+        Args:
+            backend: Target backend with QuAM-derived ``Target``.
+            options: :class:`~.QMEstimatorOptions` instance or options dict.
+        """
         self._backend = backend
         self._options = (
             QMEstimatorOptions(**options)
@@ -119,7 +130,17 @@ class QMEstimatorV2(BaseEstimatorV2):
         self._switch_obs_circuit = qc_switch_obs
 
     def run(self, pubs: Iterable[EstimatorPubLike], *, precision: float | None = None):
-        """Run the estimator on the given PUBs."""
+        """Run the estimator on the given pubs.
+
+        Args:
+            pubs: Estimator pubs (circuit, observables, parameter values, precision).
+            precision: Target precision. Defaults to
+                :attr:`~.QMEstimatorOptions.default_precision`.
+
+        Returns:
+            :class:`~qiskit_qm_provider.job.QMEstimatorJob` (or IQCC variant) after
+            submission.
+        """
         if precision is None:
             precision = self.options.default_precision
         pubs = [EstimatorPub.coerce(pub, precision) for pub in pubs]

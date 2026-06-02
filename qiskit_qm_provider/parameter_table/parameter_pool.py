@@ -31,8 +31,10 @@ if TYPE_CHECKING:
 
 
 class ParameterPool:
-    """
-    A class to manage unique IDs for parameters.
+    """Registry of :class:`~.ParameterTable` and :class:`~.Parameter` objects.
+
+    Assigns unique IDs used when patching QUA programs for streaming and
+    coordinates stream configuration across tables.
     """
 
     _counter = itertools.count(1)

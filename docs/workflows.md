@@ -4,11 +4,11 @@ This page is the **routing guide** for the main paths through `qiskit-qm-provide
 
 ## 1. Running Qiskit circuits on QM hardware or simulators
 
-Get a backend from a provider, transpile circuits, then use `backend.run()` or V2 primitives. Same Qiskit ergonomics; QOP executes the generated QUA underneath.
+Get a backend from a provider, transpile circuits, then use [`QMBackend.run()`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) or V2 primitives. Same Qiskit ergonomics; QOP executes the generated QUA underneath.
 
 ### 1.1 Local hardware with QMProvider
 
-1. Create `QMProvider` with your QuAM state folder.
+1. Create [`QMProvider`](apidocs/stubs/qiskit_qm_provider.providers.QMProvider.rst) with your QuAM state folder.
 2. Optionally pass custom `quam_cls` / `backend_cls`.
 3. Transpile and run.
 
@@ -19,7 +19,7 @@ Get a backend from a provider, transpile circuits, then use `backend.run()` or V
 ### 1.2 QM SaaS simulator with QmSaasProvider
 
 1. `pip install qiskit-qm-provider[qm_saas]`
-2. Create `QmSaasProvider`.
+2. Create [`QmSaasProvider`](apidocs/stubs/qiskit_qm_provider.providers.qm_saas_provider.QmSaasProvider.rst).
 3. Call `get_backend()` and run as usual.
 
 - **Guide:** [Providers — QmSaasProvider](providers.md#qmsaasprovider-cloud-simulation)
@@ -28,8 +28,8 @@ Get a backend from a provider, transpile circuits, then use `backend.run()` or V
 ### 1.3 IQCC devices with IQCCProvider
 
 1. `pip install qiskit-qm-provider[iqcc]`
-2. Create `IQCCProvider`.
-3. Obtain a `FluxTunableTransmonBackend`:
+2. Create [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst).
+3. Obtain a [`FluxTunableTransmonBackend`](apidocs/stubs/qiskit_qm_provider.backend.FluxTunableTransmonBackend.rst):
 
 ```python
 machine = provider.get_machine(
@@ -52,11 +52,11 @@ backend = provider.get_backend(
 
 When Pulse is available:
 
-- Use `FluxTunableTransmonBackend` for QuAM ↔ Pulse channel mapping.
-- Convert **gate pulse schedules** via `schedule_to_qua_macro`.
-- Seed macros with `add_basic_macros` (flux-tunable defaults — see [Providers guide](providers.md#seeding-gate-macros-with-add-basic-macros)).
+- Use [`FluxTunableTransmonBackend`](apidocs/stubs/qiskit_qm_provider.backend.FluxTunableTransmonBackend.rst) for QuAM ↔ Pulse channel mapping.
+- Convert **gate pulse schedules** via [`schedule_to_qua_macro`](apidocs/stubs/qiskit_qm_provider.pulse.schedule_to_qua_macro.rst).
+- Seed macros with [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.add_basic_macros.rst) (flux-tunable defaults — see [Providers guide](providers.md#seeding-gate-macros-with-add_basic_macros)).
 
-**Pulse caveat:** supported for **gate schedules only**. Qiskit Pulse **`Measure` / measurement instructions** are **not** supported. Use circuit-level `measure` + `get_measurement_outcomes` for readout in hybrid programs.
+**Pulse caveat:** supported for **gate schedules only**. Qiskit Pulse **`Measure` / measurement instructions** are **not** supported. Use circuit-level `measure` + [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) for readout in hybrid programs.
 
 - **Guide:** [Backend — Pulse scope](backend.md#pulse-support-qiskit-1-x-legacy)
 - **Example:** `examples/circuit_calibrations_pulse.py`
@@ -65,7 +65,7 @@ When Pulse is available:
 
 1. Define a gate at the circuit level.
 2. Write a QUA macro.
-3. Register via `QMInstructionProperties`.
+3. Register via [`QMInstructionProperties`](apidocs/stubs/qiskit_qm_provider.backend.QMInstructionProperties.rst).
 4. Call `backend.update_target()`.
 
 Keeps the Target and qm_qasm compiler in sync for both `backend.run()` and `quantum_circuit_to_qua`.
@@ -74,7 +74,7 @@ Keeps the Target and qm_qasm compiler in sync for both `backend.run()` and `quan
 
 ## 3. Primitives: Sampler and Estimator on QOP
 
-`QMSamplerV2` and `QMEstimatorV2` reuse QuAM Targets, stream parameters via `InputType`, and map shot budgets to QUA loops. **Classified counts only** — see [Primitives guide](primitives.md).
+[`QMSamplerV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerV2.rst) and [`QMEstimatorV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMEstimatorV2.rst) reuse QuAM Targets, stream parameters via [`InputType`](apidocs/stubs/qiskit_qm_provider.parameter_table.InputType.rst), and map shot budgets to QUA loops. **Classified counts only** — see [Primitives guide](primitives.md).
 
 ### 3.1 Generated QUA programs (and how to inspect them)
 
@@ -128,8 +128,8 @@ print(generate_qua_script(backend_job.program))
 Treat Qiskit circuits as **building blocks** inside larger QUA programs:
 
 1. Transpile a `QuantumCircuit`.
-2. Inside `with program():`, call `backend.quantum_circuit_to_qua(qc, param_table=...)`.
-3. **Immediately after**, call `get_measurement_outcomes(qc, result)` in the **same program** — this wires classical results into QUA variables usable for control flow, streaming, and further embedded circuits (not Python post-processing).
+2. Inside `with program():`, call [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) with [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) when needed.
+3. **Immediately after**, call [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) in the **same program** — this wires classical results into QUA variables usable for control flow, streaming, and further embedded circuits (not Python post-processing).
 
 ```python
 from qm.qua import program
@@ -150,7 +150,7 @@ Powerful for error correction, closed-loop calibration, and DGX hybrid loops.
 
 ## 5. Error-correction workflow (overview)
 
-Repeated cycles: encode → syndrome measure (Qiskit circuit) → stream syndrome → classical decode → push recovery params → apply recovery (Qiskit circuit). `ParameterTable` and `get_measurement_outcomes` keep the classical–quantum boundary explicit.
+Repeated cycles: encode → syndrome measure (Qiskit circuit) → stream syndrome → classical decode → push recovery params → apply recovery (Qiskit circuit). [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) and [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) keep the classical-quantum boundary explicit.
 
 - **Guide:** [Error-Correction Workflow](error_correction.md)
 

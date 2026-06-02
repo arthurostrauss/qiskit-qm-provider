@@ -207,6 +207,22 @@ def _instruction_to_qua(
 
 
 def validate_schedule(schedule: Schedule | ScheduleBlock) -> Schedule:
+    """Normalize a Pulse schedule for QUA macro conversion.
+
+    Converts a :class:`~qiskit.pulse.ScheduleBlock` to a
+    :class:`~qiskit.pulse.Schedule` when needed. Parameterized block durations
+    are not supported.
+
+    Args:
+        schedule: Qiskit Pulse schedule or schedule block containing gate pulses.
+
+    Returns:
+        A concrete :class:`~qiskit.pulse.Schedule`.
+
+    Raises:
+        NotImplementedError: If the block has parameterized durations.
+        ValueError: If the input is not a schedule or schedulable block.
+    """
     if isinstance(schedule, ScheduleBlock):
         if not schedule.is_schedulable():
             raise NotImplementedError(

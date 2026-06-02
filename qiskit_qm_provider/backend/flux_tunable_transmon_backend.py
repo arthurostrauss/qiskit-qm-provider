@@ -39,6 +39,13 @@ if TYPE_CHECKING:
 
 
 class FluxTunableTransmonBackend(QMBackend):
+    """Reference :class:`~.QMBackend` for flux-tunable transmon QuAM machines.
+
+    Maps QuAM qubits and pairs to Qiskit Pulse channels when Pulse is available
+    and is the default backend type returned by
+    :class:`~qiskit_qm_provider.providers.IQCCProvider`.
+    """
+
     def __init__(
         self,
         machine: Quam,

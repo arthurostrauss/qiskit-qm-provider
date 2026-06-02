@@ -17,6 +17,9 @@
 Registers :class:`~qiskit.pulse.SymbolicPulse` features for the QUA compiler and
 maps pulse schedules to QUA macros. Gate schedules only — not Pulse measurement
 instructions.
+
+Author: Arthur Strauss
+Date: 2026-02-08
 """
 
 from copy import deepcopy

@@ -1,6 +1,6 @@
 # Backend and Utilities
 
-`QMBackend` is the **central bridge object**: it represents hardware to Qiskit (via a QuAM-derived `Target`) and translates Qiskit artifacts to QUA (via qm_qasm and `quantum_circuit_to_qua`).
+[`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) is the **central bridge object**: it represents hardware to Qiskit (via a QuAM-derived `Target`) and translates Qiskit artifacts to QUA (via qm_qasm and [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst)).
 
 For full signatures, see the [Backend API reference](apidocs/qm_backend.rst).
 
@@ -11,13 +11,13 @@ Backends serve two roles:
 1. **Represent hardware in Qiskit** — macros from QuAM populate the `Target`; coupling map from topology; qubit properties (T1, T2, frequencies).
 2. **Translate circuits to QUA** — OpenQASM 3 export + qm_qasm compilation, or Pulse schedule conversion (Qiskit 1.x legacy).
 
-`FluxTunableTransmonBackend` is the reference implementation: `init_macro` from QuAM's `initialize_qpu`, and QuAM ↔ Pulse channel mapping (`get_quam_channel`, `get_pulse_channel`).
+[`FluxTunableTransmonBackend`](apidocs/stubs/qiskit_qm_provider.backend.FluxTunableTransmonBackend.rst) is the reference implementation: `init_macro` from QuAM's `initialize_qpu`, and QuAM ↔ Pulse channel mapping (`get_quam_channel`, `get_pulse_channel`).
 
 ## Two execution modes
 
 ### Submit-and-run
 
-Standard Qiskit backend workflow: compile, execute, return a `QMJob`. The generated QUA program is on `job.program`:
+Standard Qiskit backend workflow: compile, execute, return a [`QMJob`](apidocs/stubs/qiskit_qm_provider.job.QMJob.rst). The generated QUA program is on `job.program`:
 
 ```python
 from qm import generate_qua_script
@@ -44,7 +44,7 @@ with program() as prog:
 
 Call `get_measurement_outcomes` **immediately after** `quantum_circuit_to_qua` in the same QUA program — not as a separate Python post-processing step. The returned variables reference outcomes from the circuit execution that just ran.
 
-## `get_measurement_outcomes` return dictionary
+## [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) return dictionary
 
 Returns `dict[creg_name, subdict]` — one entry per classical register in the circuit (plus a synthetic `_bit` register for loose clbits).
 
@@ -59,13 +59,13 @@ See [Parameter Table](parameter_table.md) for `stream_back` / `fetch_from_opx` o
 
 ## Real-time parameters
 
-Unlike typical Qiskit backends, parameters need not be bound at compile time. Use `ParameterTable.from_qiskit()` to map circuit parameters to real-time QUA variables (phases, amplitudes, frame rotations).
+Unlike typical Qiskit backends, parameters need not be bound at compile time. Use [`ParameterTable.from_qiskit()`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) to map circuit parameters to real-time QUA variables (phases, amplitudes, frame rotations).
 
 **Warning:** QOP rejects non-ASCII parameter names. Use ASCII names (`theta`, `phi`) — not Greek symbols — so OpenQASM 3 and QUA compilation succeed.
 
 ## Utilities
 
-### `add_basic_macros`
+### [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.add_basic_macros.rst)
 
 Seeds standard gate macros on a QuAM machine. **Flux-tunable transmon defaults** tied to `FluxTunableQuam` — see [Providers guide](providers.md#seeding-gate-macros-with-add-basic-macros). Override freely for other platforms.
 
@@ -75,7 +75,7 @@ Debug helpers to inspect generated QUA from compilation results.
 
 ## Custom calibrations (Qiskit 2.x)
 
-Attach QUA macros to Target instructions via `QMInstructionProperties`:
+Attach QUA macros to Target instructions via [`QMInstructionProperties`](apidocs/stubs/qiskit_qm_provider.backend.QMInstructionProperties.rst):
 
 ```python
 from qiskit.circuit import Parameter as QiskitParameter, Gate
@@ -102,14 +102,14 @@ Whenever you modify `backend.target`, call `update_target` so both transpilation
 
 ## Pulse support (Qiskit 1.x legacy)
 
-When `QISKIT_PULSE_AVAILABLE`, `schedule_to_qua_macro` converts **gate pulse schedules** to QUA.
+When `QISKIT_PULSE_AVAILABLE`, [`schedule_to_qua_macro`](apidocs/stubs/qiskit_qm_provider.pulse.schedule_to_qua_macro.rst) converts **gate pulse schedules** to QUA.
 
 | Supported | Not supported |
 |-----------|---------------|
 | Gate operations as Pulse schedules | Qiskit Pulse **`Measure` / measurement instructions** |
 | QuAM ↔ Pulse channel mapping on `FluxTunableTransmonBackend` | Kerneled / raw IQ readout (see [classified-only note](index.md#classified-measurement-outcomes-only)) |
 
-Hybrid readout: circuit-level `measure` → `quantum_circuit_to_qua` → `get_measurement_outcomes`.
+Hybrid readout: circuit-level `measure` → [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) → [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst).
 
 ## Related
 
