@@ -55,13 +55,11 @@ if TYPE_CHECKING:
 
 
 class ParameterTable:
-    """
-    Class enabling the mapping of parameters to be updated to their corresponding "to-be-declared" QUA variables. The
-    type of the QUA variable to be adjusted is automatically inferred from the type of the initial_parameter_value.
-    Each parameter in the dictionary should be given a name that the user can then easily access through the table
-    with table[parameter_name]. Calling this will return the QUA variable built within the QUA program corresponding
-    to the parameter name and its associated Python initial value. Args: parameters_dict: Dictionary of the form {
-    "parameter_name": initial_parameter_value }. the QUA program.
+    """Map runtime parameters to QUA variables declared in a program.
+
+    Each entry stores the Python initial value and the corresponding QUA
+    variable name. Access values with ``table[parameter_name]`` after the table
+    has been wired into a QUA program.
     """
 
     def __init__(
@@ -88,28 +86,21 @@ class ParameterTable:
         ],
         name: Optional[str] = None,
     ):
-        """
-        Class enabling the mapping of parameters to be updated to their corresponding "to-be-declared" QUA variables.
-        The type of the QUA variable to be adjusted can be specified or either be automatically inferred from the
-        type of the initial_parameter_value. Each parameter in the dictionary should be given a name that the user
-        can then easily access through the table with table[parameter_name]. Calling this will return the QUA
-        variable built within the QUA program corresponding to the parameter name and its associated Python initial
-        value.
+        """Create a parameter table from a dictionary or list of parameters.
 
-        When initialized with a list of Parameter objects, the input type and direction are for all parameters in the
-        list should be the same. The input type and direction are inferred from the first parameter in the list.
-
+        When initialized from a dictionary, each value may be a bare initial
+        value or a tuple ``(initial_value, qua_type, input_stream_flag)`` where
+        ``qua_type`` is ``int``, ``fixed``, or ``bool`` and the optional third
+        field selects an input stream instead of a standard QUA variable. A list
+        of pre-built :class:`~.Parameter` objects is also accepted; in that
+        case all parameters must share the same input type and direction (inferred
+        from the first entry).
 
         Args:
-            parameters_dict: Dictionary should be of the form
-            { "parameter_name": (initial_value, qua_type, Literal["input_stream"]) }
-            where qua_type is the type of the QUA variable to be declared (int, fixed, bool)
-             and the last (optional) field indicates if the variable should be declared as an input_stream instead
-             of a standard QUA variable.
-            There can also be a list of pre-declared Parameter objects.
-            name: Optional name for the parameter table
-
-
+            parameters_dict: Mapping from parameter name to initial value or
+                parameter specification, or a list of :class:`~.Parameter`
+                objects.
+            name: Optional table name. A unique name is generated when omitted.
         """
         self.table: Dict[str, Parameter] = {}
         if name is not None:

@@ -53,15 +53,14 @@ class FluxTunableTransmonBackend(QMBackend):
         name: Optional[str] = None,
         **fields,
     ):
-        """
-        Initialize the QM backend for the Flux-Tunable Transmon based QuAM
+        """Initialize the flux-tunable transmon backend.
 
         Args:
-            machine: The QuAM instance
-            qmm: A QuantumMachinesManager instance (useful if using cloud simulator or IQCC Cloud)
-            name: Name of the backend
-            fields: Optional kwargs to specify backend options
-
+            machine: QuAM instance with ``qubits`` and ``qubit_pairs``.
+            qmm: Optional ``QuantumMachinesManager`` (cloud simulator or IQCC).
+            name: Optional backend name.
+            fields: Optional keyword overrides for default run options (same
+                keys as :class:`~.QMBackend`).
         """
         if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
             raise ValueError(

@@ -57,17 +57,23 @@ add_module_names = False
 modindex_common_prefix = ["qiskit_qm_provider."]
 
 autosummary_generate = True
-autosummary_generate_overwrite = False
+autosummary_generate_overwrite = True
 
 autoclass_content = "both"
-autodoc_typehints = "description"
+autodoc_typehints = "signature"
 autodoc_use_type_comments = False
 autodoc_default_options = {
     "show-inheritance": True,
+    "members": True,
+    "member-order": "bysource",
 }
 
 napoleon_google_docstring = True
 napoleon_numpy_docstring = False
+napoleon_use_param = True
+napoleon_use_rtype = True
+napoleon_use_keyword = True
+napoleon_preprocess_types = True
 
 autodoc_mock_imports = [
     "qiskit.pulse",

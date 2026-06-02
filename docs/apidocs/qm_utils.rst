@@ -3,20 +3,17 @@
 Package root and utilities
 ==========================
 
+See the submodule API pages for re-exported symbols (``QMProvider``, ``QMBackend``,
+``ParameterTable``, and others). This page documents utilities defined at the
+package root.
+
 .. currentmodule:: qiskit_qm_provider
 
-.. rubric:: Package exports
+.. rubric:: Package utilities
 
 .. autosummary::
    :toctree: stubs/
 
-   QMProvider
-   QMBackend
-   FluxTunableTransmonBackend
-   QMSamplerV2
-   QMEstimatorV2
-   ParameterTable
-   Parameter
    FixedPoint
 
 .. automodule:: qiskit_qm_provider

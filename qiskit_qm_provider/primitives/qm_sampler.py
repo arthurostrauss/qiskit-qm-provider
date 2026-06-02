@@ -55,7 +55,7 @@ class QMSamplerOptions:
     """Options for :class:`~.QMSamplerV2`"""
 
     default_shots: int = 1024
-    """The default shots to use if none are specified in :meth:`~.run`.
+    """The default shots to use if none are specified in :meth:`~.QMSamplerV2.run`.
     Default: 1024.
     """
 

@@ -21,15 +21,10 @@ pip install -e ".[docs]"
 From the repository root:
 
 ```bash
-sphinx-build -b html docs docs/_build/html
-```
-
-The first pass generates autosummary stub pages under `docs/apidocs/stubs/` (gitignored). Run the command a second time — or add `-W` on the second pass — to treat warnings as errors once stubs exist:
-
-```bash
-sphinx-build -b html docs docs/_build/html
 sphinx-build -b html -W docs docs/_build/html
 ```
+
+Autosummary generates stub pages under `docs/apidocs/stubs/` during the build (gitignored). Class and function stubs use `:members:` so docstrings, methods, and attributes render on each API page.
 
 Open `docs/_build/html/index.html` in your browser.
 
