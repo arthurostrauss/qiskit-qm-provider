@@ -234,10 +234,20 @@ def add_basic_macros(
     backend: QuamRoot | QMBackend,
     reset_type: Literal["active", "thermalize"] = "thermalize",
 ):
-    """
-    Add macros to the machine.
-    :param machine: The BaseQuam instance to which macros will be added.
-    :param reset_type: The type of reset to use. Can be 'active' or 'thermalize'.
+    """Populate a QuAM machine with standard gate-level macros.
+
+    Adds ``x``, ``sx``, ``rz``, ``sy``, ``sydg``, ``measure``, ``reset``, ``delay``,
+    ``id``, and ``cz`` macros. These definitions are **tailored to flux-tunable
+    transmon** hardware and assume pulse naming from ``FluxTunableQuam`` /
+    quam-builder (e.g. ``x180``, ``x90``, readout pulses, ``CZGate`` on pairs).
+
+    This is a convenience starting point, not a universal hardware definition.
+    Override macros on your own ``QuamRoot`` for other platforms; coordinate with
+    the Quantum Machines team for quam-builder extensions as needed.
+
+    Args:
+        backend: A :class:`~.QMBackend` or :class:`~quam.core.QuamRoot` instance.
+        reset_type: Reset macro variant, ``"active"`` or ``"thermalize"``.
     """
     from iqcc_calibration_tools.quam_config.components.gate_macros import (
         ResetMacro,
@@ -291,13 +301,29 @@ def add_basic_macros(
 def get_measurement_outcomes(
     qc: QuantumCircuit, result: CompilationResult, compute_state_int: bool = True
 ) -> dict[str, dict[str, QuaVariableInt]]:
-    """
-    Get the measurement outcomes resulting from the execution of the QuantumCircuit.
-    This is returned as a dictionary of the form {creg_name: {"value": [outcome_values], "state_int": state_int, "size": size}}, where state_int is a QUA variable that contains the integer representation of each ClassicalRegister belonging to the QuantumCircuit and size is the size of the ClassicalRegister.
-    Note that this follows the Qiskit convention of using the least significant bit (LSB) of the integer to represent the state of the qubit with index 0.
-    We also support the case where the QuantumCircuit contains loose bits (bits that are not associated with a ClassicalRegister).
-    In this case, an extra ClassicalRegister is added to the QuantumCircuit with the name _bit, containing the measurement outcomes of the loose bits with the same convention.
-    :param compute_state_int: If True, compute the state integer for each ClassicalRegister.
+    """Wire classical measurement outcomes from an embedded circuit into QUA variables.
+
+    Call inside the same ``with program():`` block **immediately after**
+    :meth:`~.QMBackend.quantum_circuit_to_qua`. The returned QUA variables reference
+    outcomes from the circuit execution that just completed, enabling real-time QUA
+    control flow and streaming without round-tripping through Python.
+
+    Args:
+        qc: The :class:`~qiskit.circuit.QuantumCircuit` that was compiled.
+        result: The compilation result returned by ``quantum_circuit_to_qua``.
+        compute_state_int: If ``True`` (default), declare an integer packing of
+            each register's bits (LSB = qubit index 0).
+
+    Returns:
+        A dictionary mapping each classical register name to a sub-dictionary:
+
+        - ``"value"``: list of QUA variables, one per measured bit (0/1 outcomes).
+        - ``"size"``: number of bits in the register.
+        - ``"state_int"``: QUA ``int`` with packed bit values (when
+          ``compute_state_int=True``).
+        - ``"stream"``: QUA stream for ``stream_processing()`` on the host.
+
+        Loose clbits not in any register appear under the synthetic key ``"_bit"``.
     """
     clbits_dict = {
         creg.name: {

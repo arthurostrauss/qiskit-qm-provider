@@ -73,6 +73,8 @@ class QMSamplerOptions:
     Default: None (no option passed to backend's ``run`` method)
     """
     meas_level: Literal["classified", "kerneled", "avg_kerneled"] = "classified"
+    """Measurement level. Only ``"classified"`` (0/1 counts) is supported end-to-end
+    today. ``"kerneled"`` and ``"avg_kerneled"`` are not production-ready."""
 
     def __post_init__(self):
         if isinstance(self.input_type, str):

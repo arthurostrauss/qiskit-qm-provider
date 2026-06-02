@@ -1,74 +1,77 @@
 # Parameter Table
 
-The `ParameterTable` module enables real-time parameter updates and streaming.
+`ParameterTable` is the **contract for classical–quantum data** — a single definition shared by Python host logic and QUA program logic, avoiding name and shape mismatches in streaming-heavy workflows.
 
-## ParameterTable
+For method signatures, see the [Parameter Table API reference](apidocs/qm_parameter_table.rst).
 
-`qiskit_qm_provider.parameter_table.parameter_table.ParameterTable`
+## Purpose
 
-Class enabling the mapping of parameters to be updated to their corresponding "to-be-declared" QUA variables.
+Qiskit assumes parameters are bound per circuit run. QUA assumes **long-running programs** with nested loops, streaming, and explicit buffers. Hybrid workflows (feedback, error correction, DGX control) need a stable mapping between:
 
-### `__init__(parameters_dict, name: Optional[str] = None)`
-- `parameters_dict`: Can be:
-    - A dictionary of form `{ "name": (initial_value, qua_type, input_type, direction) }`.
-    - A list of `Parameter` objects.
-- `name`: Optional table name.
+- Qiskit circuit parameters and classical input variables, and
+- QUA variables loaded from streams, IO, or DGX.
 
-### Methods
+`ParameterTable` and `Parameter` provide that mapping.
 
-- **`declare_variables(pause_program=False)`**
-    Declares all QUA variables in the table. Call this within a QUA program.
+## Two parameter categories
 
-- **`load_input_values(filter_function=None)`**
-    Loads values from the configured input mechanism (Input Stream, IO, DGX).
+1. **Symbolic circuit parameters → real-time QUA variables** — build with `ParameterTable.from_qiskit(qc, input_type=...)` from a circuit's symbolic parameters. Values can be updated in real time (phase, amplitude, frame rotation).
+2. **Custom streamed classical data** — define `Parameter` objects directly with `InputType` and `Direction` for host↔device data (e.g. syndrome integers).
 
-- **`push_to_opx(param_dict, job, qm, verbosity)`**
-    (Client-side) Pushes values to the OPX.
-    - `param_dict`: Dictionary of `{parameter_name: value}`.
+**ASCII parameter names:** QOP rejects non-ASCII names. Use `theta`, `phi`, not Greek symbols, when building tables from Qiskit circuits.
 
-- **`fetch_from_opx(job, fetching_index, fetching_size)`**
-    (Client-side) Fetches values from the OPX (if configured for output/streaming).
+## Lifecycle
 
-- **`stream_back(reset=False)`**
-    (QUA-side) Streams the current parameter values back to the client.
+**QUA side:**
 
-- **`from_qiskit(qc: QuantumCircuit, input_type, filter_function)`**
-    Class method to generate a table from a Qiskit circuit's parameters.
+1. `declare_variables()` / `declare_variable()` — create QUA variables inside `with program():`.
+2. Pass the table to `quantum_circuit_to_qua(qc, param_table=...)`.
+3. `load_input_values()` — read streamed parameters from the host.
+4. `stream_back()` — push values to output streams.
 
----
+**Python side:**
 
-## Parameter
+- `push_to_opx(param_dict, job, qm)` — send values to the OPX.
+- `fetch_from_opx(job, ...)` — retrieve streamed results.
 
-`qiskit_qm_provider.parameter_table.parameter.Parameter`
+## Minimal example
 
-Represents a single parameter.
+```python
+from qiskit_qm_provider import Parameter, ParameterTable, Direction, InputType
 
-### `__init__(name, value, qua_type, input_type, direction, units)`
-- `name`: Parameter name.
-- `value`: Initial value.
-- `qua_type`: `int`, `float`, `bool`, or `fixed`.
-- `input_type`: `InputType` enum.
-- `direction`: `Direction` enum (for DGX).
+# Streamed syndrome integer (host ← device)
+syndrome_data = Parameter(
+    "syndrome_data",
+    0,
+    input_type=InputType.INPUT_STREAM,
+    direction=Direction.INCOMING,
+)
 
-### Methods
+# Recovery circuit parameters (host → device)
+recovery_vars = ParameterTable.from_qiskit(
+    recovery_circuit,
+    input_type=InputType.INPUT_STREAM,
+)
+```
 
-- **`assign(value)`**: Assigns a value (can be QUA variable or constant) to this parameter.
-- **`save_to_stream()`**: Saves the parameter's current value to its declared stream.
+Inside QUA:
 
----
+```python
+recovery_vars.declare_variables()
+syndrome_data.declare_variable()
+syndrome_data.declare_stream()
+```
 
-## InputType & Direction
+For the full error-correction loop using these tables, see [Error-Correction Workflow](error_correction.md).
 
-`qiskit_qm_provider.parameter_table.input_type`
+## Supporting types
 
-### `InputType`
-Enum for input mechanisms:
-- `DGX_Q`: DGX Quantum communication.
-- `INPUT_STREAM`: Standard QOP Input Stream.
-- `IO1`, `IO2`: GPIO inputs.
+- **`ParameterPool`** — coordinate multiple tables in one program.
+- **`QUA2DArray` / `QUAArray`** — multi-index parameter memory (flattened QUA arrays).
+- **`ParameterVector` note:** OpenQASM 3 exports `ParameterVector` elements as individual parameters; `from_qiskit` handles this transparently.
 
-### `Direction`
-Enum for DGX data flow:
-- `INCOMING`: OPX -> DGX.
-- `OUTGOING`: DGX -> OPX.
-- `BOTH`: Bidirectional.
+## Related
+
+- **Guide:** [Backend — embedding](backend.md#embed-in-qua-hybrid), [Error correction](error_correction.md)
+- **API:** [Parameter Table reference](apidocs/qm_parameter_table.rst)
+- **Workflows:** [Hybrid embedding](workflows.md#hybrid-qua-qiskit-programs-embedding-circuits-in-qua)

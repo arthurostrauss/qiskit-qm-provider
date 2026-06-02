@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""QuAM–Qiskit pulse integration: SymbolicPulse registration and QUA compiler features.
+"""QuAM–Qiskit Pulse integration (Qiskit 1.x legacy).
 
-Author: Arthur Strauss
-Date: 2026-02-08
+Registers :class:`~qiskit.pulse.SymbolicPulse` features for the QUA compiler and
+maps pulse schedules to QUA macros. Gate schedules only — not Pulse measurement
+instructions.
 """
 
 from copy import deepcopy
@@ -66,16 +67,33 @@ def return_samples_output(pulse: SymbolicPulse):
 
 
 class FluxChannel(QiskitChannel):
+    """Qiskit Pulse channel type for flux lines on flux-tunable transmons.
+
+    Used with :class:`~.QuAMQiskitPulse` and ``FluxTunableTransmonBackend`` channel
+    mapping when converting gate pulse schedules to QUA.
+    """
+
     prefix = "f"
 
 
 @quam_dataclass
 class QuAMQiskitPulse(QuAMPulse):
+    """QuAM pulse wrapper for a Qiskit :class:`~qiskit.pulse.SymbolicPulse` or :class:`~qiskit.pulse.Waveform`.
+
+    Bridges Qiskit Pulse samples and real-time parameters into the QUA compiler.
+    Gate schedules only — not Pulse measurement instructions.
+    """
+
     # pulse: Union[SymbolicPulse, Waveform]
     # length: Optional[int] = None
     # id: Optional[str] = None
 
     def __init__(self, pulse: Union[SymbolicPulse, Waveform]):
+        """Wrap a Qiskit Pulse object for QuAM macro registration.
+
+        Args:
+            pulse: Symbolic or sample-based pulse from a gate schedule.
+        """
         self.pulse = pulse
         self._stored_parameter_expressions = {
             "amp": None,

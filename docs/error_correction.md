@@ -111,9 +111,7 @@ to make these variables live inside the program.
 
 ### 2.2 Streaming syndrome data out
 
-Inside the QUA loop, after running the **syndrome‑measurement circuit** via
-`backend.quantum_circuit_to_qua`, you use `get_measurement_outcomes` to obtain a
-`state_int` representing the measured syndrome:
+Inside the QUA loop, **immediately after** `backend.quantum_circuit_to_qua` in the same program, call `get_measurement_outcomes` to wire syndrome data into QUA variables:
 
 ```python
 from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes
@@ -126,14 +124,16 @@ syndrome_data.assign(state_int_val)
 syndrome_data.stream_back(reset=True)
 ```
 
-Conceptually:
+The returned dictionary maps each classical register name to:
 
-- `state_int_val` is the **hybrid handshake**: a compact representation of the measured syndrome.
-- `syndrome_data.assign(...)` makes it available as a QUA variable.
-- `syndrome_data.stream_back(...)` pushes it to the output stream so the host can read it.
+| Key | Role in EC workflow |
+|-----|---------------------|
+| `value` | Per-bit QUA variables from the syndrome measurement |
+| `state_int` | Packed integer syndrome (LSB = qubit 0) — the usual handle for decoding |
+| `size` | Number of syndrome bits |
+| `stream` | Stream handle for `stream_processing()` on the host |
 
-On the Python side, you can then **fetch the stream** and apply any classical processing you
-need (decoding, look‑up tables, machine‑learning models, etc.).
+See [Backend guide — get_measurement_outcomes](backend.md#get-measurement-outcomes-return-dictionary) for full details.
 
 ### 2.3 Streaming recovery parameters in
 
@@ -205,4 +205,10 @@ The end result is a **hybrid error‑correction loop** where:
 - and `ParameterTable` is the **contract** that keeps both views aligned.
 
 This is the kind of workflow `qiskit-qm-provider` is designed to make natural rather than painful.
+
+## Related
+
+- **Guides:** [Backend — embedding](backend.md#embed-in-qua-hybrid), [Parameter Table](parameter_table.md), [Workflows — hybrid](workflows.md#hybrid-qua-qiskit-programs-embedding-circuits-in-qua)
+- **API:** [Parameter Table reference](apidocs/qm_parameter_table.rst), [Backend reference](apidocs/qm_backend.rst)
+- **Example:** full QEC program skeleton in the [repository README](https://github.com/arthurostrauss/qiskit-qm-provider#error-correction-and-parameter-table)
 
