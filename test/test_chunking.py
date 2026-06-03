@@ -120,19 +120,17 @@ class TestPlanRunPrograms:
     """Build real QUA programs through the planner (requires a QuAM machine)."""
 
     def test_splits_into_multiple_programs(self, flux_tunable_backend):
+        flux_tunable_backend.set_options(max_circuits=3)
         circuits = [_measure_circuit() for _ in range(7)]
-        programs, layout = plan_run_programs(
-            flux_tunable_backend, 100, circuits, max_circuits=3
-        )
+        programs, layout = plan_run_programs(flux_tunable_backend, 100, circuits)
         assert layout == [[0, 1, 2], [3, 4, 5], [6]]
         assert len(programs) == 3
         assert all(isinstance(p, Program) for p in programs)
 
     def test_single_program_under_limit(self, flux_tunable_backend):
+        flux_tunable_backend.set_options(max_circuits=30)
         circuits = [_measure_circuit() for _ in range(3)]
-        programs, layout = plan_run_programs(
-            flux_tunable_backend, 100, circuits, max_circuits=30
-        )
+        programs, layout = plan_run_programs(flux_tunable_backend, 100, circuits)
         assert layout == [[0, 1, 2]]
         assert len(programs) == 1
         assert isinstance(programs[0], Program)
@@ -141,6 +139,7 @@ class TestPlanRunPrograms:
         self, flux_tunable_backend
     ):
         # Backward-compat wrapper: a single program is returned bare (not a list).
+        flux_tunable_backend.set_options(max_circuits=None)
         circuits = [_measure_circuit() for _ in range(40)]
         prog = get_run_program(flux_tunable_backend, 100, circuits)
         assert isinstance(prog, Program)

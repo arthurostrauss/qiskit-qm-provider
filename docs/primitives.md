@@ -8,7 +8,7 @@ For signatures and options fields, see the [Primitives API reference](apidocs/qm
 
 Generic cloud primitives assume parameters are bound at submission time. QOP workloads often **stream parameters cycle-by-cycle** via [`InputType`](apidocs/stubs/qiskit_qm_provider.parameter_table.InputType.rst) (`INPUT_STREAM`, `IO1`, `IO2`, `DGX_Q`). These primitives expose that capability while reusing QuAM-derived Targets for transpilation.
 
-The traditional [`QMBackend.run()`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) interface mimics Sampler-like behavior for users who prefer the classic backend API.
+The traditional [`QMBackend.run()`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) interface mimics Sampler-like behavior for users who prefer the classic backend API. Like `backend.run`, primitives respect the [`max_circuits`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) backend option and will split large batches into multiple QUA programs when needed. See [Backend — multi-circuit batches](backend.md#multi-circuit-batches-and-max_circuits).
 
 ## Classified measurement outcomes only
 
@@ -54,13 +54,36 @@ result = job.result()
 
 Configure options via [`QMSamplerOptions`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerOptions.rst) or [`QMEstimatorOptions`](apidocs/stubs/qiskit_qm_provider.primitives.QMEstimatorOptions.rst). Set `input_type=None` to bind all parameter values at compile time (suitable only when the number of distinct parameter sets is small).
 
+## Large PUB batches and `max_circuits`
+
+When the number of PUBs passed to `sampler.run()` or `estimator.run()` exceeds `backend.options.max_circuits` (default `30`), the provider automatically splits them into consecutive chunks. Each chunk is compiled into its own QUA program and queued sequentially on QOP. The returned `PrimitiveResult` always has one entry per input PUB **in the original order** — the splitting is fully transparent to calling code.
+
+```python
+# Reduce the limit so that even small batches trigger splitting:
+backend.set_options(max_circuits=5)
+
+sampler = QMSamplerV2(backend=backend)
+# 12 PUBs -> 3 programs of 5, 5, 2 PUBs queued sequentially
+job = sampler.run([pub_0, pub_1, ..., pub_11])
+result = job.result()  # 12 SamplerPubResult entries, in original order
+```
+
+Set `max_circuits=None` to disable splitting and always build a single program regardless of batch size.
+
 ## Debugging generated QUA
 
-Every primitive job and `backend.run()` exposes the generated QUA `Program` on `job.program`:
+Every primitive job and `backend.run()` exposes the generated QUA `Program` on `job.program`. When PUBs (or circuits) are split into multiple chunks, `job.program` is a **list** of programs — one per chunk:
 
 ```python
 from qm import generate_qua_script
-print(generate_qua_script(job.program))
+
+prog = job.program
+if isinstance(prog, list):
+    for chunk_idx, p in enumerate(prog):
+        print(f"=== QUA program {chunk_idx} ===")
+        print(generate_qua_script(p))
+else:
+    print(generate_qua_script(prog))
 ```
 
 - **Guide:** [Workflows — Generated QUA programs](workflows.md#generated-qua-programs-and-how-to-inspect-them)

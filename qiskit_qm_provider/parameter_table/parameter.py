@@ -384,6 +384,20 @@ class Parameter:
             declare_stream: If ``True``, declare an output stream for the QUA variable.
         """
         if self.is_declared:
+            if self._input_type not in (InputType.DGX_Q, None):
+                # For streaming modes (INPUT_STREAM, IO1, IO2) the same Parameter
+                # object may be shared across sequential plans in one QUA program.
+                # The variable is already in scope — skip redeclaration silently.
+                # DGX_Q / None (compile-time) always require a strict single declaration.
+                # See claude_work/2026-06-03_parameter-redeclaration-tradeoffs.md
+                import warnings
+                warnings.warn(
+                    f"Parameter '{self.name}' is already declared. "
+                    "Skipping redeclaration (safe for streaming input types).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                return
             raise ValueError("Variable already declared. Cannot declare again.")
         if self.input_type == InputType.DGX_Q:
             if self.is_standalone():

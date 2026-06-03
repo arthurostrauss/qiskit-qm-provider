@@ -27,6 +27,55 @@ print(generate_qua_script(job.program))
 result = job.result()
 ```
 
+### Multi-circuit batches and `max_circuits`
+
+When you pass a **list** of circuits to [`QMBackend.run()`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst), the provider may build **more than one** QUA program and queue them sequentially on QOP. Results are still returned as a **single** Qiskit [`Result`](https://quantum.cloud.ibm.com/docs/api/qiskit/qiskit.result.Result) with experiments in the same order as your input list.
+
+This behaviour also applies to [`QMSamplerV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerV2.rst) and [`QMEstimatorV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMEstimatorV2.rst) — see the [Primitives guide](primitives.md#large-pub-batches-and-max_circuits) for details. It does **not** apply to [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst).
+
+**Backend option** [`max_circuits`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) (default `30`):
+
+| Value | Effect |
+|-------|--------|
+| Positive integer | Pack at most this many circuits (or PUBs) per QUA program. Larger batches are split into consecutive chunks (e.g. 70 circuits → 30 + 30 + 10). |
+| `None` | Disable size-based splitting — always one QUA program for the full batch (unless calibrations force a split; see below). |
+
+Set it at construction time or update it at any point before submitting a job:
+
+```python
+# At construction time:
+backend = FluxTunableTransmonBackend(machine, max_circuits=10)
+
+# Or update after construction — applies to the next backend.run() / sampler.run() call:
+backend.set_options(max_circuits=10)
+```
+
+**Splitting rules** (in priority order):
+
+1. **Conflicting calibrations** — one circuit per QUA program (unchanged).
+2. **`len(circuits) > max_circuits`** — consecutive groups of `max_circuits` circuits.
+3. **Otherwise** — a single program holding all circuits.
+
+**Inspecting generated QUA** — `job.program` is a single `Program` when only one QUA program was built; otherwise a `list[Program]` (one entry per chunk):
+
+```python
+from qm import generate_qua_script
+
+circuits = [make_circuit(i) for i in range(100)]
+job = backend.run(circuits, shots=256)
+
+if isinstance(job.program, list):
+    for chunk_idx, prog in enumerate(job.program):
+        print(f"=== QUA program {chunk_idx} ===")
+        print(generate_qua_script(prog))
+else:
+    print(generate_qua_script(job.program))
+
+result = job.result()  # one Result; experiment order matches `circuits`
+```
+
+Use a smaller `max_circuits` when a single packed program grows too large for QOP compilation or device limits. Use `max_circuits=None` when you intentionally want one program for the entire batch (for example small Experiment-style batches that still fit in one compile).
+
 ### Embed-in-QUA (hybrid)
 
 Inside `with program():`, compile a circuit as a QUA macro and wire classical outcomes **in the same program**:

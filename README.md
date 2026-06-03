@@ -151,12 +151,20 @@ We provide custom implementations of the standard Qiskit Primitives, `QMEstimato
 ### Generated QUA program (debugging)
 
 `QMSamplerV2`, `QMEstimatorV2`, and `backend.run()` automatically generate the underlying QUA program
-sent to QOP. For debugging, you can inspect the generated QUA `Program` on `job.program` (where
-`job` is returned by either a primitive’s `run()` or `backend.run()`), and print it as a QUA script:
+sent to QOP. For debugging, inspect `job.program` and print it with `generate_qua_script`. Chunked
+`backend.run` jobs expose a **list** of programs; primitive jobs and single-program runs expose one
+`Program`:
 
 ```python
 from qm import generate_qua_script
-print(generate_qua_script(job.program))
+
+prog = job.program
+if isinstance(prog, list):
+    for i, p in enumerate(prog):
+        print(f"=== chunk {i} ===")
+        print(generate_qua_script(p))
+else:
+    print(generate_qua_script(prog))
 ```
 
 For a full workflow snippet (primitives + `backend.run()` + printing the generated QUA), see
@@ -177,6 +185,17 @@ result = job.result()
 ```
 
 We also implement the traditional `backend.run()` function, which closely mimics the `Sampler` primitive behavior.
+
+#### Multi-circuit batches (`max_circuits`)
+
+When `backend.run()` receives a **list** of circuits, the provider may split the batch into several QUA programs (queued sequentially on QOP) instead of packing everything into one compile. This keeps large Experiment-style batches within QOP size limits while still returning a **single** stitched Qiskit `Result`.
+
+- Set at backend construction: `max_circuits=30` (default) on [`QMBackend`](qiskit_qm_provider/backend/qm_backend.py) or subclasses (e.g. `FluxTunableTransmonBackend(machine, max_circuits=10)`).
+- Use `max_circuits=None` to disable size-based splitting.
+- **Does not apply** to `QMSamplerV2`, `QMEstimatorV2`, or `quantum_circuit_to_qua`.
+- `job.program` is a single `Program` for one chunk, or a `list[Program]` when chunked.
+
+See [docs/backend.md](docs/backend.md#multi-circuit-batches-and-max_circuits-backend-run-only) for splitting rules (including conflicting calibrations) and inspection examples.
 
 ### Primitive options (QMSamplerOptions and QMEstimatorOptions)
 

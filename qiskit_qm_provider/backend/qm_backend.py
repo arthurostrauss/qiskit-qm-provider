@@ -170,7 +170,7 @@ class QMBackend(Backend):
                 name = "QMBackend"
         Backend.__init__(self, name=name, **fields)
 
-        self._max_circuits = max_circuits
+        self.set_options(max_circuits=max_circuits)
         self._custom_instructions = {}
         self.machine = validate_machine(machine)
         self._qmm: Optional[QuantumMachinesManager | CloudQuantumMachinesManager] = qmm
@@ -240,6 +240,7 @@ class QMBackend(Backend):
             meas_level=MeasLevel.CLASSIFIED,
             meas_return=MeasReturnType.AVERAGE,
             timeout=60,
+            max_circuits=30,
         )
 
     @property
@@ -434,12 +435,15 @@ class QMBackend(Backend):
 
     @property
     def max_circuits(self):
-        """Maximum number of circuits packed into a single QUA program.
+        """Maximum number of circuits (or PUBs for Primitives) packed into a single QUA program.
 
-        ``backend.run`` splits larger batches into several queued QUA programs.
+        ``backend.run``, ``QMSamplerV2``, and ``QMEstimatorV2`` all split larger batches into
+        several queued QUA programs whose results are stitched back transparently.
         ``None`` disables splitting (a single program is always built).
+
+        Can be updated at any time via ``backend.set_options(max_circuits=N)``.
         """
-        return self._max_circuits
+        return self.options.max_circuits
 
     def _populate_target(self) -> None:
         """

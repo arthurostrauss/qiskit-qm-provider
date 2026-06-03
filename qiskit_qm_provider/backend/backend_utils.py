@@ -262,6 +262,8 @@ def add_basic_macros(
     ``id``, and ``cz`` macros. These definitions are **tailored to flux-tunable
     transmon** hardware and assume pulse naming from ``FluxTunableQuam`` /
     quam-builder (e.g. ``x180``, ``x90``, readout pulses, ``CZGate`` on pairs).
+    One can either pass a BaseQuam instance or a QMBackend instance.
+    If the latter is passed, the target will be updated accordingly.
 
     This is a convenience starting point, not a universal hardware definition.
     Override macros on your own ``QuamRoot`` for other platforms; coordinate with
@@ -310,7 +312,7 @@ def add_basic_macros(
         try:
             qubit_pair.macros["cz"] = None
             qubit_pair.macros["cz"] = CZGate(
-                flux_pulse_control=qubit_pair.qubit_control.z.operations[
+                flux_pulse_qubit=qubit_pair.qubit_control.z.operations[
                     "const"
                 ].get_reference(),
             )
@@ -318,7 +320,8 @@ def add_basic_macros(
             warnings.warn(
                 f"Could not add default two qubit gates. Add it manually if necessary. Error: {e}"
             )
-
+    if isinstance(backend, QMBackend):
+        backend.update_target()
 
 def get_measurement_outcomes(
     qc: QuantumCircuit, result: CompilationResult, compute_state_int: bool = True

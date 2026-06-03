@@ -69,7 +69,10 @@ class QMJob(JobV1):
     """Qiskit job handle for QUA program execution on a QM backend.
 
     Returned by :meth:`~qiskit_qm_provider.backend.qm_backend.QMBackend.run`.
-    Exposes the generated QUA :attr:`program` for inspection via ``qm.generate_qua_script``.
+    :attr:`program` holds the generated QUA program(s) for inspection via
+    ``qm.generate_qua_script``. When :meth:`~qiskit_qm_provider.backend.qm_backend.QMBackend.run`
+    splits a large batch (see ``backend.max_circuits``), ``program`` is a list of
+    :class:`~qm.Program` objects executed sequentially; otherwise it is a single program.
     """
 
     def __init__(
@@ -282,9 +285,7 @@ class QMJob(JobV1):
         # into several programs (<= backend.max_circuits circuits each) that are
         # queued sequentially; ``chunk_layout`` records which global circuit
         # indices live in each program so results can be stitched back together.
-        programs, chunk_layout = plan_run_programs(
-            backend, num_shots, new_circuits, backend.max_circuits
-        )
+        programs, chunk_layout = plan_run_programs(backend, num_shots, new_circuits)
         # Keep a bare Program (not a 1-element list) for the single-program case
         # to preserve the qm.execute() / qm.simulate() fast path.
         run_program = programs[0] if len(programs) == 1 else programs

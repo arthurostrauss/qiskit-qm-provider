@@ -42,7 +42,7 @@ from ..parameter_table import (
     ParameterPool,
     Parameter as QuaParameter,
 )
-from .qua_programs import estimator_program
+from .qua_programs import plan_estimator_programs
 from .qm_primitive_job import QMPrimitiveJob
 from ..primitives.qm_estimator import QMEstimatorOptions
 from dataclasses import dataclass, field
@@ -235,9 +235,14 @@ class QMEstimatorJob(QMPrimitiveJob):
 
     @property
     def result_handles(self):
-        """Underlying QM result handles after job submission."""
+        """Underlying QM result handles after job submission.
+
+        Returns a list of handles when the job was chunked into multiple programs.
+        """
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")
+        if isinstance(self._qm_job, list):
+            return [j.result_handles for j in self._qm_job]
         return self._qm_job.result_handles
 
     def result(self) -> ResultT:
@@ -280,70 +285,88 @@ class QMEstimatorJob(QMPrimitiveJob):
         self._obs_length_vars = QuaParameter(
             name="obs_length_var", value=0, qua_type=int, input_type=input_type
         )
-        self._program = estimator_program(
-            backend, self._execution_plans, obs_length_var=self._obs_length_vars
+        programs, self._chunk_layout = plan_estimator_programs(
+            backend,
+            self._execution_plans,
+            obs_length_var=self._obs_length_vars,
         )
+        # Keep a bare Program (not a 1-element list) for the single-program fast path.
+        self._program = programs[0] if len(programs) == 1 else programs
+        # Locator: global plan index -> (chunk_program_index, local_plan_index)
+        self._locator = {
+            g: (c, l)
+            for c, chunk in enumerate(self._chunk_layout)
+            for l, g in enumerate(chunk)
+        }
+
+    def _push_plan_data(self, qm_job, plan: "_ExecutionPlan") -> None:
+        """Stream parameters and observable indices for one execution plan to OPX."""
+        param_table = plan.param_table
+        observables_var = plan.observables_var
+
+        if param_table is not None and param_table.input_type is not None:
+            for p, param_value in enumerate(plan.pub.parameter_values.ravel().as_array()):
+                param_dict = {
+                    param.name: value
+                    for param, value in zip(param_table.parameters, param_value)
+                }
+                param_table.push_to_opx(param_dict, qm_job, self._backend.qm)
+                if observables_var.input_type is not None:
+                    self._obs_length_vars.push_to_opx(
+                        len(plan.obs_indices[p]), qm_job, self._backend.qm
+                    )
+                    for obs_value in plan.obs_indices[p]:
+                        obs_dict = {f"obs_{j}": val for j, val in enumerate(obs_value)}
+                        observables_var.push_to_opx(obs_dict, qm_job, self._backend.qm)
+        elif observables_var.input_type is not None:
+            self._obs_length_vars.push_to_opx(
+                len(plan.obs_indices[0]), qm_job, self._backend.qm
+            )
+            for obs_value in plan.obs_indices[0]:
+                obs_dict = {f"obs_{j}": val for j, val in enumerate(obs_value)}
+                observables_var.push_to_opx(obs_dict, qm_job, self._backend.qm)
 
     def submit(self):
-        """Submit the job to the backend after creating an efficient execution plan."""
+        """Submit the job to the backend.
+
+        When execution plans were split into multiple QUA programs (chunked
+        execution), each program is queued sequentially on QOP.  Results from
+        all chunks are transparently stitched back in :meth:`_result_function`.
+        """
         if self._qm_job is not None:
             raise RuntimeError("Job has already been submitted.")
 
         compiler_options = self.metadata.get("compiler_options", None)
         simulate = self.metadata.get("simulate", None)
-        # 3. EXECUTION: Start the QUA program on the OPX. It will wait for data.
-        if simulate is not None and isinstance(
-            self._backend.qmm, QuantumMachinesManager
-        ):
+
+        programs = self._program if isinstance(self._program, list) else [self._program]
+
+        if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
+            # Simulation only supports a single program — use the first chunk.
             self._qm_job = self._backend.qmm.simulate(
                 self._backend.qm_config,
-                estimator_prog,
+                programs[0],
                 simulate=simulate,
                 compiler_options=compiler_options,
             )
             self._job_id = self._qm_job.id
-        else:
+            for global_idx in self._chunk_layout[0]:
+                self._push_plan_data(self._qm_job, self._execution_plans[global_idx])
+        elif len(programs) == 1:
             self._qm_job = self._backend.qm.execute(
-                estimator_prog, compiler_options=compiler_options
+                programs[0], compiler_options=compiler_options
             )
             self._job_id = self._qm_job.id
-
-        # 4. DATA PUSHING: Loop through the planned tasks and push data to the running job.
-        for i, plan in enumerate(self._execution_plans):
-            plan = self._execution_plans[i]
-            param_table = plan.param_table
-            observables_var = plan.observables_var
-
-            # Push parameter values if the circuit has them
-            if param_table is not None and param_table.input_type is not None:
-                for p, param_value in enumerate(
-                    plan.pub.parameter_values.ravel().as_array()
-                ):
-                    param_dict = {
-                        param.name: value
-                        for param, value in zip(param_table.parameters, param_value)
-                    }
-                    param_table.push_to_opx(param_dict, self.qm_job, self._backend.qm)
-                    if observables_var.input_type is not None:
-                        self._obs_length_vars.push_to_opx(
-                            len(plan.obs_indices[p]), self.qm_job, self._backend.qm
-                        )
-                        for obs_value in plan.obs_indices[p]:
-                            obs_dict = {
-                                f"obs_{i}": val for i, val in enumerate(obs_value)
-                            }
-                            observables_var.push_to_opx(
-                                obs_dict, self.qm_job, self._backend.qm
-                            )
-
-            # Push observable indices
-            elif observables_var.input_type is not None:
-                self._obs_length_vars.push_to_opx(
-                    len(plan.obs_indices[0]), self.qm_job, self._backend.qm
-                )
-                for obs_value in plan.obs_indices[0]:
-                    obs_dict = {f"obs_{i}": val for i, val in enumerate(obs_value)}
-                    observables_var.push_to_opx(obs_dict, self.qm_job, self._backend.qm)
+            for global_idx in self._chunk_layout[0]:
+                self._push_plan_data(self._qm_job, self._execution_plans[global_idx])
+        else:
+            self._qm_job = []
+            for prog, chunk in zip(programs, self._chunk_layout):
+                job = self._backend.qm.queue.add(prog, compiler_options=compiler_options)
+                self._qm_job.append(job)
+                for global_idx in chunk:
+                    self._push_plan_data(job, self._execution_plans[global_idx])
+            self._job_id = ",".join(j.id for j in self._qm_job)
 
     def _calc_expval_map(
         self,
@@ -463,19 +486,18 @@ class QMEstimatorJob(QMPrimitiveJob):
     ) -> PrimitiveResult[PubResult]:
         is_job_list = isinstance(qm_job, list)
         if is_job_list:
-            results_handle = [job.result_handles for job in qm_job]
-            for handle in results_handle:
+            results_handles = [job.result_handles for job in qm_job]
+            for handle in results_handles:
                 handle.wait_for_all_values()
         else:
-            results_handle = qm_job.result_handles
-            results_handle.wait_for_all_values()
+            results_handles = qm_job.result_handles
+            results_handles.wait_for_all_values()
 
         pub_results = []
         for i, plan in enumerate(self._execution_plans):
-            if is_job_list:
-                data = results_handle[i].get(f"__c_{i}").fetch_all()["value"]
-            else:
-                data = results_handle.get(f"__c_{i}").fetch_all()["value"]
+            chunk_idx, local_idx = self._locator[i]
+            handle = results_handles[chunk_idx] if is_job_list else results_handles
+            data = handle.get(f"__c_{local_idx}").fetch_all()["value"]
 
             num_qubits = len(plan.active_qubits)
             shots = plan.shots
@@ -526,7 +548,8 @@ class IQCCEstimatorJob(QMEstimatorJob):
         """Submit the job to the backend."""
         from .post_hook_estimator import generate_sync_hook_estimator
 
-        estimator_prog = self._program
+        # IQCC execution does not support multi-program chunking; use the first (and only) chunk.
+        estimator_prog = self._program[0] if isinstance(self._program, list) else self._program
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
 

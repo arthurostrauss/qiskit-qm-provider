@@ -49,10 +49,14 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         self._program = None
 
     def status(self) -> JobStatus:
-        """Return the job status."""
+        """Return the job status.
+
+        When the job was split into multiple QUA programs (chunked execution),
+        returns the least-advanced status across all chunk jobs.  The aggregate
+        is ``DONE`` only when every chunk has completed.
+        """
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")
-        status = self._qm_job.status
         mapping = {
             "unknown": JobStatus.ERROR,
             "pending": JobStatus.QUEUED,
@@ -62,7 +66,13 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
             "loading": JobStatus.VALIDATING,
             "error": JobStatus.ERROR,
         }
-        return mapping.get(status, JobStatus.ERROR)
+        if isinstance(self._qm_job, list):
+            statuses = [mapping.get(getattr(j, "status", "unknown"), JobStatus.ERROR) for j in self._qm_job]
+            for state in (JobStatus.ERROR, JobStatus.CANCELLED, JobStatus.VALIDATING, JobStatus.QUEUED, JobStatus.RUNNING):
+                if state in statuses:
+                    return state
+            return JobStatus.DONE
+        return mapping.get(self._qm_job.status, JobStatus.ERROR)
 
     def done(self) -> bool:
         """Return whether the job has successfully run."""
@@ -81,10 +91,14 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         return self.status() in [JobStatus.DONE, JobStatus.ERROR]
 
     def cancel(self):
-        """Attempt to cancel the job."""
+        """Attempt to cancel the job.  Cancels all chunk jobs for chunked execution."""
         if self._qm_job is None:
             raise RuntimeError("QM job is not running")
-        return self._qm_job.cancel()
+        if isinstance(self._qm_job, list):
+            for j in self._qm_job:
+                j.cancel()
+        else:
+            return self._qm_job.cancel()
 
     @property
     def qm_job(self) -> Optional[Union[RunningQmJob, List[QmPendingJob]]]:
