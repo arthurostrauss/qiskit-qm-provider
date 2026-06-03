@@ -66,7 +66,11 @@ except ImportError:  # pragma: no cover - environment without Pulse
 
 
 class QMJob(JobV1):
-    """QMJob class for Quantum Machines."""
+    """Qiskit job handle for QUA program execution on a QM backend.
+
+    Returned by :meth:`~qiskit_qm_provider.backend.qm_backend.QMBackend.run`.
+    Exposes the generated QUA :attr:`program` for inspection via ``qm.generate_qua_script``.
+    """
 
     def __init__(
         self,
@@ -333,7 +337,7 @@ class QMJob(JobV1):
         return job
 
     def status(self) -> JobStatus:
-        """Return the job status."""
+        """Return Qiskit job status mapped from the underlying QM job."""
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")
         mapping = {
@@ -366,7 +370,7 @@ class QMJob(JobV1):
         return mapping.get(status, JobStatus.ERROR)
 
     def submit(self):
-        """Submit the job to the backend."""
+        """Execute or queue the QUA program on the Quantum Machine."""
         compiler_options = self.metadata.get("compiler_options", None)
         simulate = self.metadata.get("simulate", None)
         if isinstance(self.qm, QuantumMachine):
@@ -407,7 +411,7 @@ class QMJob(JobV1):
                 self._job_id = self._qm_job.id if hasattr(self._qm_job, "id") else ""
 
     def cancel(self):
-        """Cancel the job."""
+        """Cancel the underlying QM job(s)."""
         if self._qm_job is None:
             raise RuntimeError("QM job is not running")
         if isinstance(self._qm_job, list):
@@ -417,7 +421,7 @@ class QMJob(JobV1):
         return self._qm_job.cancel()
 
     def result(self):
-        """Get the job result."""
+        """Build and return a Qiskit :class:`~qiskit.result.Result` from QM streaming data."""
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")
 
@@ -425,14 +429,18 @@ class QMJob(JobV1):
 
     @property
     def qm_job(self) -> Optional[RunningQmJob | List[QmPendingJob | RunningQmJob]]:
-        """Get the QM job."""
+        """Underlying QM SDK job object after submission."""
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")
         return self._qm_job
 
 
 class IQCCJob(QMJob):
-    """IQCC Job class for Quantum Machines."""
+    """Job handle for IQCC cloud execution via :class:`~qiskit_qm_provider.providers.IQCCProvider`.
+
+    Submits programs through the IQCC cloud client. Job status is not available via
+    :meth:`status`; use IQCC cloud APIs to poll execution instead.
+    """
 
     def __init__(
         self,

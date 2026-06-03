@@ -42,7 +42,11 @@ if TYPE_CHECKING:
 
 
 class QMSamplerJob(QMPrimitiveJob):
-    """QM Primitive Job class for executing QUA programs from PUBs."""
+    """Job handle for :class:`~qiskit_qm_provider.primitives.QMSamplerV2` execution.
+
+    Builds a QUA sampler program from pubs and returns classified counts via
+    :meth:`result`.
+    """
 
     def __init__(
         self,
@@ -51,6 +55,15 @@ class QMSamplerJob(QMPrimitiveJob):
         input_type: InputType,
         **kwargs,
     ):
+        """Create a sampler job.
+
+        Args:
+            backend: Backend that compiled the circuits.
+            pubs: Coerced sampler pubs to execute.
+            input_type: How circuit parameters are streamed to the OPX.
+            **kwargs: Additional options forwarded to QUA program generation
+                and backend execution (e.g. ``shots``, ``meas_level``).
+        """
         super().__init__(backend, pubs, input_type, **kwargs)
         ParameterPool.reset()
         self._param_tables = [
@@ -147,7 +160,12 @@ class QMSamplerJob(QMPrimitiveJob):
                         )
 
     def result(self) -> PrimitiveResult[SamplerPubResult]:
-        """Get the job result."""
+        """Build and return classified measurement counts for all pubs.
+
+        Returns:
+            :class:`~qiskit.primitives.PrimitiveResult` with
+            :class:`~qiskit.primitives.SamplerPubResult` entries.
+        """
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")
         return self._result_function(self._qm_job)

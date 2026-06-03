@@ -1,73 +1,90 @@
 # Providers
 
-## QMProvider
+Providers are **environment adapters**: they answer "how do I obtain a [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) for my setup?" while remaining hardware-agnostic through bring-your-own `QuamRoot` and [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) subclasses.
 
-`qiskit_qm_provider.providers.qm_provider.QMProvider`
+For method signatures and constructor parameters, see the [Providers API reference](apidocs/qm_providers.rst).
 
-The standard provider for connecting to a local or server-based Quantum Orchestration Platform where the QuAM state is stored locally.
+## Purpose
 
-`QMProvider` is **hardware-agnostic**: users supply their own `QuamRoot` subclass (via `quam_cls`) and their own `QMBackend` subclass (via `backend_cls`) to match their specific hardware.  When these are omitted, the provider falls back to `FluxTunableQuam` (from *quam-builder*) and the base `QMBackend`, respectively.
+Each provider connects a specific execution environment (local QOP, cloud simulator, or IQCC) to the same backend interface. Once you have a backend, workflows are identical: transpile circuits, then use `backend.run()`, primitives, or hybrid embedding.
 
-### `__init__(state_folder_path: Optional[str] = None, quam_cls: Type[QuamRoot] | None = None)`
-Initializes the provider.
-- `state_folder_path`: Path to the local QuAM state folder.
-- `quam_cls`: `QuamRoot` subclass to use for loading the machine.  Defaults to `FluxTunableQuam` from *quam-builder*.
+The default QuAM class when none is supplied is **`FluxTunableQuam`** from [quam-builder](https://github.com/Quantum-Machines/quam-builder). The default backend class is the base [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst). Custom labs should pass explicit `quam_cls` and `backend_cls` matching their hardware.
 
-### `get_backend(machine: Optional[QuamRoot] = None, backend_cls: Type[QMBackend] | None = None, **backend_options) -> QMBackend`
-Returns a `QMBackend` (or subclass) instance.
-- `machine`: Optional pre-loaded QuAM instance.  If `None`, loads from `state_folder_path`.
-- `backend_cls`: `QMBackend` subclass to instantiate (e.g. `FluxTunableTransmonBackend` or a custom subclass).  Defaults to the base `QMBackend`.
-- `**backend_options`: Options passed to the backend constructor (e.g. `qmm`, `name`, `shots`, `simulate`).
+## Seeding gate macros with add_basic_macros
 
-### `get_machine() -> QuamRoot`
-Loads and returns the latest QuAM state from the `state_folder_path`.
+After obtaining a backend, populate standard operations with [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.add_basic_macros.rst):
 
----
+```python
+from qiskit_qm_provider import QMProvider
+from qiskit_qm_provider.backend.backend_utils import add_basic_macros
 
-## QmSaasProvider
+provider = QMProvider(state_folder_path="/path/to/quam/state")
+backend = provider.get_backend()
+add_basic_macros(backend)
+```
 
-`qiskit_qm_provider.providers.qm_saas_provider.QmSaasProvider`
+**Important:** these macros (`x`, `sx`, `rz`, `sy`, `sydg`, `measure`, `reset`, `delay`, `id`, `cz`) are **currently tailored to flux-tunable transmon** topology. They assume pulse and macro naming conventions from `FluxTunableQuam` / quam-builder (e.g. `x180`, `x90`, readout pulses, `CZGate` on pairs). They are a **starting point**, not a universal hardware definition. Users on other platforms should override or replace macros on their own `QuamRoot`, and coordinate with the **Quantum Machines team** for appropriate [quam-builder](https://github.com/Quantum-Machines/quam-builder) extensions for their architecture.
 
-Provider for connecting to the Quantum Machines SaaS simulation platform.
+## [`QMProvider`](apidocs/stubs/qiskit_qm_provider.providers.QMProvider.rst) — local QOP
 
-Requires the `qm-saas` extras: `pip install qiskit-qm-provider[qm-saas]`.
+Use [`QMProvider`](apidocs/stubs/qiskit_qm_provider.providers.QMProvider.rst) when you have a local QOP stack and a QuAM state folder on disk.
 
-### `__init__(email: Optional[str], password: Optional[str], host: Optional[str], version: Optional[str])`
-Initializes the SaaS provider.
-- `email`, `password`, `host`: Credentials for the SaaS platform.  If `None`, attempts to read from `~/qm_saas_config.json`.
-- `version`: Optional QOP version string.
+```python
+from qiskit_qm_provider import QMProvider, FluxTunableTransmonBackend
 
-### `get_backend(quam_state_folder_path=None, simulation_config=None, quam_cls=None, backend_cls=None) -> QMBackend`
-Returns a `QMBackend` (or subclass) instance connected to a SaaS simulator.
-- `quam_state_folder_path`: Path to the QuAM state.
-- `simulation_config`: Simulation configuration (defaults to 10 000 clock cycles).
-- `quam_cls`: `QuamRoot` subclass for the machine.
-- `backend_cls`: `QMBackend` subclass to instantiate.  Defaults to the base `QMBackend`.
+# Custom QuAM + backend
+provider = QMProvider(state_folder_path="/path/to/quam/state", quam_cls=MyCustomQuam)
+backend = provider.get_backend(backend_cls=MyBackend)
 
----
+# Flux-tunable transmon (explicit)
+provider = QMProvider(state_folder_path="/path/to/quam/state")
+backend = provider.get_backend(backend_cls=FluxTunableTransmonBackend)
+```
 
-## IQCCProvider
+Access the underlying machine via `backend.machine`.
 
-`qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider`
+## [`QmSaasProvider`](apidocs/stubs/qiskit_qm_provider.providers.qm_saas_provider.QmSaasProvider.rst) — cloud simulation
 
-Provider for accessing devices at the Israeli Quantum Computing Center (IQCC).
+Use [`QmSaasProvider`](apidocs/stubs/qiskit_qm_provider.providers.qm_saas_provider.QmSaasProvider.rst) for QM's cloud simulator. Requires `pip install qiskit-qm-provider[qm_saas]`.
 
-Requires the `iqcc` extras: `pip install qiskit-qm-provider[iqcc]`.
+```python
+from qiskit_qm_provider import QmSaasProvider, FluxTunableTransmonBackend
 
-IQCC backends are flux-tunable transmon machines; the provider always returns a `FluxTunableTransmonBackend`.
+provider = QmSaasProvider(email="...", password="...", host="...")
+backend = provider.get_backend(
+    quam_state_folder_path="/path/to/quam/state",
+    backend_cls=FluxTunableTransmonBackend,
+)
+```
 
-### `__init__(api_token: Optional[str] = None)`
-Initializes the IQCC provider.
-- `api_token`: API token for IQCC authentication.
+Credentials can be read from `~/qm_saas_config.json` when omitted.
 
-### `get_machine(name: str, quam_state_folder_path: Optional[str] = None, quam_cls: Type[QuamRoot] | None = None) -> QuamRoot`
-Fetches the latest QuAM state for the given IQCC device and returns a loaded QuAM instance.
-- `name`: Name of the quantum computer (e.g., `"arbel"`).
-- `quam_state_folder_path`: Optional path to the QuAM state folder. If omitted, the provider falls back to the `QUAM_STATE_PATH` environment variable. Supplying an explicit path is recommended for tests and non-interactive environments.
-- `quam_cls`: Optional `QuamRoot` subclass to use for loading the machine. If omitted, the provider defaults to the IQCC-specific QuAM implementation from `iqcc_calibration_tools` (when available), and otherwise falls back to the standard `FluxTunableQuam` from *quam-builder*.
+## [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst) — IQCC cloud devices
 
-### `get_backend(name: str | QuamRoot, quam_state_folder_path: Optional[str] = None, quam_cls: Type[QuamRoot] | None = None) -> FluxTunableTransmonBackend`
-Returns a `FluxTunableTransmonBackend` for the specified IQCC device or a pre-loaded QuAM instance.
-- `name`: Either the name of the quantum computer (e.g., `"arbel"`) or a pre-loaded QuAM instance.
-- `quam_state_folder_path`: Optional path to the QuAM state folder when `name` is a string. If omitted, falls back to the `QUAM_STATE_PATH` environment variable.
-- `quam_cls`: Optional `QuamRoot` subclass to use when loading the machine. If omitted, the same default resolution as in `get_machine` is used (IQCC-specific QuAM from `iqcc_calibration_tools` when present, otherwise `FluxTunableQuam` from *quam-builder*).
+Use [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst) for devices at the Israeli Quantum Computing Center. Requires `pip install qiskit-qm-provider[iqcc]`. Always returns [`FluxTunableTransmonBackend`](apidocs/stubs/qiskit_qm_provider.backend.FluxTunableTransmonBackend.rst).
+
+This is a common entry point for **Qiskit Experiments** characterization — see the [Qiskit Experiments caveats on the home page](index.md#using-qiskit-experiments-with-this-provider).
+
+```python
+from qiskit_qm_provider import IQCCProvider
+
+provider = IQCCProvider(api_token="...")
+backend = provider.get_backend(
+    "arbel",
+    quam_state_folder_path="/path/to/quam/state",  # or QUAM_STATE_PATH
+)
+```
+
+## Comparison
+
+| Provider | Environment | Extra install | Backend type | Typical use |
+|----------|-------------|---------------|--------------|-------------|
+| [`QMProvider`](apidocs/stubs/qiskit_qm_provider.providers.QMProvider.rst) | Local QOP + on-disk QuAM | — | User-chosen (default [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst)) | Lab hardware |
+| [`QmSaasProvider`](apidocs/stubs/qiskit_qm_provider.providers.qm_saas_provider.QmSaasProvider.rst) | QM cloud simulator | `[qm_saas]` | User-chosen | Cloud simulation |
+| [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst) | IQCC remote devices | `[iqcc]` | [`FluxTunableTransmonBackend`](apidocs/stubs/qiskit_qm_provider.backend.FluxTunableTransmonBackend.rst) | IQCC + Experiments |
+
+## Related
+
+- **Guide:** [Workflows — standard execution](workflows.md#running-qiskit-circuits-on-qm-hardware-or-simulators)
+- **API:** [Providers reference](apidocs/qm_providers.rst)
+- **Examples:** `examples/sampler_workflow.py`, `examples/iqcc_t1_experiment.py`

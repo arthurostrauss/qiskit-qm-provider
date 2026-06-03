@@ -12,16 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pulse package: QuAM–Qiskit pulse, schedule-to-QUA, and support utilities.
+"""Pulse integration for Qiskit 1.x (legacy).
 
-Author: Arthur Strauss
-Date: 2026-02-08
+Supports converting **gate pulse schedules** to QUA via ``schedule_to_qua_macro``.
+Qiskit Pulse **measurement instructions** are not supported; use circuit-level
+``measure`` gates and :func:`~qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes`
+in hybrid programs instead.
 """
 
-from .quam_qiskit_pulse import FluxChannel, QuAMQiskitPulse
-from .pulse_support_utils import (
-    handle_parameterized_channel,
-    _handle_parameterized_instruction,
-    schedule_to_qua_macro,
-    validate_schedule,
-)
+__all__: list[str] = []
+
+try:
+    from .pulse_support_utils import (
+        handle_parameterized_channel,
+        _handle_parameterized_instruction,
+        schedule_to_qua_macro,
+        validate_schedule,
+    )
+
+    __all__.extend(
+        [
+            "handle_parameterized_channel",
+            "_handle_parameterized_instruction",
+            "schedule_to_qua_macro",
+            "validate_schedule",
+        ]
+    )
+except ImportError:
+    pass
+
+try:
+    from .quam_qiskit_pulse import FluxChannel, QuAMQiskitPulse
+
+    __all__.extend(["FluxChannel", "QuAMQiskitPulse"])
+except ImportError:
+    pass

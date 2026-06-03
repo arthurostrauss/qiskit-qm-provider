@@ -119,37 +119,11 @@ def requires_qiskit_pulse(func):
 
 
 class QMBackend(Backend):
-    """
-    QMBackend class for Quantum Machines.
+    """Qiskit backend for Quantum Machines (QuAM).
 
-    This backend is used to represent at Qiskit level all available operations
-    and qubit properties of a Quantum Abstract Machine (Quam) instance.
-    To use it, you need to ensure that the Quam instance has the following attributes:
-    - active_qubits: A list of Qubit objects
-    - active_qubit_pairs: A list of QubitPair objects
-    - macros: A dictionary of macros for all the qubits and qubit pairs
-
-    Args:
-        machine: The Quam instance
-        channel_mapping: Optional mapping of Qiskit Pulse Channels
-        (e.g. DriveChannel, ControlChannel, MeasureChannel)
-        to QuAM Channels. This mapping enables the conversion of Qiskit Pulse schedules
-        into parametric QUA macros. Note: This requires Qiskit to be of version < 2.0 to work.
-        Additionally, the Schedules created must have deterministic durations at this point.
-        init_macro: Optional macro to be called at the beginning of the QUA program to initialize the QPU.
-        qmm: Optional QuantumMachinesManager or CloudQuantumMachinesManager instance. If not provided, inferred from the machine
-        name: Optional name of the backend
-        fields: Optional kwargs for the values to use to override the default
-            options. The options are:
-            - shots: The number of shots to run the circuit for (default is 1024)
-            - compiler_options: The options for the QOP compiler (if any)
-            - simulate: The simulation configuration to use (if any) on the QOP
-            - memory: Whether to save each shot in memory (default is False)
-            - skip_reset: Whether to skip the reset of the qubits at the beginning of the circuit (default is False)
-            - meas_level: The measurement level to use (default is MeasLevel.CLASSIFIED)
-            - meas_return: The measurement return to use (default is MeasReturnType.AVERAGE)
-            - timeout: The timeout for the circuit execution (default is 60 seconds)
-
+    Represents at the Qiskit level all available operations and qubit properties
+    of a Quantum Abstract Machine (QuAM) instance. The QuAM instance must expose
+    ``active_qubits``, ``active_qubit_pairs``, and per-qubit/pair ``macros``.
     """
 
     def __init__(
@@ -162,35 +136,32 @@ class QMBackend(Backend):
         max_circuits: Optional[int] = 30,
         **fields,
     ):
-        """
-        Initialize the QM backend.
+        """Initialize the QM backend.
 
         Args:
-            machine: The Quam instance
-            channel_mapping: Optional mapping of Qiskit Pulse Channels
-             (e.g. DriveChannel, ControlChannel, MeasureChannel)
-            to QuAM Channels. This mapping enables the conversion of Qiskit Pulse schedules
-            into parametric QUA macros. Note: This requires Qiskit to be of version < 2.0 to work.
-            Additionally, the Schedules created must have deterministic durations at this point.
-            init_macro: Optional macro to be called at the beginning of the QUA program to initialize the QPU.
-            qmm: Optional QuantumMachinesManager or CloudQuantumMachinesManager instance. If not provided, inferred from the machine
-            name: Optional name of the backend
+            machine: The QuAM instance to wrap.
+            channel_mapping: Optional mapping from Qiskit Pulse channels
+                (``DriveChannel``, ``ControlChannel``, ``MeasureChannel``, …) to
+                QuAM channels. Required for converting Pulse schedules into
+                parametric QUA macros (Qiskit < 2.0; schedules must have fixed
+                durations).
+            init_macro: Optional QUA macro invoked at the start of each program to
+                initialize the QPU.
+            qmm: Optional ``QuantumMachinesManager`` or
+                ``CloudQuantumMachinesManager``. Inferred from the machine when
+                omitted.
+            name: Optional backend name. Defaults to the network backend name or
+                ``"QMBackend"``.
             max_circuits: Maximum number of circuits packed into a single QUA program (default 30).
                 When ``backend.run`` receives more circuits than this, the batch is split into
                 several QUA programs that are queued sequentially and whose results are stitched
                 back into a single Qiskit ``Result``. Set to ``None`` to disable splitting and
                 always build one program.
-            fields: Optional kwargs for the values to use to override the default
-                options. The options are:
-                - shots: The number of shots to run the circuit for (default is 1024)
-                - compiler_options: The options for the QOP compiler (if any)
-                - simulate: The simulation configuration to use (if any) on the QOP
-                - memory: Whether to save each shot in memory (default is False)
-                - skip_reset: Whether to skip the reset of the qubits at the beginning of the circuit (default is False)
-                - meas_level: The measurement level to use (default is MeasLevel.CLASSIFIED)
-                - meas_return: The measurement return to use (default is MeasReturnType.AVERAGE)
-                - timeout: The timeout for the circuit execution (default is 60 seconds)
-
+            fields: Optional keyword overrides for default run options:
+                ``shots`` (1024), ``compiler_options``, ``simulate``, ``memory``
+                (False), ``skip_reset`` (False), ``meas_level``
+                (``MeasLevel.CLASSIFIED``), ``meas_return``
+                (``MeasReturnType.AVERAGE``), and ``timeout`` (60 seconds).
         """
         if name is None:
             if "quantum_computer_backend" in machine.network:
@@ -254,13 +225,11 @@ class QMBackend(Backend):
 
     @classmethod
     def _default_options(cls) -> Options:
-        """
-        Returns the default options for the backend. The options are:
-        - shots: The number of shots to run the circuit for (default is 1024)
-        - compiler_options: The options for the QOP compiler (if any)
-        - simulate: The simulation configuration to use (if any) on the QOP
-        - memory: Whether to save each shot in memory (default is False)
-        :return:
+        """Return the default backend run options.
+
+        Defaults: ``shots=1024``, ``compiler_options=None``, ``simulate=None``,
+        ``memory=False``, ``skip_reset=False``, ``meas_level=MeasLevel.CLASSIFIED``,
+        ``meas_return=MeasReturnType.AVERAGE``, ``timeout=60``.
         """
         return Options(
             shots=1024,
@@ -334,13 +303,13 @@ class QMBackend(Backend):
             raise ValueError("Qubit pair should be a string name or a QubitPair object")
 
     def get_qubit(self, qubit: int | str) -> Qubit:
-        """
-        Get the Qubit object corresponding to the given qubit index or name
+        """Get the Qubit object for a qubit index or name.
+
         Args:
-            qubit: The qubit index or name
+            qubit: Qubit index or name.
 
         Returns:
-            The Qubit object corresponding to the given qubit index or name
+            The corresponding :class:`~quam.components.Qubit`.
         """
         if isinstance(qubit, int):
             return self.machine.active_qubits[qubit]
@@ -352,13 +321,14 @@ class QMBackend(Backend):
     def get_qubit_pair(
         self, qubits: Tuple[int | str | Qubit, int | str | Qubit]
     ) -> QubitPair:
-        """
-        Get the QubitPair object corresponding to the given qubit indices or names
+        """Get the QubitPair for two qubit indices or names.
+
         Args:
-            qubits: The qubit indices or names
+            qubits: Pair of qubit indices, names, or :class:`~quam.components.Qubit`
+                objects.
 
         Returns:
-            The QubitPair object corresponding to the given qubit indices or names
+            The corresponding :class:`~quam.components.QubitPair`.
         """
         if isinstance(qubits, tuple) and len(qubits) == 2:
             qubit1, qubit2 = qubits
@@ -746,10 +716,12 @@ class QMBackend(Backend):
         Add pulse operations created in Qiskit to QuAM operations mapping
 
         Args:
-            pulse_input: The pulse input to add to the QuAM operations mapping (can be a Schedule, ScheduleBlock)
-            name: An optional name to refer to the pulse operations to be added to the QuAM operations mapping. If
-            a Schedule or ScheduleBlock is provided, all pulse operations are named as "{name}_{i}" where i is the number
-            of the pulse operation in the schedule. If a Pulse is provided, it is named as "{name}".
+            pulse_input: Pulse schedule or schedule block to register in the QuAM
+                operations mapping.
+            name: Optional base name for the added operations. For a
+                :class:`~qiskit.pulse.Schedule` or
+                :class:`~qiskit.pulse.ScheduleBlock`, each ``Play`` instruction
+                is stored as ``"{name}_{i}"``; for a single pulse, ``"{name}"``.
         """
         from ..pulse import validate_schedule, QuAMQiskitPulse
 
@@ -802,26 +774,22 @@ class QMBackend(Backend):
                 )
 
     def update_target(self, input_type: Optional[InputType] = None):
-        """
-        Synchronize Target object with _operation_mapping_QUA.
+        """Synchronize Target object with ``_operation_mapping_QUA``.
 
-        This method performs a one-way sync from Target to _operation_mapping_QUA:
-        1. Updates _operation_mapping_QUA from machine macros (incrementally, additive)
-        2. Syncs operations from Target to _operation_mapping_QUA, overwriting any existing
-           entries for the same OperationIdentifier (operations are identified by name,
-           parameter count, and qubits)
-        3. Updates the calibration mapping
+        This method performs a one-way sync from Target to ``_operation_mapping_QUA``:
 
-        Important behavior:
-        - This method is ADDITIVE: it can add new operations but never removes existing ones
-        - This method OVERWRITES: Target operations will overwrite machine macros for the same
-          OperationIdentifier (as per Qiskit's Target specification, Target takes precedence)
-        - This method is NOT subtractive: operations cannot be removed from the mapping
-          (Qiskit Target does not support removal of operations)
+        1. Updates ``_operation_mapping_QUA`` from machine macros (incrementally).
+        2. Syncs operations from Target to ``_operation_mapping_QUA``, overwriting
+           entries for the same ``OperationIdentifier``.
+        3. Updates the calibration mapping.
+
+        The sync is additive (never removes operations) and Target entries take
+        precedence over machine macros for the same identifier.
 
         Args:
-            input_type: Input type to use for the conversion of parameterized instructions to QUA variables.
-                       Only needed when Target contains parameterized pulse schedules.
+            input_type: Input type for converting parameterized instructions to
+                QUA variables. Required when the Target contains parameterized
+                pulse schedules.
         """
         from qm_qasm import OperationIdentifier
 
@@ -900,12 +868,15 @@ class QMBackend(Backend):
     def update_calibrations(
         self, qc: QuantumCircuit, input_type: Optional[InputType] = None
     ):
-        """
-        Update the QUA operations mapping with the calibrations defined in the QuantumCircuit.
-        Works only with Qiskit version below 2.0 (i.e. with Qiskit Pulse).
-        :param qc: QuantumCircuit to update the calibrations from.
-        :param input_type: Input type to use for the conversion of parameterized instructions to QUA variables.
-        :return:
+        """Update the QUA operations mapping from circuit calibrations.
+
+        Requires Qiskit < 2.0 (Qiskit Pulse).
+
+        Args:
+            qc: Circuit whose ``calibrations`` attribute defines custom gates.
+            input_type: Input type for converting parameterized instructions to
+                QUA variables when the circuit or its calibrations are
+                parameterized.
         """
         from qm_qasm import OperationIdentifier
 
@@ -976,21 +947,20 @@ class QMBackend(Backend):
             | Dict[str | QiskitParameter | Var, Scalar]
         ] = None,
     ) -> CompilationResult:
-        """
-        Convert a QuantumCircuit to a QUA program (can be called within an existing QUA program or to generate a
-        program for the circuit).
-        If executed outside of a QUA program scope, the resulting QUA program can be accessed through:
-        prog = backend.quantum_circuit_to_qua(qc).result_program.dsl_program
+        """Convert a :class:`~qiskit.circuit.QuantumCircuit` to a QUA program fragment.
+
+        Can be called inside an existing ``with program():`` block or standalone.
+        When called standalone, access the generated program via
+        ``result.result_program.dsl_program``.
 
         Args:
-            qc: The QuantumCircuit to convert
-            param_table: The parameter table to use for the conversion of parameterized instructions to QUA variables
-                        Should be provided if the QuantumCircuit contains real-time variables or symbolic Parameters
-                         to be cast as real-time parameters (typically amp, phase, frequency or duration parameters)
-                         and this function is called within a QUA program
+            qc: The circuit to compile.
+            param_table: Parameter mapping for real-time QUA variables. Required
+                when the circuit contains symbolic parameters or classical inputs
+                that must be streamed during execution.
 
         Returns:
-            Compilation result of the QuantumCircuit to QUA
+            Compilation result containing the generated QUA program fragment.
         """
 
         basis_gates = self.qm_qasm_basis_gates

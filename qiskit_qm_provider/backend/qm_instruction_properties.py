@@ -42,8 +42,8 @@ class QMInstructionProperties(InstructionProperties):
       attributes.  In this case ``duration`` and ``error`` must be supplied
       explicitly if they are needed.
 
-    The two forms are transparently unified through the :pyattr:`qua_pulse_macro`
-    and :pyattr:`quam_macro` properties.
+    The two forms are transparently unified through the ``qua_pulse_macro``
+    and ``quam_macro`` properties.
     """
 
     def __new__(cls, duration=None, error=None, qua_pulse_macro=None, *args, **kwargs):

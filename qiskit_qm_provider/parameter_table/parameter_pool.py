@@ -31,8 +31,10 @@ if TYPE_CHECKING:
 
 
 class ParameterPool:
-    """
-    A class to manage unique IDs for parameters.
+    """Registry of :class:`~.ParameterTable` and :class:`~.Parameter` objects.
+
+    Assigns unique IDs used when patching QUA programs for streaming and
+    coordinates stream configuration across tables.
     """
 
     _counter = itertools.count(1)
@@ -42,12 +44,13 @@ class ParameterPool:
 
     @classmethod
     def get_id(cls, obj: Any = None) -> int:
-        """
-        Get the next unique ID.
+        """Return the next unique registry ID.
+
+        Args:
+            obj: Optional object to register under the new ID.
 
         Returns:
-            int: The next unique ID.
-            obj: The object associated with the ID.
+            The assigned ID.
         """
         next_id = next(cls._counter)
         if obj is not None:
@@ -60,7 +63,7 @@ class ParameterPool:
         Get the object associated with the given ID.
 
         Args:
-            id (int): The ID of the object.
+            id: Registry ID of the object.
 
         Returns:
             obj: The object associated with the ID.
@@ -115,7 +118,7 @@ class ParameterPool:
         Get the object associated with the given ID.
 
         Args:
-            id (int): The ID of the object.
+            id: Registry ID of the object.
 
         Returns:
             obj: The object associated with the ID.
@@ -127,7 +130,7 @@ class ParameterPool:
         Set the object associated with the given ID.
 
         Args:
-            id (int): The ID of the object.
+            id: Registry ID of the object.
             obj: The object to be associated with the ID.
         """
         if id in self._parameters_dict:
@@ -139,7 +142,7 @@ class ParameterPool:
         Delete the object associated with the given ID.
 
         Args:
-            id (int): The ID of the object.
+            id: Registry ID of the object.
         """
         if id in self._parameters_dict:
             del self._parameters_dict[id]
@@ -151,7 +154,7 @@ class ParameterPool:
         Check if the object associated with the given ID exists.
 
         Args:
-            id (int): The ID of the object.
+            id: Registry ID of the object.
 
         Returns:
             bool: True if the object exists, False otherwise.
@@ -204,7 +207,9 @@ class ParameterPool:
         Patch the OPNIC wrapper.
 
         Args:
-            path_to_opnic_dev (Optional[str]): The path to the OPNIC development directory
+            path_to_python_wrapper: Path to the OPNIC Python wrapper directory.
+            force_recompile_python_wrapper: Rebuild the wrapper even if already
+                patched.
         """
         from .opnic_utils import patch_opnic_wrapper
         from .parameter_table import ParameterTable
@@ -251,13 +256,10 @@ class ParameterPool:
 
     @classmethod
     def initialize_streams(cls, path_to_python_wrapper: Union[str, Path]):
-        """
-        Initialize the OPNIC and the necessary streams for the current stage of the ParameterPool.
+        """Initialize OPNIC streams for all registered parameter tables.
+
         Args:
-            path_to_python_wrapper: The path to the Python wrapper.
-
-        Returns:
-
+            path_to_python_wrapper: Path to the OPNIC Python wrapper directory.
         """
         cls.patch_opnic_wrapper(path_to_python_wrapper)
         cls.configure_stream(path_to_python_wrapper)

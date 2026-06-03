@@ -26,8 +26,6 @@ from .backend import (
 )
 from .providers.qm_provider import QMProvider
 
-if QISKIT_PULSE_AVAILABLE:
-    from .pulse.quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
 from .fixed_point import FixedPoint
 from .parameter_table import *
 from .additional_gates import *
@@ -61,6 +59,14 @@ __all__ = [
     "get_qua_script",
     "QMProvider",
 ]
+
+if QISKIT_PULSE_AVAILABLE:
+    try:
+        from .pulse.quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
+    except ImportError:
+        pass
+    else:
+        __all__.extend(["QuAMQiskitPulse", "FluxChannel"])
 
 try:
     from .providers.qm_saas_provider import QmSaasProvider
