@@ -1,90 +1,30 @@
----
-title: Error‑Correction Workflow
-nav_order: 7
-parent: Home
----
+# Error-Correction Workflow
 
-# Error‑Correction Workflow with ParameterTable
+Error correction is the **canonical stress test** for hybrid Qiskit-in-QUA design: repeated syndrome measurement, classical decoding, and recovery inside a long-running QUA program while circuits stay authored in Qiskit.
 
-Error‑correction experiments are a **stress‑test for hybrid programming**:
+For method signatures, see the [Parameter Table API reference](apidocs/qm_parameter_table.rst) and [Backend API reference](apidocs/qm_backend.rst).
 
-- you repeat a **syndrome‑measurement circuit** many times,
-- extract classical information (the syndrome),
-- use that information to choose or parametrize a **recovery**,
-- and log data for later analysis — all while keeping the quantum hardware busy.
+## Purpose
 
-This page explains:
+Plain circuit submission breaks down for EC because you need:
 
-1. **What usually makes hybrid error‑correction workflows painful**, and  
-2. **How the `ParameterTable` interface helps** by making the classical–quantum boundary explicit.
+- **Many cycles** of measure → decode → recover, not one shot per circuit variant.
+- **Streaming classical data** (syndrome integers) between QUA and a host decoder.
+- **Stable parameter names** across Qiskit recovery circuits and QUA variables.
 
-It builds on the example shown in the README and in the Home page.
+[`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) and [`Parameter`](apidocs/stubs/qiskit_qm_provider.parameter_table.Parameter.rst) make that classical-quantum contract explicit. [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) wires syndrome bits from an embedded circuit into QUA variables in the **same** `with program():` block.
 
-## 1. The usual challenges in hybrid error‑correction programs
+## Why hybrid EC is hard without this toolbox
 
-### 1.1 Two worlds with different assumptions
+| Pain point | What goes wrong | How this toolbox helps |
+|------------|-----------------|------------------------|
+| Circuit explosion | One Qiskit circuit per branch/time step | One syndrome + one recovery circuit, loop in QUA |
+| Ad-hoc data plumbing | Mismatched names, shapes, JSON blobs | Central [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) definition |
+| Qiskit vs QUA assumptions | Single-run binding vs long-running streams | [`InputType`](apidocs/stubs/qiskit_qm_provider.parameter_table.InputType.rst) streaming + `push_to_opx` / `load_input_values` |
 
-When writing an error‑correction loop, you typically have:
+## ParameterTable roles in EC
 
-- **Qiskit circuits** describing:
-  - state preparation / encoding,
-  - syndrome‑measurement steps,
-  - and (optionally) recovery circuits.
-- **QUA programs** (or other control code) that:
-  - manage loops over shots and cycles,
-  - talk to the hardware (pulses, measurements, streaming),
-  - and push / pull data to and from the classical host.
-
-These two worlds use different abstractions:
-
-- Qiskit assumes a **single circuit run** at a time, with parameters bound
-  either at compile time or at primitive submission time;
-- QUA assumes **long‑running programs** with nested loops, streaming, and explicit buffers.
-
-Bridging them manually often leads to a lot of glue code.
-
-### 1.2 Classical data flow is awkward to express
-
-In a realistic error‑correction experiment you might need to:
-
-- record a **syndrome bitstring** (or integer) every cycle,
-- pass that syndrome to a **classical controller** (on DGX, another server, or Python),
-- receive back **recovery parameters** or decisions,
-- and then update QUA‑side variables accordingly.
-
-With “plain” Qiskit circuits alone, you quickly run into:
-
-- **circuit explosion**: one circuit per possible branch or per time step;
-- or **ad‑hoc data plumbing**: many custom classical registers, custom JSON blobs, and
-  brittle indexing on both sides.
-
-### 1.3 Keeping qubit‑level structure and parameters in sync
-
-Error‑correction codes also care deeply about **which qubit** carries which role (data vs ancilla),
-and **which parameters** (angles, thresholds, syndrome history) are used where.
-
-Without a consistent interface, it is easy to end up with:
-
-- parameter names that differ between Qiskit and QUA,
-- mismatched dimensions (e.g. you think you streamed `num_cycles × num_qubits` values but the
-  program expects a different shape),
-- confusion about which piece of classical data corresponds to which Qiskit parameter.
-
-## 2. How `ParameterTable` helps
-
-`ParameterTable` is designed as a **single source of truth** for real‑time parameters and
-classical data flowing between Qiskit and QUA. In an error‑correction workflow, it plays three
-key roles:
-
-1. **Declaring QUA‑side variables** with a clear name, type, and direction.
-2. **Describing how classical data is streamed in and out** of the program.
-3. **Providing a Python‑side handle** to push values to the OPX or fetch results.
-
-### 2.1 Making the classical–quantum boundary explicit
-
-Instead of scattering variables between ad‑hoc QUA declarations and Python dictionaries,
-you define them centrally as `Parameter` objects (or in a dictionary) and bundle them into a
-`ParameterTable`. For example:
+### Declare the contract once
 
 ```python
 from qiskit_qm_provider import Parameter, ParameterTable, Direction, InputType
@@ -102,10 +42,7 @@ recovery_vars = ParameterTable.from_qiskit(
 )
 ```
 
-- `syndrome_data` represents the **syndrome integer** that will be sent back to the host.
-- `recovery_vars` is a table of all parameters used by the **recovery circuit**.
-
-QUA‑side, you simply call:
+Inside QUA:
 
 ```python
 recovery_vars.declare_variables()
@@ -113,13 +50,7 @@ syndrome_data.declare_variable()
 syndrome_data.declare_stream()
 ```
 
-to make these variables live inside the program.
-
-### 2.2 Streaming syndrome data out
-
-Inside the QUA loop, after running the **syndrome‑measurement circuit** via
-`backend.quantum_circuit_to_qua`, you use `get_measurement_outcomes` to obtain a
-`state_int` representing the measured syndrome:
+### Stream syndrome out (same program, right after embedding)
 
 ```python
 from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes
@@ -132,83 +63,41 @@ syndrome_data.assign(state_int_val)
 syndrome_data.stream_back(reset=True)
 ```
 
-Conceptually:
+| Key | Role in EC |
+|-----|------------|
+| `value` | Per-bit QUA variables from the syndrome measurement |
+| `state_int` | Packed integer syndrome (LSB = qubit 0) — usual handle for decoding |
+| `size` | Number of syndrome bits |
+| `stream` | Stream handle for `stream_processing()` on the host |
 
-- `state_int_val` is the **hybrid handshake**: a compact representation of the measured syndrome.
-- `syndrome_data.assign(...)` makes it available as a QUA variable.
-- `syndrome_data.stream_back(...)` pushes it to the output stream so the host can read it.
+See [Backend guide — get_measurement_outcomes](backend.md#get-measurement-outcomes-return-dictionary) for full details.
 
-On the Python side, you can then **fetch the stream** and apply any classical processing you
-need (decoding, look‑up tables, machine‑learning models, etc.).
-
-### 2.3 Streaming recovery parameters in
-
-Once the host has computed new recovery parameters, you can push them back to the OPX using the
-same `ParameterTable`:
+### Push recovery parameters in
 
 ```python
-# Python side (after some classical processing of syndrome history)
-param_dict = {
-    "theta_0": value_for_cycle_0,
-    "theta_1": value_for_cycle_1,
-    # ...
-}
-
 recovery_vars.push_to_opx(param_dict, job, qm, verbosity=0)
 ```
 
-In the QUA program, you then “wake up” these parameters at the right time:
+In QUA:
 
 ```python
 recovery_vars.load_input_values()
 backend.quantum_circuit_to_qua(recovery_circuit, recovery_vars)
 ```
 
-- `load_input_values()` reads the streamed values into the QUA variables.
-- `quantum_circuit_to_qua(..., recovery_vars)` binds them into the recovery circuit.
+## End-to-end loop
 
-Because the same `ParameterTable` definition is used on both sides, you avoid:
+1. Author syndrome and recovery circuits in Qiskit.
+2. Declare [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) / [`Parameter`](apidocs/stubs/qiskit_qm_provider.parameter_table.Parameter.rst) for streamed data.
+3. Inside `with program():`, call [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) for the syndrome circuit.
+4. Call [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) and `stream_back()` the syndrome integer.
+5. On the host, decode and `push_to_opx()` recovery parameters.
+6. `load_input_values()` and embed the recovery circuit.
 
-- name mismatches,
-- shape mismatches,
-- and ad‑hoc JSON or array indexing conventions.
+The full QEC program skeleton lives in the [repository README](https://github.com/arthurostrauss/qiskit-qm-provider#error-correction-and-parameter-table).
 
-### 2.4 Keeping the workflow scalable
+## Related
 
-By decoupling:
-
-- **what** data you exchange (captured in `ParameterTable` and `Parameter` definitions), from  
-- **how often / when** you exchange it (captured in QUA loops and host‑side logic),
-
-the system stays scalable as you:
-
-- increase the number of cycles,
-- change the code distance or number of ancillas,
-- or extend the set of recovery parameters.
-
-You are not forced to re‑encode this structure in dozens of Qiskit circuits or ad‑hoc buffers:
-the mapping remains localized in the parameter definitions.
-
-## 3. Putting it all together
-
-The full error‑correction example in the README (and referenced on the Home page) illustrates
-this pattern:
-
-1. A **syndrome‑measurement circuit** and a **recovery circuit** are authored in Qiskit.
-2. `ParameterTable` and `Parameter` objects declare which classical values will flow between
-   host and device.
-3. `backend.quantum_circuit_to_qua` embeds the circuits inside a structured QUA program with
-   loops over memory experiments and cycles.
-4. `get_measurement_outcomes` and `syndrome_data.stream_back(...)` expose the syndrome data as
-   a compact, streamable integer.
-5. `recovery_vars.push_to_opx(...)` and `recovery_vars.load_input_values()` realize the
-   **feedback step** by feeding processed parameters back into QUA.
-
-The end result is a **hybrid error‑correction loop** where:
-
-- Qiskit remains the language for circuits and gates,
-- QUA remains the language for real‑time control and streaming,
-- and `ParameterTable` is the **contract** that keeps both views aligned.
-
-This is the kind of workflow `qiskit-qm-provider` is designed to make natural rather than painful.
-
+- **Guides:** [Backend — embedding](backend.md#embed-in-qua-hybrid), [Parameter Table](parameter_table.md), [Workflows — hybrid](workflows.md#hybrid-qua-qiskit-programs-embedding-circuits-in-qua)
+- **API:** [Parameter Table reference](apidocs/qm_parameter_table.rst), [Backend reference](apidocs/qm_backend.rst), [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst)
+- **Example:** [Error correction in README](https://github.com/arthurostrauss/qiskit-qm-provider#error-correction-and-parameter-table)

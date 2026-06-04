@@ -1,81 +1,118 @@
----
-title: Backend and Utilities
-nav_order: 4
-parent: Home
----
-
 # Backend and Utilities
 
-## QMBackend
+[`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) is the **central bridge object**: it represents hardware to Qiskit (via a QuAM-derived `Target`) and translates Qiskit artifacts to QUA (via qm_qasm and [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst)).
 
-`qiskit_qm_provider.backend.qm_backend.QMBackend`
+For full signatures, see the [Backend API reference](apidocs/qm_backend.rst).
 
-The Qiskit backend implementation for the Quantum Orchestration Platform. It wraps a Quam instance and handles circuit compilation and execution.
+## Purpose
 
-### Key Methods
+Backends serve two roles:
 
-#### `run(run_input: QuantumCircuit | List[QuantumCircuit], **options) -> QMJob`
-Executes the circuit(s).
-- `run_input`: One or more Qiskit QuantumCircuits.
-- `options`: Execution options (e.g., `shots`).
+1. **Represent hardware in Qiskit** — macros from QuAM populate the `Target`; coupling map from topology; qubit properties (T1, T2, frequencies).
+2. **Translate circuits to QUA** — OpenQASM 3 export + qm_qasm compilation, or Pulse schedule conversion (Qiskit 1.x legacy).
 
-**Generated QUA program (debugging):** `backend.run()` automatically generates the underlying QUA
-`Program` that will be executed on QOP. The returned `QMJob` exposes it on `job.program`. To print
-it as a QUA script:
+[`FluxTunableTransmonBackend`](apidocs/stubs/qiskit_qm_provider.backend.FluxTunableTransmonBackend.rst) is the reference implementation: `init_macro` from QuAM's `initialize_qpu`, and QuAM ↔ Pulse channel mapping (`get_quam_channel`, `get_pulse_channel`).
+
+## Two execution modes
+
+### Submit-and-run
+
+Standard Qiskit backend workflow: compile, execute, return a [`QMJob`](apidocs/stubs/qiskit_qm_provider.job.QMJob.rst). The generated QUA program is on `job.program`:
 
 ```python
 from qm import generate_qua_script
+
+job = backend.run(qc, shots=256)
 print(generate_qua_script(job.program))
+result = job.result()
 ```
 
-See
-[Workflows and Examples](workflows.md#31-generated-qua-programs-and-how-to-inspect-them)
-for a complete snippet showing `backend.run()` and the V2 primitives (`QMSamplerV2`,
-`QMEstimatorV2`) side-by-side.
+### Embed-in-QUA (hybrid)
 
-#### `quantum_circuit_to_qua(qc: QuantumCircuit, param_table: Optional[ParameterTable] = None) -> CompilationResult`
-Compiles a Qiskit circuit to QUA instructions. Can be used inside a QUA program context.
-- `qc`: The circuit to compile.
-- `param_table`: Optional `ParameterTable` for mapping Qiskit parameters to real-time QUA variables.
+Inside `with program():`, compile a circuit as a QUA macro and wire classical outcomes **in the same program**:
 
-#### `schedule_to_qua_macro(sched: Schedule, param_table: Optional[ParameterTable] = None, input_type: Optional[InputType] = None) -> Callable`
-Converts a Qiskit Pulse schedule to a QUA macro.
+```python
+from qm.qua import program
+from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes
 
----
+with program() as prog:
+    result = backend.quantum_circuit_to_qua(qc, param_table=my_param_table)
+    meas = get_measurement_outcomes(qc, result)
+    syndrome_int = meas[creg.name]["state_int"]
+    # use syndrome_int immediately in QUA control flow or streaming
+```
+
+Call `get_measurement_outcomes` **immediately after** `quantum_circuit_to_qua` in the same QUA program — not as a separate Python post-processing step. The returned variables reference outcomes from the circuit execution that just ran.
+
+## [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) return dictionary
+
+Returns `dict[creg_name, subdict]` — one entry per classical register in the circuit (plus a synthetic `_bit` register for loose clbits).
+
+| Key | Role |
+|-----|------|
+| **`value`** | List of QUA variables — one per bit — holding discriminated 0/1 outcomes from the embedded circuit. Use for bit-level QUA logic. |
+| **`size`** | Python `int`: number of bits in the register. |
+| **`state_int`** | QUA `int` (when `compute_state_int=True`, the default): integer packing of all bits; **LSB = qubit index 0** (Qiskit convention). Use for compact syndromes or lookup-table indexing. |
+| **`stream`** | QUA stream object for `stream_processing()` — buffer outcomes to the host. |
+
+See [Parameter Table](parameter_table.md) for `stream_back` / `fetch_from_opx` on the Python side.
+
+## Real-time parameters
+
+Unlike typical Qiskit backends, parameters need not be bound at compile time. Use [`ParameterTable.from_qiskit()`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) to map circuit parameters to real-time QUA variables (phases, amplitudes, frame rotations).
+
+**Warning:** QOP rejects non-ASCII parameter names. Use ASCII names (`theta`, `phi`) — not Greek symbols — so OpenQASM 3 and QUA compilation succeed.
 
 ## Utilities
 
-`qiskit_qm_provider.backend.backend_utils`
+### [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.add_basic_macros.rst)
 
-### `add_basic_macros(backend: QMBackend | QuamRoot, reset_type: Literal["active", "thermalize"] = "thermalize")`
-Populates the backend's Quam instance with standard default macros (`x`, `sx`, `rz`, `measure`, `reset`, `delay`, `id`, `cz`).
-- `backend`: The backend or machine instance.
-- `reset_type`: "active" or "thermalize".
+Seeds standard gate macros on a QuAM machine. **Flux-tunable transmon defaults** tied to `FluxTunableQuam` — see [Providers guide](providers.md#seeding-gate-macros-with-add-basic-macros). Override freely for other platforms.
 
-### `get_measurement_outcomes(qc: QuantumCircuit, result: CompilationResult, compute_state_int: bool = True) -> dict`
-Extracts measurement outcomes from a compilation result within a QUA program.
-- `qc`: The compiled circuit.
-- `result`: The result object returned by `quantum_circuit_to_qua`.
-- `compute_state_int`: If True (default), computes the integer value of classical registers (`state_int`).
+### `get_qua_script` / `dump_qua_script`
 
-Returns a dictionary:
+Debug helpers to inspect generated QUA from compilation results.
+
+## Custom calibrations (Qiskit 2.x)
+
+Attach QUA macros to Target instructions via [`QMInstructionProperties`](apidocs/stubs/qiskit_qm_provider.backend.QMInstructionProperties.rst):
+
 ```python
-{
-    "creg_name": {
-        "value": [qua_var_bit_0, qua_var_bit_1, ...],
-        "state_int": qua_var_int,
-        "size": int
-    }
+from qiskit.circuit import Parameter as QiskitParameter, Gate
+from qiskit_qm_provider import QMInstructionProperties
+
+theta = QiskitParameter("theta")
+cx_cal = Gate("cx_cal", num_qubits=2, params=[theta])
+
+def qua_macro(theta_val):
+    qubit_pair = backend.get_qubit_pair((0, 1))
+    qubit_pair.apply("cz", amplitude_scale=theta_val)
+
+properties = {
+    (0, 1): QMInstructionProperties(
+        duration=backend.target["cx"][(0, 1)].duration,
+        qua_pulse_macro=qua_macro,
+    )
 }
+backend.target.add_instruction(cx_cal, properties=properties)
+backend.update_target()  # mandatory — syncs qm_qasm with the Target
 ```
 
----
+Whenever you modify `backend.target`, call `update_target` so both transpilation and `quantum_circuit_to_qua` see the same gate set.
 
-## QMInstructionProperties
+## Pulse support (Qiskit 1.x legacy)
 
-`qiskit_qm_provider.backend.qm_instruction_properties.QMInstructionProperties`
+When `QISKIT_PULSE_AVAILABLE`, [`schedule_to_qua_macro`](apidocs/stubs/qiskit_qm_provider.pulse.schedule_to_qua_macro.rst) converts **gate pulse schedules** to QUA.
 
-Used in Qiskit 2.x to define custom properties (specifically QUA macros) for instructions in the `Target`.
+| Supported | Not supported |
+|-----------|---------------|
+| Gate operations as Pulse schedules | Qiskit Pulse **`Measure` / measurement instructions** |
+| QuAM ↔ Pulse channel mapping on `FluxTunableTransmonBackend` | Kerneled / raw IQ readout (see [classified-only note](index.md#classified-measurement-outcomes-only)) |
 
-### `__init__(duration=None, error=None, qua_pulse_macro=None)`
-- `qua_pulse_macro`: A callable or QuamMacro that generates the QUA code for the instruction.
+Hybrid readout: circuit-level `measure` → [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) → [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst).
+
+## Related
+
+- **Guide:** [Workflows — calibrations](workflows.md#calibrations-and-custom-gates), [hybrid embedding](workflows.md#hybrid-qua-qiskit-programs-embedding-circuits-in-qua)
+- **API:** [Backend reference](apidocs/qm_backend.rst), [Pulse reference](apidocs/qm_pulse.rst)
+- **Examples:** `examples/circuit_calibrations_pulse.py`, `examples/sampler_workflow.py`

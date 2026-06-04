@@ -215,9 +215,11 @@ class QUA2DArray(Parameter):
         This method overrides the default assign method to handle 2D arrays and does not
         propose the same handling of conditional assignment as the original QUA assign.
 
-        :param row: Row index (0-based)
-        :param col_or_vals: Either a column index (0-based) or a sequence of values
-        :param val: Value to assign if col_or_vals is a column index
+        Args:
+            row: Row index (0-based).
+            col_or_vals: Column index (0-based) or sequence of values for a full
+                row assignment.
+            val: Value to assign when ``col_or_vals`` is a column index.
         """
         if self.var is None:
             raise RuntimeError(f"{self.name} must be declared first")

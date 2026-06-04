@@ -1,12 +1,39 @@
 # API Documentation
 
-This directory contains detailed API documentation for the `qiskit-qm-provider`. It is set up to be published as a **GitHub Pages** site available [here](https://arthurostrauss.github.io/qiskit-qm-provider/) theme).
+This directory contains documentation for `qiskit-qm-provider`, built with **Sphinx** and the **Qiskit ecosystem theme** (`qiskit-ecosystem`).
+
+## Two layers
+
+- **Guides** (`.md` pages) — purpose, architecture, and practical snippets.
+- **API Reference** (`apidocs/`) — auto-generated signatures and docstrings via `autodoc` / `autosummary`.
+
+## Local environment
+
+Use the project virtual environment:
+
+```bash
+source ~/venvs/rl_qoc/bin/activate
+pip install -e ".[docs]"
+```
+
+## Build locally
+
+From the repository root:
+
+```bash
+sphinx-build -b html -W docs docs/_build/html
+```
+
+Autosummary generates stub pages under `docs/apidocs/stubs/` during the build (gitignored). Class and function stubs use `:members:` so docstrings, methods, and attributes render on each API page.
+
+Open `docs/_build/html/index.html` in your browser.
 
 ## Contents
 
-- [Workflows and Examples](workflows.md): High-level workflows (local, SaaS, IQCC, hybrid embedding) with pointers to example scripts.
-- [Providers](providers.md): Documentation for `QMProvider`, `QmSaasProvider`, and `IQCCProvider`.
-- [Backend](backend.md): Documentation for `QMBackend` and utility functions like `add_basic_macros` and `get_measurement_outcomes`.
-- [Primitives](primitives.md): Documentation for `QMEstimatorV2` and `QMSamplerV2`.
-- [Parameter Table](parameter_table.md): Documentation for `ParameterTable` and `Parameter` classes.
-- [Error‑Correction Workflow](error_correction.md): A didactic walkthrough of the hybrid error‑correction pattern and how `ParameterTable` helps.
+- [Workflows](workflows.md) — routing guide for main use paths.
+- [Providers](providers.md) — local, SaaS, and IQCC providers.
+- [Backend](backend.md) — `QMBackend`, embedding, utilities.
+- [Primitives](primitives.md) — QOP-aware Sampler and Estimator.
+- [Parameter Table](parameter_table.md) — hybrid classical–quantum data flow.
+- [Error-Correction Workflow](error_correction.md) — EC pattern with `ParameterTable`.
+- [API Reference](apidocs/qm.rst) — autodoc module index.

@@ -55,7 +55,7 @@ class QMSamplerOptions:
     """Options for :class:`~.QMSamplerV2`"""
 
     default_shots: int = 1024
-    """The default shots to use if none are specified in :meth:`~.run`.
+    """The default shots to use if none are specified in :meth:`~.QMSamplerV2.run`.
     Default: 1024.
     """
 
@@ -73,6 +73,8 @@ class QMSamplerOptions:
     Default: None (no option passed to backend's ``run`` method)
     """
     meas_level: Literal["classified", "kerneled", "avg_kerneled"] = "classified"
+    """Measurement level. Only ``"classified"`` (0/1 counts) is supported end-to-end
+    today. ``"kerneled"`` and ``"avg_kerneled"`` are not production-ready."""
 
     def __post_init__(self):
         if isinstance(self.input_type, str):
@@ -88,11 +90,22 @@ class QMSamplerOptions:
 
 
 class QMSamplerV2(BaseSamplerV2):
-    """QM Sampler class."""
+    """QOP-aware Qiskit V2 Sampler for :class:`~.QMBackend`.
+
+    Compiles sampler pubs to QUA programs, executes them on QOP, and returns
+    classified measurement counts. Only ``meas_level=\"classified\"`` is
+    supported end-to-end today.
+    """
 
     def __init__(
         self, backend: QMBackend, options: QMSamplerOptions | dict | None = None
     ):
+        """Create a sampler bound to a QM backend.
+
+        Args:
+            backend: Target backend with QuAM-derived ``Target``.
+            options: :class:`~.QMSamplerOptions` instance or options dict.
+        """
         self._backend = backend
         self._options = (
             QMSamplerOptions(**options)
@@ -113,6 +126,17 @@ class QMSamplerV2(BaseSamplerV2):
     def run(
         self, pubs: Iterable[SamplerPubLike], *, shots: int | None = None
     ) -> QMSamplerJob:
+        """Run the sampler on the given pubs.
+
+        Args:
+            pubs: Sampler pubs (circuits with optional parameter values).
+            shots: Number of shots per pub. Defaults to
+                :attr:`~.QMSamplerOptions.default_shots`.
+
+        Returns:
+            :class:`~qiskit_qm_provider.job.QMSamplerJob` (or IQCC variant) after
+            submission.
+        """
         if shots is None:
             shots = self._options.default_shots
         coerced_pubs = [SamplerPub.coerce(pub, shots) for pub in pubs]

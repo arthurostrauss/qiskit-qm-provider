@@ -79,6 +79,14 @@ __all__ = [
 if QUARC_AVAILABLE:
     __all__.append("QiskitQMModule")
 
+if QISKIT_PULSE_AVAILABLE:
+    try:
+        from .pulse.quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
+    except ImportError:
+        pass
+    else:
+        __all__.extend(["QuAMQiskitPulse", "FluxChannel"])
+
 try:
     from .providers.qm_saas_provider import QmSaasProvider
 

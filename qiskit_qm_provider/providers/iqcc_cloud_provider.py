@@ -69,7 +69,20 @@ def get_machine_from_iqcc(
 
 
 class IQCCProvider:
+    """Provider for IQCC cloud quantum computers.
+
+    Fetches QuAM state from the cloud and returns
+    :class:`~qiskit_qm_provider.backend.FluxTunableTransmonBackend` instances.
+    Requires ``pip install qiskit-qm-provider[iqcc]``.
+    """
+
     def __init__(self, api_token: Optional[str] = None):
+        """Initialize the IQCC provider.
+
+        Args:
+            api_token: IQCC API token. When omitted, the client library may
+                read credentials from its default configuration.
+        """
         self.api_token = api_token
         self._cloud_client = None
 
@@ -95,8 +108,13 @@ class IQCCProvider:
         return machine
 
     def get_cloud_client(self, name: str) -> IQCC_Cloud:
-        """
-        Get a the IQCC Cloud client.
+        """Return (and cache) an IQCC cloud client for a backend name.
+
+        Args:
+            name: IQCC quantum computer backend identifier.
+
+        Returns:
+            Connected :class:`~iqcc_cloud_client.IQCC_Cloud` client.
         """
         if self._cloud_client is None or self._cloud_client.backend != name:
             from iqcc_cloud_client import IQCC_Cloud

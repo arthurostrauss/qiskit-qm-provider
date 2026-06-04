@@ -323,19 +323,19 @@ class Parameter:
         ] = None,
         units: str = "",
     ):
-        """
+        """Initialize a streamed or compile-time QUA parameter.
 
         Args:
             name: Name of the parameter.
             value: Initial value of the parameter.
-            qua_type: Type of the QUA variable to be declared (int, fixed, bool). If none is provided, the type is inferred from initial value.
-            input_type: Input type of the parameter (OPNIC, INPUT_STREAM, IO1, IO2). Default is None.
+            qua_type: Type of the QUA variable to be declared (int, fixed, bool).
+                If none is provided, the type is inferred from initial value.
+            input_type: Input type of the parameter (OPNIC, INPUT_STREAM, IO1, IO2).
+                Default is None.
             direction: Direction of the parameter stream (INCOMING, OUTGOING, BOTH).
-                For OPNIC, direction describes data flow vs OPX:
-                OPNIC -> OPX: OUTGOING
-                OPX -> OPNIC: INCOMING
-                OPNIC <-> OPX: BOTH
-                Default is None. Relevant only if input_type is OPNIC.
+                The direction describes the relationship between OPNIC and OPX:
+                OPNIC -> OPX: OUTGOING; OPX -> OPNIC: INCOMING; OPNIC <-> OPX: BOTH.
+                Default is None. Relevant only when ``input_type`` is OPNIC.
             units: Units of the parameter. Default is "".
 
         """
@@ -626,11 +626,11 @@ class Parameter:
                 assign_with_condition(self.var, value, value_cond)
 
     def declare(self, pause_program=False, declare_stream=True):
-        """
-        Declare the QUA variable associated with the parameter.
-        Args: pause_program: Boolean indicating if the program should be paused after declaring the variable.
-            Default is False.
-        declare_stream: Boolean indicating if an output stream should be declared to save the QUA variable.
+        """Declare the QUA variable associated with the parameter.
+
+        Args:
+            pause_program: If ``True``, pause the program after declaring the variable.
+            declare_stream: If ``True``, declare an output stream for the QUA variable.
         """
         if self.input_type == InputType.OPNIC:
             opnic_table = self._require_standalone_opnic_table(context="declare")
@@ -954,12 +954,13 @@ class Parameter:
         mode: Literal["save", "save_all"] = "save_all",
         buffer: Optional[Union[Tuple[int, ...], int, Literal["default"]]] = "default",
     ):
-        """
-        Process the output stream associated with the parameter.
+        """Process the output stream associated with the parameter.
+
         Args:
-            mode: Mode of processing the stream. Can be "save" or "save_all". Default is "save_all".
-            buffer: Buffer size for the stream. If "default", the default buffer size is used (no buffer for a single variable
-                and buffer of array size for an array). Can also be set to None for no buffer.
+            mode: Mode of processing the stream. Can be ``"save"`` or ``"save_all"``.
+                Default is ``"save_all"``.
+            buffer: Buffer size for the stream. Use ``"default"`` for automatic sizing,
+                or ``None`` for no buffer.
         """
         if mode not in ["save", "save_all"]:
             raise ValueError("Invalid mode. Must be 'save' or 'save_all'.")
@@ -989,11 +990,12 @@ class Parameter:
         ] = None,
         is_qua_array: bool = False,
     ):
-        """
-        Clip the QUA variable to a given range.
-        Args: min_val: Minimum value of the range.
+        """Clip the QUA variable to a given range.
+
+        Args:
+            min_val: Minimum value of the range.
             max_val: Maximum value of the range.
-            is_array: Boolean indicating if the bounds are QUA arrays.
+            is_qua_array: If ``True``, treat bounds as QUA arrays.
         """
         if not self.is_declared:
             raise ValueError(
@@ -1248,8 +1250,7 @@ class Parameter:
         verbosity: int = 1,
         time_out=30,
     ):
-        """
-        Client function: Fetches data based on the specified input type and returns the fetched value.
+        """Fetch a parameter value from the OPX after execution.
 
         This method handles various input types defined by the `InputType` enumeration
         (IO1, IO2, INPUT_STREAM, OPNIC). It manages the fetching logic, including waiting
@@ -1257,17 +1258,15 @@ class Parameter:
         external modules when necessary. For OPNIC it also checks configurations
         and fetches data based on parameters related to outgoing or incoming streams.
 
-        :param job: The job instance of the RunningQmJob for which data is being fetched.
-        :type job: RunningQmJob
-        :param qm: The QuantumMachine instance utilized for fetching the data. Defaults to None.
-        :param fetching_index: The starting index for fetching data when required. Defaults to 0.
-        :type fetching_index: int
-        :param fetching_size: Number of items to fetch from the source, if applicable. Defaults to 1.
-        :type fetching_size: int
-        :param verbosity: Level of output verbosity for log printing. A verbosity > 1 enables detailed logging.
-        :type verbosity: int
-        :param time_out: Time in seconds to wait for the job to be paused before fetching data. Defaults to 30 seconds.
-        :return: The fetched value depending upon the input type and fetching logic.
+        Args:
+            job: Running job whose result handles expose the parameter stream.
+            fetching_index: Starting index when fetching a slice of values.
+            fetching_size: Number of values to fetch.
+            verbosity: Logging verbosity; values above 1 enable detailed output.
+            time_out: Seconds to wait for the job to pause before fetching.
+
+        Returns:
+            Fetched value, depending on the parameter input type.
         """
         if self.input_type == InputType.INPUT_STREAM or self.input_type is None:
             if job is None:

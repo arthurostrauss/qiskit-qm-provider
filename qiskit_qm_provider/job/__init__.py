@@ -18,4 +18,8 @@ Author: Arthur Strauss
 Date: 2026-02-08
 """
 
-from .qm_job import QMJob
+from .qm_job import QMJob, IQCCJob
+from .qm_sampler_job import QMSamplerJob
+from .qm_estimator_job import QMEstimatorJob
+
+__all__ = ["QMJob", "IQCCJob", "QMSamplerJob", "QMEstimatorJob"]

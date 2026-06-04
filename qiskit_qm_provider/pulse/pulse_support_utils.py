@@ -207,6 +207,22 @@ def _instruction_to_qua(
 
 
 def validate_schedule(schedule: Schedule | ScheduleBlock) -> Schedule:
+    """Normalize a Pulse schedule for QUA macro conversion.
+
+    Converts a :class:`~qiskit.pulse.ScheduleBlock` to a
+    :class:`~qiskit.pulse.Schedule` when needed. Parameterized block durations
+    are not supported.
+
+    Args:
+        schedule: Qiskit Pulse schedule or schedule block containing gate pulses.
+
+    Returns:
+        A concrete :class:`~qiskit.pulse.Schedule`.
+
+    Raises:
+        NotImplementedError: If the block has parameterized durations.
+        ValueError: If the input is not a schedule or schedulable block.
+    """
     if isinstance(schedule, ScheduleBlock):
         if not schedule.is_schedulable():
             raise NotImplementedError(
@@ -249,6 +265,27 @@ def schedule_to_qua_macro(
     input_type: Optional[InputType] = None,
     gate_param_names: Optional[Sequence[str]] = None,
 ) -> Callable:
+    """Convert a Qiskit Pulse **gate schedule** into a QUA macro callable.
+
+    Supports drive/play instructions on mapped QuAM channels. Qiskit Pulse
+    **measurement instructions** (``Measure``, kerneled readout, and similar) are
+    **not** supported — use circuit-level ``measure`` gates with
+    :func:`~qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes`
+    in hybrid programs instead.
+
+    Args:
+        backend: Backend whose QuAM channel mapping resolves Pulse channels.
+        sched: A :class:`~qiskit.pulse.Schedule` containing gate pulses only.
+        param_table: Optional :class:`~qiskit_qm_provider.parameter_table.ParameterTable`
+            for real-time schedule parameters. Created from the schedule when omitted.
+        input_type: Default input type when building a new parameter table.
+        gate_param_names: Optional gate parameter names when the schedule has no
+            Pulse parameters but the enclosing gate is parameterized.
+
+    Returns:
+        A QUA macro function with a signature matching the schedule (and gate)
+        parameters.
+    """
     sig = Signature()
     if sched.is_parameterized():
         if gate_param_names and len(gate_param_names) != len(sched.parameters):

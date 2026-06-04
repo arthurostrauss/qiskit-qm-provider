@@ -74,10 +74,18 @@ _QASM3_DUMP_LOOSE_BIT_PREFIX = "_bit"
 
 
 def validate_machine(machine) -> QuamRoot:
-    """
-    Validate the QuAM instance by checking if it has qubits and qubit_pairs attributes and if they are of type Qubit and QubitPair respectively.
-    :param machine: The QuAM instance to be validated.
-    :return: The QuAM instance if it is valid, otherwise raises a ValueError.
+    """Validate a QuAM instance before use with the backend.
+
+    Args:
+        machine: QuAM instance to validate. Must expose ``qubits`` and
+            ``qubit_pairs`` containing :class:`~quam.components.Qubit` and
+            :class:`~quam.components.QubitPair` objects respectively.
+
+    Returns:
+        The validated QuAM instance.
+
+    Raises:
+        ValueError: If required attributes are missing or have wrong types.
     """
     if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
         raise ValueError(
@@ -98,12 +106,20 @@ def validate_circuits(
     should_reset: bool = True,
     check_for_params: bool = False,
 ) -> List[QuantumCircuit]:
-    """
-    Validate the circuits to be compiled. The circuits should be a list of QuantumCircuits.
-    :param circuits: List of QuantumCircuits to be validated.
-    :param should_reset: If True, check if the circuit has a reset at the boundary.
-    :param check_for_params: If True, check if the circuit has compile-time parameters.
-    :return: Modified circuits with an added reset if needed.
+    """Validate circuits before compilation.
+
+    Args:
+        circuits: Single circuit or list of circuits to validate.
+        should_reset: When ``True``, prepend a reset to circuits that lack one
+            at the boundary.
+        check_for_params: When ``True``, reject circuits with compile-time
+            parameters.
+
+    Returns:
+        Validated circuits, with an automatic reset prepended when requested.
+
+    Raises:
+        ValueError: If inputs are invalid or classical-bit layout is unsupported.
     """
     if isinstance(circuits, QuantumCircuit):
         circuits = [circuits]
@@ -129,10 +145,13 @@ def validate_circuits(
 
 
 def has_conflicting_calibrations(circuits: List[QuantumCircuit]) -> bool:
-    """
-    Check if the circuits have conflicting calibrations.
-    :param circuits: List of QuantumCircuits to be checked.
-    :return: True if there are conflicting calibrations, False otherwise.
+    """Check whether circuits define conflicting custom calibrations.
+
+    Args:
+        circuits: Circuits whose ``calibrations`` attributes are checked.
+
+    Returns:
+        ``True`` if the same operation identifier appears more than once.
     """
     from qm_qasm import OperationIdentifier
 
@@ -221,11 +240,14 @@ def has_reset_at_boundary(circuit: QuantumCircuit) -> bool:
 
 
 def binary(val: int, num_bits: int = 0) -> str:
-    """
-    Convert an integer to a binary string with leading zeros.
-    :param val: The integer value to convert.
-    :param num_bits: The number of bits in the binary representation.
-    :return: The binary string representation of the integer.
+    """Convert an integer to a zero-padded binary string.
+
+    Args:
+        val: Integer value to convert.
+        num_bits: Minimum width of the binary representation.
+
+    Returns:
+        Binary string without the ``0b`` prefix.
     """
     return bin(val)[2:].zfill(num_bits)
 
@@ -234,6 +256,20 @@ def add_basic_macros(
     backend: QuamRoot | QMBackend,
     reset_type: Literal["active", "thermalize"] = "thermalize",
 ):
+    """Populate a QuAM machine with standard gate-level macros.
+
+    Adds ``x``, ``sx``, ``rz``, ``sy``, ``sydg``, ``measure``, ``reset``, ``delay``,
+    ``id``, and ``cz`` macros. These definitions are **tailored to flux-tunable
+    transmon** hardware and assume pulse naming from ``FluxTunableQuam`` /
+    quam-builder (e.g. ``x180``, ``x90``, readout pulses, ``CZGate`` on pairs).
+
+    This is a convenience starting point, not a universal hardware definition.
+    Override macros on your own ``QuamRoot`` for other platforms; coordinate with
+    the Quantum Machines team for quam-builder extensions as needed.
+
+    Args:
+        backend: A :class:`~.QMBackend` or :class:`~quam.core.QuamRoot` instance.
+        reset_type: Reset macro variant, ``"active"`` or ``"thermalize"``.
     """
     Add macros to the machine. One can either pass a BaseQuam instance or a QMBackend instance.
     If the latter is passed, the target will be updated accordingly.
@@ -296,13 +332,29 @@ def add_basic_macros(
 def get_measurement_outcomes(
     qc: QuantumCircuit, result: CompilationResult, compute_state_int: bool = True
 ) -> dict[str, dict[str, QuaVariableInt]]:
-    """
-    Get the measurement outcomes resulting from the execution of the QuantumCircuit.
-    This is returned as a dictionary of the form {creg_name: {"value": [outcome_values], "state_int": state_int, "size": size}}, where state_int is a QUA variable that contains the integer representation of each ClassicalRegister belonging to the QuantumCircuit and size is the size of the ClassicalRegister.
-    Note that this follows the Qiskit convention of using the least significant bit (LSB) of the integer to represent the state of the qubit with index 0.
-    We also support the case where the QuantumCircuit contains loose bits (bits that are not associated with a ClassicalRegister).
-    In this case, an extra ClassicalRegister is added to the QuantumCircuit with the name _bit, containing the measurement outcomes of the loose bits with the same convention.
-    :param compute_state_int: If True, compute the state integer for each ClassicalRegister.
+    """Wire classical measurement outcomes from an embedded circuit into QUA variables.
+
+    Call inside the same ``with program():`` block **immediately after**
+    :meth:`~.QMBackend.quantum_circuit_to_qua`. The returned QUA variables reference
+    outcomes from the circuit execution that just completed, enabling real-time QUA
+    control flow and streaming without round-tripping through Python.
+
+    Args:
+        qc: The :class:`~qiskit.circuit.QuantumCircuit` that was compiled.
+        result: The compilation result returned by ``quantum_circuit_to_qua``.
+        compute_state_int: If ``True`` (default), declare an integer packing of
+            each register's bits (LSB = qubit index 0).
+
+    Returns:
+        A dictionary mapping each classical register name to a sub-dictionary:
+
+        - ``"value"``: list of QUA variables, one per measured bit (0/1 outcomes).
+        - ``"size"``: number of bits in the register.
+        - ``"state_int"``: QUA ``int`` with packed bit values (when
+          ``compute_state_int=True``).
+        - ``"stream"``: QUA stream for ``stream_processing()`` on the host.
+
+        Loose clbits not in any register appear under the synthetic key ``"_bit"``.
     """
     clbits_dict = {
         creg.name: {
@@ -360,11 +412,15 @@ def logically_active_qubits(circuit):
 def get_non_trivial_observables(
     observables: PauliList, active_qubit_indices: List[int]
 ) -> PauliList:
-    """
-    Get the non-trivial observables from the observables.
-    :param observables: The observables to get the non-trivial observables from.
-    :param active_qubit_indices: The indices of the active qubits.
-    :return: The non-trivial observables.
+    """Restrict observables to logically active qubits.
+
+    Args:
+        observables: Pauli observables defined on the full qubit register.
+        active_qubit_indices: Indices of qubits that participate in the circuit.
+
+    Returns:
+        A :class:`~qiskit.quantum_info.PauliList` with inactive qubits replaced
+        by identity.
     """
     new_observables = []
     for observable in observables:
