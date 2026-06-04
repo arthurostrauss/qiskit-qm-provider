@@ -271,11 +271,7 @@ def add_basic_macros(
         backend: A :class:`~.QMBackend` or :class:`~quam.core.QuamRoot` instance.
         reset_type: Reset macro variant, ``"active"`` or ``"thermalize"``.
     """
-    Add macros to the machine. One can either pass a BaseQuam instance or a QMBackend instance.
-    If the latter is passed, the target will be updated accordingly.
-    :param machine: The BaseQuam instance to which macros will be added.
-    :param reset_type: The type of reset to use. Can be 'active' or 'thermalize'.
-    """
+    
     from qiskit_qm_provider.quam_macros.superconducting.single_qubit_macros import (
         ResetMacro,
         VirtualZMacro,

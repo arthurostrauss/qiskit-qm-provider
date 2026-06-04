@@ -935,7 +935,7 @@ class QMBackend(Backend):
         qc: QuantumCircuit,
         param_table: Optional[
             ParameterTable
-            | List[ParameterTable | Parameter]
+            | Sequence[ParameterTable | Parameter]
             | Dict[str | QiskitParameter | Var, Scalar]
         ] = None,
     ) -> CompilationResult:
