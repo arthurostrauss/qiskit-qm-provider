@@ -1,3 +1,7 @@
+"""
+This module contains a reference implementation of the single qubit macros for the superconducting backend.
+It is used to populate the backend with the standard gate-level macros.
+"""
 from typing import Union, Literal, Optional
 from quam.components.macro import QubitMacro
 from quam.components import Qubit
@@ -6,8 +10,13 @@ from quam.components.pulses import Pulse, ReadoutPulse
 from quam.utils.qua_types import QuaVariableBool, StreamType
 
 from qm.qua import declare, fixed, save, assign, wait
-from quam_builder.architecture.superconducting.components.readout_resonator import ReadoutResonatorIQ
+from quam_builder.architecture.superconducting.components.readout_resonator import (
+    ReadoutResonatorIQ,
+    ReadoutResonatorMW,
+)
 from quam_builder.architecture.superconducting.qubit import AnyTransmon
+
+Resonator = Union[ReadoutResonatorIQ, ReadoutResonatorMW]
 
 def get_pulse_name(pulse: Pulse) -> str:
     """
@@ -23,6 +32,9 @@ def get_pulse_name(pulse: Pulse) -> str:
         )
 
 def get_pulse(pulse: Pulse | str, qubit: Qubit | None = None) -> Pulse:
+    """
+    Get the pulse from the qubit or the pulse name.
+    """
     if isinstance(pulse, Pulse):
         return pulse
     elif qubit is not None:
@@ -40,7 +52,7 @@ class MeasureMacro(QubitMacro):
     def apply(self, **kwargs) -> QuaVariableBool:
 
         pulse = get_pulse(self.pulse, self.qubit)
-        resonator: ReadoutResonatorIQ = self.qubit.resonator
+        resonator: Resonator = self.qubit.resonator
 
         qua_vars = kwargs.get("qua_vars", (declare(fixed), declare(fixed)))
         I, Q = qua_vars
@@ -60,7 +72,7 @@ class MeasureMacro(QubitMacro):
     
     @property
     def inferred_duration(self) -> float:
-        readout_pulse: ReadoutPulse = self.pulse if isinstance(self.pulse, ReadoutPulse) else get_pulse(self.pulse, self.qubit)
+        readout_pulse: ReadoutPulse = get_pulse(self.pulse, self.qubit)
         return readout_pulse.length * 1e-9
 
 @quam_dataclass
@@ -87,7 +99,7 @@ class ResetMacro(QubitMacro):
         elif self.reset_type == "active_gef":
             if pi_12_pulse is None:
                 raise ValueError("pi_12_pulse is required for active_gef reset")
-            qubit.reset_qubit_active_gef(readout_pulse_name=get_pulse_name(readout_pulse), pi_01_pulse_name=get_pulse_name(pi_pulse), pi_12_pulse_name=get_pulse_name(pi_pulse))
+            qubit.reset_qubit_active_gef(readout_pulse_name=get_pulse_name(readout_pulse), pi_01_pulse_name=get_pulse_name(pi_pulse), pi_12_pulse_name=get_pulse_name(pi_12_pulse))
 
        
     @property

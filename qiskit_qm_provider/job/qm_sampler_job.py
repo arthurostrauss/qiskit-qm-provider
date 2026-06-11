@@ -19,19 +19,22 @@ Date: 2026-02-08
 """
 
 from __future__ import annotations
-import numpy as np
+from typing import Optional, Union, List, TYPE_CHECKING
 import os
 import inspect
+
+import numpy as np
+
 from qiskit.circuit import Parameter
 from qiskit.primitives import PrimitiveResult
 from qiskit.primitives.containers import SamplerPubResult, DataBin, BitArray
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit.providers import JobStatus
 
-from qm import SimulationConfig, CompilerOptionArguments, QuantumMachinesManager
+from qm import SimulationConfig, CompilerOptionArguments, QuantumMachinesManager, generate_qua_script
 from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
-from typing import Optional, Union, List, TYPE_CHECKING
+
 from ..backend import QMBackend
 from ..parameter_table import InputType, ParameterPool, ParameterTable
 from .qua_programs import sampler_program

@@ -37,9 +37,9 @@ from qiskit.quantum_info import Pauli, PauliList
 from quam.components import Qubit, QubitPair
 from quam.core import QuamRoot
 from quam.utils.qua_types import QuaVariableInt
-from ..additional_gates import CRGate, SYGate, SYdgGate
 from qm import generate_qua_script
 from qm.qua import declare, assign, Cast, declare_stream
+from ..additional_gates import CRGate, SYGate, SYdgGate
 
 if TYPE_CHECKING:
     from qm_qasm import CompilationResult
@@ -72,6 +72,17 @@ qasm3_keyword_instructions = (
 )
 _QASM3_DUMP_LOOSE_BIT_PREFIX = "_bit"
 
+class _LooseBitRegister:
+    """
+    A register for loose bits in a QASM3 program.
+    This is used to store the results of measurements that are not assigned to a classical register.
+    """
+    name: Literal["_bit"] = _QASM3_DUMP_LOOSE_BIT_PREFIX
+    def __init__(self, qc: QuantumCircuit):
+        self.size = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
+    
+    def value(self, result: CompilationResult):
+        return [result.result_program[f"{self.name}{i}"] for i in range(self.size)]
 
 def validate_machine(machine) -> QuamRoot:
     """Validate a QuAM instance before use with the backend.
@@ -291,19 +302,15 @@ def add_basic_macros(
 
     for qubit in machine.active_qubits:
         if not qubit.macros:
-            x180_pulse = qubit.get_pulse("x180").get_reference()
-            readout_pulse = qubit.get_pulse("readout").get_reference()
-            x90_pulse = qubit.get_pulse("x90").get_reference()
-            y90_pulse = qubit.get_pulse("y90").get_reference()
-            my90_pulse = qubit.get_pulse("-y90").get_reference()
-            qubit.macros["x"] = PulseMacro(pulse=x180_pulse)
+            
+            qubit.macros["x"] = PulseMacro(pulse="x180")
             qubit.macros["rz"] = VirtualZMacro()
-            qubit.macros["sx"] = PulseMacro(pulse=x90_pulse)
-            qubit.macros["sy"] = PulseMacro(pulse=y90_pulse)
-            qubit.macros["sydg"] = PulseMacro(pulse=my90_pulse)
-            qubit.macros["measure"] = MeasureMacro(pulse=readout_pulse)
+            qubit.macros["sx"] = PulseMacro(pulse="x90")
+            qubit.macros["sy"] = PulseMacro(pulse="y90")
+            qubit.macros["sydg"] = PulseMacro(pulse="-y90")
+            qubit.macros["measure"] = MeasureMacro(pulse="readout")
             qubit.macros["reset"] = ResetMacro(
-                reset_type=reset_type, pi_pulse=x180_pulse, readout_pulse=readout_pulse
+                reset_type=reset_type, pi_pulse="x180", readout_pulse="readout"
             )
             qubit.macros["delay"] = DelayMacro()
             qubit.macros["id"] = IdMacro()
@@ -352,26 +359,19 @@ def get_measurement_outcomes(
 
         Loose clbits not in any register appear under the synthetic key ``"_bit"``.
     """
+    loose_bit_register = _LooseBitRegister(qc)
+    cregs = qc.cregs
+    if loose_bit_register.size > 0:
+        cregs.append(loose_bit_register)
     clbits_dict = {
         creg.name: {
-            "value": result.result_program[creg.name],
+            "value": result.result_program[creg.name] if creg.name != loose_bit_register.name else loose_bit_register.value(result),
             "stream": declare_stream(),
             "size": creg.size,
         }
-        for creg in qc.cregs
+        for creg in cregs
     }
-    num_solo_bits = len(
-        [bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0]
-    )
-    if num_solo_bits > 0:
-        clbits_dict[_QASM3_DUMP_LOOSE_BIT_PREFIX] = {
-            "value": [
-                result.result_program[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}"]
-                for i in range(num_solo_bits)
-            ],
-            "stream": declare_stream(),
-            "size": num_solo_bits,
-        }
+    
     if compute_state_int:
         for creg_dict in clbits_dict.values():
             c_reg_res = creg_dict["value"]
