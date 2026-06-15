@@ -47,23 +47,6 @@ def _field_annotation(atomic: str, length: int) -> Any:
     return Array[t, length] if length > 1 else Scalar[t]
 
 
-def _qm_to_quarc_direction(qm_direction: Any) -> QuarcDirection:
-    """Convert a ``qiskit_qm_provider`` :class:`Direction` to a ``quarc.Direction``.
-
-    The two enums use opposite conventions:
-    * ``qiskit_qm_provider.Direction.OUTGOING`` (OPNIC → OPX) → ``quarc.Direction.INCOMING``
-    * ``qiskit_qm_provider.Direction.INCOMING`` (OPX → OPNIC) → ``quarc.Direction.OUTGOING``
-    * ``BOTH`` → ``BOTH``
-    """
-    from qiskit_qm_provider.parameter_table.input_type import Direction as QMDirection
-
-    if qm_direction == QMDirection.OUTGOING:
-        return QuarcDirection.INCOMING
-    if qm_direction == QMDirection.INCOMING:
-        return QuarcDirection.OUTGOING
-    return QuarcDirection.BOTH
-
-
 # ---------------------------------------------------------------------------
 # QiskitQMModule
 # ---------------------------------------------------------------------------

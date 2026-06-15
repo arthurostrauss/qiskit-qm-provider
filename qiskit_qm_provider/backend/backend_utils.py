@@ -23,7 +23,7 @@ from __future__ import annotations
 import warnings
 from typing import List, TYPE_CHECKING, Dict, Literal, Type
 
-from qiskit import QuantumCircuit
+from qiskit.circuit import QuantumCircuit, Parameter
 from qiskit.circuit.controlflow import (
     ControlFlowOp,
     IfElseOp,
@@ -39,7 +39,7 @@ from quam.core import QuamRoot
 from quam.utils.qua_types import QuaVariableInt
 from qm import generate_qua_script
 from qm.qua import declare, assign, Cast, declare_stream
-from ..additional_gates import CRGate, SYGate, SYdgGate
+from ..additional_gates import CRGate, FSimGate, SYGate, SYdgGate
 
 if TYPE_CHECKING:
     from qm_qasm import CompilationResult
@@ -210,11 +210,25 @@ def look_for_standard_op(op: str):
 
 
 def get_extended_gate_name_mapping():
-    gate_map = get_standard_gate_name_mapping()
+    """
+    Returns a dictionary of gate names to standard gate instances, with additional custom gates.
+    Custom gates are:
+    - SYGate: Rotation around the Y axis by π/2
+    - SYdgGate: Rotation around the Y axis by -π/2
+    - CRGate: Cross-resonance gate
+    - FSimGate: Two-qubit gate parametrized by (θ, ϕ)
 
+    Args:
+        None
+
+    Returns:
+        A dictionary of gate names to standard gate instances, with additional custom gates.
+    """
+    gate_map = get_standard_gate_name_mapping()
     gate_map["sy"] = SYGate()
     gate_map["cr"] = CRGate()
     gate_map["sydg"] = SYdgGate()
+    gate_map["fsim"] = FSimGate(Parameter("θ"), Parameter("ϕ"))
 
     return gate_map
 

@@ -114,10 +114,21 @@ class FluxTunableTransmonBackend(QMBackend):
         """
         Retrieve the qubit to quantum elements mapping for the backend.
         """
-        return {
-            i: (qubit.xy.name, qubit.z.name, qubit.resonator.name)
-            for i, qubit in enumerate(self.machine.active_qubits)
-        }
+        mapping = {}
+
+        for i, qubit in enumerate(self.machine.active_qubits):
+            channels = [ch.name for ch in qubit.channels.values()]
+            name = qubit.name
+            line_number = name[1]
+
+            if hasattr(self.machine, "twpas"):
+                for twpa in self.machine.twpas.values():
+                    if hasattr(twpa, "pump") and twpa.name[-1] == line_number:
+                        channels.append(twpa.pump.name)
+
+            mapping[i] = tuple(channels)
+
+        return mapping
 
     @property
     def meas_map(self) -> List[List[int]]:
