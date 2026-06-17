@@ -47,7 +47,10 @@ def _mock_compilation_result(mapping: dict, name: str = "test_comp"):
 
 class TestQuaCircuitCompilationDelegation:
     def test_delegates_compilation_result_attributes(self):
-        mapping = {"c": MagicMock(name="c_var")}
+        with qua.program():
+            array_var = qua.declare(bool, value=[False, False])
+
+        mapping = {"c": array_var}
         result = _mock_compilation_result(mapping)
         creg = ClassicalRegister(2, "c")
         qc = QuantumCircuit(2)
@@ -119,13 +122,13 @@ class TestMeasurementOutcomeTableAccessors:
 
     def test_not_registered_in_runtime_parameter_pool(self):
         with qua.program():
-            scalar = qua.declare(bool, value=False)
+            array_var = qua.declare(bool, value=[False])
 
         creg = ClassicalRegister(1, "meas")
         qc = QuantumCircuit(1)
         qc.add_register(creg)
         qc.measure(0, creg[0])
-        result = _mock_compilation_result({"meas": scalar})
+        result = _mock_compilation_result({"meas": array_var})
 
         table = MeasurementOutcomeTable.from_compilation(qc, result)
         assert table._id == 0
@@ -133,7 +136,7 @@ class TestMeasurementOutcomeTableAccessors:
 
     def test_tracked_in_measurement_registries(self):
         with qua.program():
-            scalar = qua.declare(bool, value=False)
+            array_var = qua.declare(bool, value=[False])
             loose = qua.declare(bool, value=False)
 
         qc = QuantumCircuit(2)
@@ -143,7 +146,7 @@ class TestMeasurementOutcomeTableAccessors:
         qc.add_bits([loose_bit])
         qc.measure(0, creg[0])
         qc.measure(1, loose_bit)
-        result = _mock_compilation_result({"c": scalar, "_bit0": loose})
+        result = _mock_compilation_result({"c": array_var, "_bit0": loose})
 
         table = MeasurementOutcomeTable.from_compilation(qc, result)
         assert table in ParameterPool.iter_measurement_outcome_tables()
@@ -151,38 +154,92 @@ class TestMeasurementOutcomeTableAccessors:
         assert table.get_parameter("c") in fields
         assert table.get_parameter("_bit0") in fields
 
-    def test_scalar_register_var_type(self):
+    def test_size_one_creg_var_is_array(self):
         with qua.program():
-            scalar = qua.declare(bool, value=False)
+            array_var = qua.declare(bool, value=[False])
 
         creg = ClassicalRegister(1, "b")
         qc = QuantumCircuit(1)
         qc.add_register(creg)
         qc.measure(0, creg[0])
-        result = _mock_compilation_result({"b": scalar})
+        result = _mock_compilation_result({"b": array_var})
         table = MeasurementOutcomeTable.from_compilation(qc, result)
 
         with qua.program():
             assert table.get_parameter("b").size == 1
-            assert not isinstance(table["b"], QuaArrayVariable)
+            assert isinstance(table["b"], QuaArrayVariable)
+            assert table["b"] is array_var
 
     def test_declare_is_noop(self):
         with qua.program():
-            scalar = qua.declare(bool, value=False)
+            array_var = qua.declare(bool, value=[False])
 
         creg = ClassicalRegister(1, "c")
         qc = QuantumCircuit(1)
         qc.add_register(creg)
         qc.measure(0, creg[0])
-        result = _mock_compilation_result({"c": scalar})
+        result = _mock_compilation_result({"c": array_var})
         table = MeasurementOutcomeTable.from_compilation(qc, result)
 
         with qua.program():
             returned = table.declare()
-            assert returned is scalar
+            assert returned is array_var
 
 
 class TestMeasurementRegisterField:
+    def test_state_int_size_one_creg_uses_array_indexing(self):
+        with qua.program():
+            array_var = qua.declare(bool, value=[False])
+            scalar_var = qua.declare(bool, value=False)
+
+        creg = ClassicalRegister(1, "c")
+        qc = QuantumCircuit(1)
+        qc.add_register(creg)
+        qc.measure(0, creg[0])
+
+        creg_field = MeasurementRegisterField("c", 1)
+        creg_field._wire_from_result(_mock_compilation_result({"c": array_var}), "c")
+
+        loose_field = MeasurementRegisterField("_bit0", 1)
+        loose_field._wire_from_result(_mock_compilation_result({"_bit0": scalar_var}), "_bit0")
+
+        with qua.program():
+            creg_state_int = creg_field.state_int
+            loose_state_int = loose_field.state_int
+            assert creg_state_int is not None
+            assert loose_state_int is not None
+
+    def test_from_compilation_records_var_shape(self):
+        with qua.program():
+            array_var = qua.declare(bool, value=[False])
+            loose_var = qua.declare(bool, value=False)
+
+        creg = ClassicalRegister(1, "c")
+        loose_clbit = Clbit()
+        qc = QuantumCircuit(1)
+        qc.add_register(creg)
+        qc.add_bits([loose_clbit])
+        qc.measure(0, creg[0])
+        qc.measure(0, loose_clbit)
+
+        result = _mock_compilation_result({"c": array_var, "_bit0": loose_var})
+        table = MeasurementOutcomeTable.from_compilation(qc, result)
+
+        assert table.get_parameter("c").var_is_array is True
+        assert table.get_parameter("_bit0").var_is_array is False
+
+        with qua.program():
+            assert table.state_ints["c"] is not None
+            assert table.state_ints["_bit0"] is not None
+
+    def test_wire_multi_bit_scalar_raises(self):
+        with qua.program():
+            scalar = qua.declare(bool, value=False)
+
+        field = MeasurementRegisterField("c", 2)
+        with pytest.raises(ValueError, match="packed output"):
+            field._wire_from_result(_mock_compilation_result({"c": scalar}), "c", register_size=2)
+
     def test_rewire_invalidates_state_int_on_size_change(self):
         with qua.program():
             var1 = qua.declare(bool, value=False)
@@ -262,7 +319,7 @@ class TestRuntimeMeasurementNameCoexistence:
     def test_runtime_and_measurement_same_name_coexist(self):
         ParameterTable({"c": 0.0}, name="Inputs")
         with qua.program():
-            var = qua.declare(bool, value=False)
+            var = qua.declare(bool, value=[False])
 
         creg = ClassicalRegister(1, "c")
         qc = QuantumCircuit(1)
@@ -280,7 +337,7 @@ class TestRuntimeMeasurementNameCoexistence:
 
     def test_pool_reset_clears_measurement_registries(self):
         with qua.program():
-            var = qua.declare(bool, value=False)
+            var = qua.declare(bool, value=[False])
 
         creg = ClassicalRegister(1, "c")
         qc = QuantumCircuit(1)
@@ -325,13 +382,13 @@ class TestGetMeasurementOutcomesShim:
 
     def test_outputs_attr_access_does_not_expose_state_int_on_var(self):
         with qua.program():
-            scalar = qua.declare(bool, value=False)
+            array_var = qua.declare(bool, value=[False])
 
         creg = ClassicalRegister(1, "meas")
         qc = QuantumCircuit(1)
         qc.add_register(creg)
         qc.measure(0, creg[0])
-        result = _mock_compilation_result({"meas": scalar})
+        result = _mock_compilation_result({"meas": array_var})
         wrapper = QuaCircuitCompilation(result, qc)
 
         with qua.program():

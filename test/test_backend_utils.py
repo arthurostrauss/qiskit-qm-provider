@@ -14,6 +14,8 @@ from qiskit_qm_provider.backend.backend_utils import (
     logically_active_qubits,
     get_non_trivial_observables,
     assign_struct_with_table,
+    pack_register_to_int,
+    _measurement_var_is_array,
 )
 
 
@@ -334,6 +336,54 @@ class TestAssignStructWithTable:
             source_table.declare()
             dest_handle.initialize_in_qua()
             assign_struct_with_table(dest_handle, source_table)
+
+
+class TestPackRegisterToInt:
+    def test_detects_scalar_vs_size_one_array(self):
+        from qm import qua
+
+        with qua.program():
+            scalar = qua.declare(bool, value=False)
+            array = qua.declare(bool, value=[False])
+            out_loose = qua.declare(int)
+            out_creg = qua.declare(int)
+            qua.assign(out_loose, pack_register_to_int(scalar, 1))
+            qua.assign(out_creg, pack_register_to_int(array, 1))
+
+        assert not _measurement_var_is_array(scalar)
+        assert _measurement_var_is_array(array)
+
+    def test_size_one_array_uses_indexing_even_without_loose_bit_metadata(self):
+        from qm import qua
+
+        with qua.program():
+            array = qua.declare(bool, value=[False])
+            out = qua.declare(int)
+            qua.assign(out, pack_register_to_int(array, 1))
+
+    def test_multi_bit_register_uses_array_indexing(self):
+        from qm import qua
+
+        with qua.program():
+            array = qua.declare(bool, value=[False, True])
+            out = qua.declare(int)
+            qua.assign(out, pack_register_to_int(array, 2))
+
+    def test_multi_bit_scalar_raises(self):
+        from qm import qua
+
+        with qua.program():
+            scalar = qua.declare(bool, value=False)
+        with pytest.raises(ValueError, match="Expected a QUA bool array"):
+            pack_register_to_int(scalar, 2)
+
+    def test_invalid_size_raises(self):
+        from qm import qua
+
+        with qua.program():
+            scalar = qua.declare(bool, value=False)
+        with pytest.raises(ValueError, match="size >= 1"):
+            pack_register_to_int(scalar, 0)
 
 
 class TestGetNonTrivialObservables:

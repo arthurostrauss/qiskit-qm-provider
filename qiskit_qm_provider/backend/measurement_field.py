@@ -24,7 +24,7 @@ from qm.qua import assign, declare, declare_stream
 from qm.qua.type_hints import QuaScalar
 
 from ..parameter_table._scope import require_qua_program, requires_qua_program
-from .backend_utils import pack_register_to_int
+from .backend_utils import pack_register_to_int, _measurement_var_is_array
 
 if TYPE_CHECKING:
     from qm_qasm import CompilationResult
@@ -51,8 +51,10 @@ class MeasurementRegisterField:
         """Create a measurement field handle before wiring from a compilation result.
 
         Args:
-            name: Output key in ``result_program`` (typically a creg name or ``_bitN``).
-            register_size: Number of classical bits represented by this field.
+            name: Output key in ``result_program`` (creg name, ``_bitN``, or other
+                compiler output key).
+            register_size: Number of classical bits represented by this field when
+                packed into :attr:`state_int`.
             compute_state_int: If ``True``, :attr:`state_int` lazily packs bits into an
                 ``int`` QUA variable.
             parent: Optional owning :class:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation` (stored as weakref).
@@ -68,6 +70,7 @@ class MeasurementRegisterField:
         self._stream = None
         self._wired_program_key: Optional[str] = None
         self._wired_compilation_uuid: Optional[str] = None
+        self._var_is_array: bool = False
 
     @property
     def is_measurement_output(self) -> bool:
@@ -83,6 +86,15 @@ class MeasurementRegisterField:
     def size(self) -> int:
         """Number of classical bits in this register (``1`` for loose clbits)."""
         return self._register_size
+
+    @property
+    def var_is_array(self) -> bool:
+        """Whether :attr:`var` is a QUA array (``True``) or scalar (``False``).
+
+        Set when the field is wired from ``result_program``; packing in
+        :attr:`state_int` follows this shape, not circuit metadata.
+        """
+        return self._var_is_array
 
     @property
     def var(self):
@@ -133,6 +145,13 @@ class MeasurementRegisterField:
             self._stream = None
 
         self._var = result.result_program[program_key]
+        self._var_is_array = _measurement_var_is_array(self._var)
+        if not self._var_is_array and self._register_size > 1:
+            raise ValueError(
+                f"Measurement field {self.name!r} expects a {self._register_size}-bit "
+                f"packed output (QUA array) but wired variable is a scalar "
+                f"({type(self._var).__name__})."
+            )
         self._is_declared = True
         self._wired_program_key = program_key
         self._wired_compilation_uuid = compilation_uuid
