@@ -44,9 +44,7 @@ ref_beta = qubit.get_pulse("x180").alpha
 # (In practice you would use your backend's drive channel and a real pulse.)
 with qp.build(backend=backend, name="rx_cal") as rx_schedule:
     qp.play(
-        qp.Drag(
-            duration=ref_duration_dt, amp=ref_amp / np.pi * p, sigma=40, beta=ref_beta
-        ),
+        qp.Drag(duration=ref_duration_dt, amp=ref_amp / np.pi * p, sigma=40, beta=ref_beta),
         backend.drive_channel(physical_qubit[0]),
     )
 

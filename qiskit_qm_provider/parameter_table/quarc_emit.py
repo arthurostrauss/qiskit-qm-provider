@@ -53,9 +53,7 @@ def quarc_atomic_for(qua_type: Any) -> type:
     try:
         return _QUA_TO_QUARC_ATOMIC[qua_type]
     except KeyError as exc:
-        raise TypeError(
-            f"Cannot map QUA type {qua_type!r} to a Quarc atomic; expected int, bool, or fixed."
-        ) from exc
+        raise TypeError(f"Cannot map QUA type {qua_type!r} to a Quarc atomic; expected int, bool, or fixed.") from exc
 
 
 def quarc_annotation_for(parameter: "Parameter") -> Any:
@@ -114,10 +112,7 @@ def build_quarc_struct(
         params = [source]
         default_name = source.name
     else:
-        raise TypeError(
-            f"build_quarc_struct expects a ParameterTable or Parameter, got "
-            f"{type(source).__name__}."
-        )
+        raise TypeError(f"build_quarc_struct expects a ParameterTable or Parameter, got " f"{type(source).__name__}.")
 
     name = struct_name or default_name
     if not isinstance(name, str) or not name.isidentifier():

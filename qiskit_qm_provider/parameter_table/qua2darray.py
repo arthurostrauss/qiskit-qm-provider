@@ -17,6 +17,7 @@
 Author: Arthur Strauss
 Date: 2026-02-08
 """
+
 from typing import Tuple, Union, List, Sequence, Literal, Optional
 from numbers import Number
 
@@ -79,9 +80,7 @@ class QUA2DArray(Parameter):
         if isinstance(n_rows_or_value, int):
             n_rows = n_rows_or_value
             if n_cols is None:
-                raise ValueError(
-                    "n_cols must be provided if n_rows_or_value is an integer"
-                )
+                raise ValueError("n_cols must be provided if n_rows_or_value is an integer")
             if n_rows < 1 or n_cols < 1:
                 raise ValueError("n_rows and n_cols must be strictly positive integers")
             length = n_rows * n_cols
@@ -91,17 +90,11 @@ class QUA2DArray(Parameter):
                 raise ValueError(f"Value must be a 2D array")
             n_rows, n_cols = n_rows_or_value.shape
             init_list = n_rows_or_value.flatten().tolist()
-        elif isinstance(n_rows_or_value, list) and all(
-            isinstance(row, list) for row in n_rows_or_value
-        ):
+        elif isinstance(n_rows_or_value, list) and all(isinstance(row, list) for row in n_rows_or_value):
             n_rows = len(n_rows_or_value)
             n_cols = len(n_rows_or_value[0])
-            if len(n_rows_or_value) != n_rows or any(
-                len(row) != n_cols for row in n_rows_or_value
-            ):
-                raise ValueError(
-                    f"Value must be a 2D list of shape ({n_rows}, {n_cols})"
-                )
+            if len(n_rows_or_value) != n_rows or any(len(row) != n_cols for row in n_rows_or_value):
+                raise ValueError(f"Value must be a 2D list of shape ({n_rows}, {n_cols})")
             init_list = [item for row in n_rows_or_value for item in row]
         else:
             raise TypeError("Value must be a 2D numpy array or a list of lists")
@@ -135,9 +128,7 @@ class QUA2DArray(Parameter):
 
     def __getitem__(
         self,
-        key: Union[
-            ScalarInt, slice, Tuple[Union[ScalarInt, slice], Union[ScalarInt, slice]]
-        ],
+        key: Union[ScalarInt, slice, Tuple[Union[ScalarInt, slice], Union[ScalarInt, slice]]],
     ):
         """
         2D indexing:
@@ -181,10 +172,7 @@ class QUA2DArray(Parameter):
 
             else:
                 # 2D slice: [:, :] -> list of lists
-                return [
-                    [self.var[self._flat_index(r, c)] for c in col_indices]
-                    for r in row_indices
-                ]
+                return [[self.var[self._flat_index(r, c)] for c in col_indices] for r in row_indices]
 
         else:
             # Single index
@@ -235,13 +223,9 @@ class QUA2DArray(Parameter):
         # allow numpy arrays
         if isinstance(seq, np.ndarray):
             if seq.ndim != 1:
-                raise ValueError(
-                    f"Expected a 1D array for row assignment, got {seq.ndim}D array"
-                )
+                raise ValueError(f"Expected a 1D array for row assignment, got {seq.ndim}D array")
             seq = seq.tolist()
-        if isinstance(seq, List) and all(
-            isinstance(item, (int, float, bool)) for item in seq
-        ):
+        if isinstance(seq, List) and all(isinstance(item, (int, float, bool)) for item in seq):
             # already a list of numbers, no conversion needed
             if len(seq) != self.n_cols:
                 raise ValueError(
@@ -249,17 +233,11 @@ class QUA2DArray(Parameter):
                 )
             # Check type of elements in the list and match with QUA type
             if not all(isinstance(item, type(seq[0])) for item in seq):
-                raise TypeError(
-                    f"All elements in the list must be of same type: {type(seq[0])}"
-                )
+                raise TypeError(f"All elements in the list must be of same type: {type(seq[0])}")
             if self.type is fixed and not all(isinstance(item, float) for item in seq):
-                raise TypeError(
-                    f"All elements must be of type float for QUA fixed type, got {type(seq[0])}"
-                )
+                raise TypeError(f"All elements must be of type float for QUA fixed type, got {type(seq[0])}")
             elif not all(isinstance(item, self.type) for item in seq):
-                raise TypeError(
-                    f"All elements must be of type {self.type} for QUA type, got {type(seq[0])}"
-                )
+                raise TypeError(f"All elements must be of type {self.type} for QUA type, got {type(seq[0])}")
             for j in range(self.n_cols):
                 qua_assign(self[row, j], seq[j])
             return
@@ -315,20 +293,12 @@ class QUA2DArray(Parameter):
 
         if isinstance(value, np.ndarray):
             if value.ndim != 2 or value.shape != (self.n_rows, self.n_cols):
-                raise ValueError(
-                    f"Value must be a 2D array of shape ({self.n_rows}, {self.n_cols})"
-                )
+                raise ValueError(f"Value must be a 2D array of shape ({self.n_rows}, {self.n_cols})")
             value = value.flatten().tolist()
 
-        if isinstance(value, list) and all(
-            isinstance(row, (list, tuple)) for row in value
-        ):
-            if len(value) != self.n_rows or any(
-                len(row) != self.n_cols for row in value
-            ):
-                raise ValueError(
-                    f"Value must be a 2D list of shape ({self.n_rows}, {self.n_cols})"
-                )
+        if isinstance(value, list) and all(isinstance(row, (list, tuple)) for row in value):
+            if len(value) != self.n_rows or any(len(row) != self.n_cols for row in value):
+                raise ValueError(f"Value must be a 2D list of shape ({self.n_rows}, {self.n_cols})")
             value = [item for row in value for item in row]
 
         # Push the flattened list to the OPX

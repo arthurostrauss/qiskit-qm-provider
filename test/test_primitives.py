@@ -125,9 +125,7 @@ class TestQMEstimatorV2Init:
         assert estimator.options.default_precision == 0.01
 
     def test_init_with_dict_options(self, flux_tunable_backend):
-        estimator = QMEstimatorV2(
-            flux_tunable_backend, options={"default_precision": 0.005}
-        )
+        estimator = QMEstimatorV2(flux_tunable_backend, options={"default_precision": 0.005})
         assert estimator.options.default_precision == 0.005
 
     def test_init_creates_switch_obs_circuit(self, flux_tunable_backend):

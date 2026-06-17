@@ -85,9 +85,7 @@ def _serialize_parameter_table(parameter_table: Optional[ParameterTable]) -> str
     # Build ParameterTable initialization string
     table_name = repr(parameter_table.name)
     param_list_str = "[" + ", ".join(param_init_strings) + "]"
-    table_init_str = (
-        f"ParameterTable(parameters_dict={param_list_str}, name={table_name})"
-    )
+    table_init_str = f"ParameterTable(parameters_dict={param_list_str}, name={table_name})"
     return table_init_str
 
 
@@ -108,9 +106,7 @@ def _serialize_obs_indices(obs_indices: List[List[tuple]]) -> str:
     return result
 
 
-def generate_sync_hook_estimator(
-    execution_plans: List[_ExecutionPlan], obs_length_var: QuaParameter
-) -> str:
+def generate_sync_hook_estimator(execution_plans: List[_ExecutionPlan], obs_length_var: QuaParameter) -> str:
     """Generate the sync hook code for the estimator."""
 
     # Extract parameter values for each execution plan
@@ -153,9 +149,7 @@ def generate_sync_hook_estimator(
                 if j > 0:
                     param_values_str += ", "
                 if isinstance(pv, np.ndarray):
-                    param_values_str += (
-                        f"np.array({np.array2string(pv, separator=', ')})"
-                    )
+                    param_values_str += f"np.array({np.array2string(pv, separator=', ')})"
                 else:
                     param_values_str += repr(pv)
             param_values_str += "]"

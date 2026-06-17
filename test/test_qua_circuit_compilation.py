@@ -247,7 +247,10 @@ class TestMeasurementRegisterField:
 
         field = MeasurementRegisterField("c", 1)
         result1 = _mock_compilation_result({"c": var1}, name="r1")
-        result2 = _mock_compilation_result({"c": var2}, name="r2",)
+        result2 = _mock_compilation_result(
+            {"c": var2},
+            name="r2",
+        )
         result2.uuid = "00000000-0000-0000-0000-000000000002"
 
         field._wire_from_result(result1, "c", register_size=1)

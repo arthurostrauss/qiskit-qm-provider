@@ -45,9 +45,7 @@ def test_iter_opnic_parameter_tables_order():
     t1 = ParameterTable([p1], name="t1")
     p2 = Parameter("b", 0.0, input_type=InputType.OPNIC, direction=Direction.INCOMING)
     t2 = ParameterTable([p2], name="t2")
-    assert [x._id for x in ParameterPool.iter_opnic_parameter_tables()] == sorted(
-        [t1._id, t2._id]
-    )
+    assert [x._id for x in ParameterPool.iter_opnic_parameter_tables()] == sorted([t1._id, t2._id])
 
 
 def test_from_quarc_module_policy_like_struct():
@@ -84,12 +82,8 @@ def test_pipeline2_table_is_pending_until_module_binding():
     pytest.importorskip("quarc")
     from qiskit_qm_provider import QiskitQMModule
 
-    p_mu = Parameter(
-        "mu", [0.0, 0.0], input_type=InputType.OPNIC, direction=Direction.OUTGOING
-    )
-    p_sigma = Parameter(
-        "sigma", [0.1, 0.1], input_type=InputType.OPNIC, direction=Direction.OUTGOING
-    )
+    p_mu = Parameter("mu", [0.0, 0.0], input_type=InputType.OPNIC, direction=Direction.OUTGOING)
+    p_sigma = Parameter("sigma", [0.1, 0.1], input_type=InputType.OPNIC, direction=Direction.OUTGOING)
     table = ParameterTable([p_mu, p_sigma], name="PolicyParams")
 
     # Pre-flush: struct type is built, but no module / no handle.
@@ -119,9 +113,7 @@ def test_to_quarc_module_allocates_qiskitqmmodule_and_sweeps_preexisting():
     table = ParameterTable([p], name="Pre")
     assert table._is_emitted is False
 
-    standalone = Parameter(
-        "alone", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING
-    )
+    standalone = Parameter("alone", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
     assert standalone in ParameterPool._pending_standalone_opnic
 
     module = ParameterPool.to_quarc_module()
@@ -229,9 +221,7 @@ def test_from_quarc_module_binds_pool_module_without_sweeping_plain_base_module(
     from quarc import Array, BaseModule, Direction as QuarcDirection, Struct
 
     # User constructs a pending OPNIC table BEFORE calling from_quarc_module.
-    p = Parameter(
-        "z", [0.0, 0.0], input_type=InputType.OPNIC, direction=Direction.OUTGOING
-    )
+    p = Parameter("z", [0.0, 0.0], input_type=InputType.OPNIC, direction=Direction.OUTGOING)
     pre = ParameterTable([p], name="Pre")
     assert pre._is_emitted is False
 
@@ -265,9 +255,7 @@ def test_qiskitqmmodule_sweeps_pending_tables_at_construction():
     pre = ParameterTable([p], name="Pre")
     assert pre._is_emitted is False
 
-    standalone = Parameter(
-        "alone", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING
-    )
+    standalone = Parameter("alone", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
     assert standalone in ParameterPool._pending_standalone_opnic
 
     module = QiskitQMModule()
@@ -367,9 +355,7 @@ def test_dedup_non_opnic_compatible_omitted_args_returns_existing():
 
 
 def test_table_attached_opnic_parameter_field_methods_raise_table_managed():
-    p = Parameter(
-        "theta", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING
-    )
+    p = Parameter("theta", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
     ParameterTable([p], name="packet")
 
     with pytest.raises(RuntimeError, match="table-managed"):
@@ -392,12 +378,8 @@ def test_table_attached_opnic_parameter_field_methods_raise_table_managed():
 def test_iter_standalone_opnic_parameters_unions_pending_and_promoted():
     pytest.importorskip("quarc")
 
-    pending = Parameter(
-        "p_pending", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING
-    )
-    promoted = Parameter(
-        "p_promoted", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING
-    )
+    pending = Parameter("p_pending", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
+    promoted = Parameter("p_promoted", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
     promoted._require_standalone_opnic_table(context="declare_variable")
 
     members = ParameterPool.iter_standalone_opnic_parameters()

@@ -77,9 +77,7 @@ class _ExecutionPlan:
         observables = pub.observables
         parameter_values = pub.parameter_values
         param_shape = parameter_values.shape
-        param_indices = np.fromiter(np.ndindex(param_shape), dtype=object).reshape(
-            param_shape
-        )
+        param_indices = np.fromiter(np.ndindex(param_shape), dtype=object).reshape(param_shape)
 
         active_qubits = logically_active_qubits(circuit)
         # 2. Broadcast the parameter indices against the observables.
@@ -102,9 +100,7 @@ class _ExecutionPlan:
             obs_indices_list.append(observables_to_indices(meas_paulis_active))
             if options.abelian_grouping:
                 for obs in meas_paulis.group_commuting(qubit_wise=True):
-                    basis = Pauli(
-                        (np.logical_or.reduce(obs.z), np.logical_or.reduce(obs.x))
-                    )
+                    basis = Pauli((np.logical_or.reduce(obs.z), np.logical_or.reduce(obs.x)))
                     _, indices = _measurement_circuit(circuit.num_qubits, basis)
                     paulis = PauliList.from_symplectic(
                         obs.z[:, indices],
@@ -174,9 +170,7 @@ class _ExecutionPlan:
 
 
 def observables_to_indices(
-    observables: (
-        List[SparsePauliOp | Pauli | str] | SparsePauliOp | PauliList | Pauli | str
-    ),
+    observables: List[SparsePauliOp | Pauli | str] | SparsePauliOp | PauliList | Pauli | str,
     abelian_grouping: bool = True,
 ) -> List[Tuple[int, ...]]:
     """
@@ -189,15 +183,9 @@ def observables_to_indices(
         List of tuples of single qubit indices for each qubit-wise commuting group of observables.
     """
     if isinstance(observables, (str, Pauli)):
-        observables = PauliList(
-            Pauli(observables) if isinstance(observables, str) else observables
-        )
-    elif isinstance(observables, List) and all(
-        isinstance(obs, (str, Pauli)) for obs in observables
-    ):
-        observables = PauliList(
-            [Pauli(obs) if isinstance(obs, str) else obs for obs in observables]
-        )
+        observables = PauliList(Pauli(observables) if isinstance(observables, str) else observables)
+    elif isinstance(observables, List) and all(isinstance(obs, (str, Pauli)) for obs in observables):
+        observables = PauliList([Pauli(obs) if isinstance(obs, str) else obs for obs in observables])
     observable_indices = []
     if abelian_grouping:
         observables_grouping = (
@@ -210,12 +198,8 @@ def observables_to_indices(
     for obs_group in observables_grouping:  # Get indices of Pauli observables
         current_indices = []
         paulis = obs_group.paulis if isinstance(obs_group, SparsePauliOp) else obs_group
-        reference_pauli = Pauli(
-            (np.logical_or.reduce(paulis.z), np.logical_or.reduce(paulis.x))
-        )
-        for pauli_term in reversed(
-            reference_pauli.to_label()
-        ):  # Get individual qubit indices for each Pauli term
+        reference_pauli = Pauli((np.logical_or.reduce(paulis.z), np.logical_or.reduce(paulis.x)))
+        for pauli_term in reversed(reference_pauli.to_label()):  # Get individual qubit indices for each Pauli term
             if pauli_term == "I" or pauli_term == "Z":
                 current_indices.append(0)
             elif pauli_term == "X":
@@ -271,18 +255,11 @@ class QMEstimatorJob(QMPrimitiveJob):
         super().__init__(backend, pubs, input_type, **kwargs)
         ParameterPool.reset()
         self._execution_plans: List[_ExecutionPlan] = [
-            _ExecutionPlan.from_pub(
-                pub, options=QMEstimatorOptions(input_type=input_type, **kwargs)
-            )
-            for pub in pubs
+            _ExecutionPlan.from_pub(pub, options=QMEstimatorOptions(input_type=input_type, **kwargs)) for pub in pubs
         ]
         self._switch_obs_circuit: QuantumCircuit = switch_obs_circuit
-        self._obs_length_vars = QuaParameter(
-            name="obs_length_var", value=0, qua_type=int, input_type=input_type
-        )
-        self._program = estimator_program(
-            backend, self._execution_plans, obs_length_var=self._obs_length_vars
-        )
+        self._obs_length_vars = QuaParameter(name="obs_length_var", value=0, qua_type=int, input_type=input_type)
+        self._program = estimator_program(backend, self._execution_plans, obs_length_var=self._obs_length_vars)
 
     def submit(self):
         """Submit the job to the backend after creating an efficient execution plan."""
@@ -292,9 +269,7 @@ class QMEstimatorJob(QMPrimitiveJob):
         compiler_options = self.metadata.get("compiler_options", None)
         simulate = self.metadata.get("simulate", None)
         # 3. EXECUTION: Start the QUA program on the OPX. It will wait for data.
-        if simulate is not None and isinstance(
-            self._backend.qmm, QuantumMachinesManager
-        ):
+        if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
             self._qm_job = self._backend.qmm.simulate(
                 self._backend.qm_config,
                 estimator_prog,
@@ -303,9 +278,7 @@ class QMEstimatorJob(QMPrimitiveJob):
             )
             self._job_id = self._qm_job.id
         else:
-            self._qm_job = self._backend.qm.execute(
-                estimator_prog, compiler_options=compiler_options
-            )
+            self._qm_job = self._backend.qm.execute(estimator_prog, compiler_options=compiler_options)
             self._job_id = self._qm_job.id
 
         # 4. DATA PUSHING: Loop through the planned tasks and push data to the running job.
@@ -316,31 +289,18 @@ class QMEstimatorJob(QMPrimitiveJob):
 
             # Push parameter values if the circuit has them
             if param_table is not None and param_table.input_type is not None:
-                for p, param_value in enumerate(
-                    plan.pub.parameter_values.ravel().as_array()
-                ):
-                    param_dict = {
-                        param.name: value
-                        for param, value in zip(param_table.parameters, param_value)
-                    }
+                for p, param_value in enumerate(plan.pub.parameter_values.ravel().as_array()):
+                    param_dict = {param.name: value for param, value in zip(param_table.parameters, param_value)}
                     param_table.push_to_opx(param_dict, self.qm_job, self._backend.qm)
                     if observables_var.input_type is not None:
-                        self._obs_length_vars.push_to_opx(
-                            len(plan.obs_indices[p]), self.qm_job, self._backend.qm
-                        )
+                        self._obs_length_vars.push_to_opx(len(plan.obs_indices[p]), self.qm_job, self._backend.qm)
                         for obs_value in plan.obs_indices[p]:
-                            obs_dict = {
-                                f"obs_{i}": val for i, val in enumerate(obs_value)
-                            }
-                            observables_var.push_to_opx(
-                                obs_dict, self.qm_job, self._backend.qm
-                            )
+                            obs_dict = {f"obs_{i}": val for i, val in enumerate(obs_value)}
+                            observables_var.push_to_opx(obs_dict, self.qm_job, self._backend.qm)
 
             # Push observable indices
             elif observables_var.input_type is not None:
-                self._obs_length_vars.push_to_opx(
-                    len(plan.obs_indices[0]), self.qm_job, self._backend.qm
-                )
+                self._obs_length_vars.push_to_opx(len(plan.obs_indices[0]), self.qm_job, self._backend.qm)
                 for obs_value in plan.obs_indices[0]:
                     obs_dict = {f"obs_{i}": val for i, val in enumerate(obs_value)}
                     observables_var.push_to_opx(obs_dict, self.qm_job, self._backend.qm)
@@ -393,9 +353,7 @@ class QMEstimatorJob(QMPrimitiveJob):
             # Map expectation values: meas_paulis and orig_paulis_list should be in same order
             if len(meas_paulis) == len(orig_paulis_list):
                 # Direct 1-to-1 mapping
-                for orig_pauli, expval, variance in zip(
-                    orig_paulis_list, expvals, variances
-                ):
+                for orig_pauli, expval, variance in zip(orig_paulis_list, expvals, variances):
                     expval_map[param_index, orig_pauli.to_label()] = (
                         float(expval),
                         float(variance),
@@ -458,9 +416,7 @@ class QMEstimatorJob(QMPrimitiveJob):
             },
         )
 
-    def _result_function(
-        self, qm_job: Union[RunningQmJob, List[QmPendingJob]]
-    ) -> PrimitiveResult[PubResult]:
+    def _result_function(self, qm_job: Union[RunningQmJob, List[QmPendingJob]]) -> PrimitiveResult[PubResult]:
         is_job_list = isinstance(qm_job, list)
         if is_job_list:
             results_handle = [job.result_handles for job in qm_job]
@@ -505,9 +461,7 @@ class QMEstimatorJob(QMPrimitiveJob):
             # plan.pub.observables is an ObservablesArray, we need to broadcast it
             _, bc_obs = np.broadcast_arrays(plan.param_indices, plan.pub.observables)
 
-            pub_result = self._postprocess_pub(
-                plan.pub, expval_map, plan.param_indices, bc_obs, shots
-            )
+            pub_result = self._postprocess_pub(plan.pub, expval_map, plan.param_indices, bc_obs, shots)
             pub_results.append(pub_result)
 
         return PrimitiveResult(pub_results, metadata={"version": 2})
@@ -531,12 +485,9 @@ class IQCCEstimatorJob(QMEstimatorJob):
             raise RuntimeError("IQCC QM job has already been submitted")
 
         if any(
-            plan.param_table is not None and plan.param_table.input_type is not None
-            for plan in self._execution_plans
+            plan.param_table is not None and plan.param_table.input_type is not None for plan in self._execution_plans
         ):
-            sync_hook_code = generate_sync_hook_estimator(
-                self._execution_plans, obs_length_var=self._obs_length_vars
-            )
+            sync_hook_code = generate_sync_hook_estimator(self._execution_plans, obs_length_var=self._obs_length_vars)
         else:
             sync_hook_code = None
 
@@ -555,9 +506,7 @@ class IQCCEstimatorJob(QMEstimatorJob):
         if timeout is not None:
             options["timeout"] = timeout
         # # For IQCC, execute returns CloudJob instead of RunningQmJob
-        self._qm_job = self._backend.qm.execute(  # type: ignore
-            estimator_prog, options=options
-        )
+        self._qm_job = self._backend.qm.execute(estimator_prog, options=options)  # type: ignore
 
     def _result_function(self, qm_job: "CloudJob") -> PrimitiveResult[PubResult]:  # type: ignore[override]
         """Get the result from the IQCC QM job."""
@@ -594,9 +543,7 @@ class IQCCEstimatorJob(QMEstimatorJob):
             # Postprocess to get PubResult
             _, bc_obs = np.broadcast_arrays(plan.param_indices, plan.pub.observables)
 
-            pub_result = self._postprocess_pub(
-                plan.pub, expval_map, plan.param_indices, bc_obs, shots
-            )
+            pub_result = self._postprocess_pub(plan.pub, expval_map, plan.param_indices, bc_obs, shots)
             pub_results.append(pub_result)
 
         return PrimitiveResult(pub_results, metadata={"version": 2})

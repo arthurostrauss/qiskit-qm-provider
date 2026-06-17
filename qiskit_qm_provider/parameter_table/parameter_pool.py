@@ -156,9 +156,7 @@ class ParameterPool:
 
     @classmethod
     def _prune_measurement_field_refs(cls) -> None:
-        cls._measurement_register_fields = [
-            ref for ref in cls._measurement_register_fields if ref() is not None
-        ]
+        cls._measurement_register_fields = [ref for ref in cls._measurement_register_fields if ref() is not None]
 
     @classmethod
     def _reset_measurement_registries(cls) -> None:
@@ -200,8 +198,7 @@ class ParameterPool:
         for existing in cls._registry.values():
             if existing is not obj and getattr(existing, "name", None) == name:
                 raise ValueError(
-                    f"Duplicate pool registration name {name!r}; "
-                    f"already held by {type(existing).__name__}."
+                    f"Duplicate pool registration name {name!r}; " f"already held by {type(existing).__name__}."
                 )
         for pending in cls._pending_standalone_opnic:
             if pending is not obj and pending.name == name:
@@ -309,11 +306,7 @@ class ParameterPool:
 
         result: List["Parameter"] = list(cls._pending_standalone_opnic)
         for obj in cls.get_all_objs():
-            if (
-                isinstance(obj, ParameterTable)
-                and getattr(obj, "_is_synthetic_standalone", False)
-                and obj.parameters
-            ):
+            if isinstance(obj, ParameterTable) and getattr(obj, "_is_synthetic_standalone", False) and obj.parameters:
                 result.append(obj.parameters[0])
         return result
 
@@ -381,9 +374,7 @@ class ParameterPool:
             try:
                 from ..qiskit_qm_module import QiskitQMModule
             except ImportError as exc:
-                raise ImportError(
-                    "ParameterPool.quarc_module requires the `quarc` package."
-                ) from exc
+                raise ImportError("ParameterPool.quarc_module requires the `quarc` package.") from exc
             cls._quarc_module = QiskitQMModule()
         return cls._quarc_module
 
@@ -482,9 +473,7 @@ class ParameterPool:
 
             from ..qiskit_qm_module import QiskitQMModule
         except ImportError as exc:
-            raise ImportError(
-                "ParameterPool.from_quarc_module requires the `quarc` package."
-            ) from exc
+            raise ImportError("ParameterPool.from_quarc_module requires the `quarc` package.") from exc
 
         atomic_to_qua_type: Dict[type, Any] = {float: fixed, int: int, bool: bool}
 
@@ -513,10 +502,7 @@ class ParameterPool:
             elif has_outgoing:
                 direction = Direction.INCOMING
             else:
-                raise ValueError(
-                    f"Struct {struct_name!r} has no stream specs; cannot build "
-                    f"ParameterTable."
-                )
+                raise ValueError(f"Struct {struct_name!r} has no stream specs; cannot build " f"ParameterTable.")
 
             annotations = get_type_hints(struct_spec.struct)
             params: List[Any] = []
@@ -603,9 +589,7 @@ class ParameterPool:
             from quarc import Array as QuarcArray, Scalar as QuarcScalar
             from quarc.naming import pascal_to_snake_case
         except ImportError as exc:
-            raise ImportError(
-                "ParameterPool.from_quarc_module requires the `quarc` package."
-            ) from exc
+            raise ImportError("ParameterPool.from_quarc_module requires the `quarc` package.") from exc
 
         atomic_to_qua_type: Dict[type, Any] = {float: fixed, int: int, bool: bool}
 
@@ -623,8 +607,7 @@ class ParameterPool:
             endpoint = getattr(opnic_runtime, struct_name, None)
             if endpoint is None:
                 warnings.warn(
-                    f"opnic_runtime has no attribute {struct_name!r}; "
-                    f"skipping struct reconstruction.",
+                    f"opnic_runtime has no attribute {struct_name!r}; " f"skipping struct reconstruction.",
                     stacklevel=3,
                 )
                 continue
@@ -640,8 +623,7 @@ class ParameterPool:
                 direction = Direction.INCOMING
             else:
                 warnings.warn(
-                    f"Struct {struct_name!r} has no stream specs in the state dict; "
-                    f"skipping.",
+                    f"Struct {struct_name!r} has no stream specs in the state dict; " f"skipping.",
                     stacklevel=3,
                 )
                 continue

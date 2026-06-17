@@ -22,7 +22,18 @@ from __future__ import annotations
 
 import copy
 import warnings
-from typing import Optional, List, Union, Tuple, Literal, Sequence, TYPE_CHECKING, Dict, Any, Type
+from typing import (
+    Optional,
+    List,
+    Union,
+    Tuple,
+    Literal,
+    Sequence,
+    TYPE_CHECKING,
+    Dict,
+    Any,
+    Type,
+)
 
 import numpy as np
 from qm.qua import (
@@ -79,7 +90,9 @@ def set_type(qua_type: str | Type[int | float | bool]) -> Type[int | float | boo
         raise ValueError("Invalid QUA type. Please use 'fixed', 'int' or 'bool'.")
 
 
-def infer_type(value: Optional[Union[int, float, bool, List, np.ndarray]] = None) -> Type[int | float | bool]:
+def infer_type(
+    value: Optional[Union[int, float, bool, List, np.ndarray]] = None,
+) -> Type[int | float | bool]:
     """
     Infer automatically the type of the QUA variable to be declared from the type of the initial parameter value.
     """
@@ -162,9 +175,7 @@ def _resolve_struct_stream_ids(handle: Any) -> tuple[Optional[int], Optional[int
     return getattr(incoming, "id", None), getattr(outgoing, "id", None)
 
 
-def _resolve_stream_id_for_direction(
-    handle: Any, direction: Optional[Direction]
-) -> Optional[int]:
+def _resolve_stream_id_for_direction(handle: Any, direction: Optional[Direction]) -> Optional[int]:
     """Resolve the stream id for qiskit-qm-provider direction semantics."""
     incoming_id, outgoing_id = _resolve_struct_stream_ids(handle)
     if direction == Direction.OUTGOING:
@@ -201,21 +212,15 @@ def _assert_compatible_existing_parameter(
     if requested_qua_type is not None:
         normalized_requested = set_type(requested_qua_type)
         if existing.type is not normalized_requested:
-            diffs.append(
-                f"qua_type: existing={existing.type!r}, requested={normalized_requested!r}"
-            )
+            diffs.append(f"qua_type: existing={existing.type!r}, requested={normalized_requested!r}")
 
     # input_type: only flag if the user passed a non-None value that disagrees.
     if requested_input_type is not None and existing.input_type != requested_input_type:
-        diffs.append(
-            f"input_type: existing={existing.input_type!r}, requested={requested_input_type!r}"
-        )
+        diffs.append(f"input_type: existing={existing.input_type!r}, requested={requested_input_type!r}")
 
     # direction: only flag if the user passed a non-None value that disagrees.
     if requested_direction is not None and existing._direction != requested_direction:
-        diffs.append(
-            f"direction: existing={existing._direction!r}, requested={requested_direction!r}"
-        )
+        diffs.append(f"direction: existing={existing._direction!r}, requested={requested_direction!r}")
 
     # length / array shape: derived from `value`. Only check if the user actually passed one.
     if requested_value is not None:
@@ -225,9 +230,7 @@ def _assert_compatible_existing_parameter(
         else:
             requested_length = 0
         if existing_length != requested_length:
-            diffs.append(
-                f"length: existing={existing_length}, requested={requested_length}"
-            )
+            diffs.append(f"length: existing={existing_length}, requested={requested_length}")
 
     # units: only flag a non-empty mismatch.
     if requested_units and existing.units != requested_units:
@@ -316,12 +319,8 @@ class Parameter:
         name: str,
         value: Optional[Union[int, float, List, np.ndarray]] = None,
         qua_type: Optional[Union[str, type]] = None,
-        input_type: Optional[
-            Union[Literal["OPNIC", "INPUT_STREAM", "IO1", "IO2"], InputType]
-        ] = None,
-        direction: Optional[
-            Union[Literal["INCOMING", "OUTGOING", "BOTH"], Direction]
-        ] = None,
+        input_type: Optional[Union[Literal["OPNIC", "INPUT_STREAM", "IO1", "IO2"], InputType]] = None,
+        direction: Optional[Union[Literal["INCOMING", "OUTGOING", "BOTH"], Direction]] = None,
         units: str = "",
     ):
         """Initialize a streamed or compile-time QUA parameter.
@@ -357,14 +356,10 @@ class Parameter:
         self._qua_external_stream_out = None
 
         if input_type is not None:
-            input_type = (
-                InputType(input_type) if isinstance(input_type, str) else input_type
-            )
+            input_type = InputType(input_type) if isinstance(input_type, str) else input_type
         self._input_type: Optional[InputType] = input_type
         if direction is not None:
-            direction = (
-                Direction(direction) if isinstance(direction, str) else direction
-            )
+            direction = Direction(direction) if isinstance(direction, str) else direction
         self._direction = direction
         self._table_indices: Dict[str, int] = {}
         #: The owning :class:`ParameterTable`, or ``None`` while still pending. For a
@@ -407,9 +402,7 @@ class Parameter:
                 "Please use this method through the parameter table instead."
             )
         if param_table.name not in self._table_indices:
-            raise ValueError(
-                f"Parameter {self.name} is not part of the parameter table {param_table.name}."
-            )
+            raise ValueError(f"Parameter {self.name} is not part of the parameter table {param_table.name}.")
         return self._table_indices[param_table.name]
 
     def set_index(self, param_table: ParameterTable, index: int):
@@ -446,19 +439,14 @@ class Parameter:
         if param_table.name not in self._table_indices:
             self._table_indices[param_table.name] = index
         else:
-            raise ValueError(
-                f"Parameter {self.name} is already part of the parameter table {param_table.name}."
-            )
+            raise ValueError(f"Parameter {self.name} is already part of the parameter table {param_table.name}.")
         if self._main_table is None:
             self._main_table = param_table
 
         # Remove from the pending standalone list when attached to a non-synthetic
         # multi-or-single-field table. Synthetic standalone tables also call set_index,
         # but they remove the entry themselves to keep this branch simple.
-        if (
-            self._input_type == InputType.OPNIC
-            and not getattr(param_table, "_is_synthetic_standalone", False)
-        ):
+        if self._input_type == InputType.OPNIC and not getattr(param_table, "_is_synthetic_standalone", False):
             ParameterPool._unregister_pending_standalone_opnic(self)
 
     def _unset_index(self, param_table: ParameterTable) -> None:
@@ -525,9 +513,7 @@ class Parameter:
         ``None`` if the parameter has not been promoted yet (still pending) or is part
         of a regular multi-field table.
         """
-        if self._main_table is not None and getattr(
-            self._main_table, "_is_synthetic_standalone", False
-        ):
+        if self._main_table is not None and getattr(self._main_table, "_is_synthetic_standalone", False):
             return self._main_table
         return None
 
@@ -547,9 +533,7 @@ class Parameter:
         self,
         value: Union["Parameter", ScalarOfAnyType, VectorOfAnyType],
         condition=None,
-        value_cond: Optional[
-            Union["Parameter", ScalarOfAnyType, VectorOfAnyType]
-        ] = None,
+        value_cond: Optional[Union["Parameter", ScalarOfAnyType, VectorOfAnyType]] = None,
     ):
         """
         Assign value to the QUA variable corresponding to the parameter.
@@ -566,9 +550,7 @@ class Parameter:
                         the parameter length, or if the input is invalid.
         """
         if not self.is_declared:
-            raise ValueError(
-                "Variable not declared. Declare the variable first through declare_variable method."
-            )
+            raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
         if (condition is not None) != (value_cond is not None):
             raise ValueError("Both condition and value_cond must be provided.")
 
@@ -580,17 +562,13 @@ class Parameter:
 
         if isinstance(value, Parameter):
             if not value.is_declared:
-                raise ValueError(
-                    "Variable not declared. Declare the variable first through declare_variable method."
-                )
+                raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
             if value.length != self.length:
                 raise ValueError(
                     f"Invalid input. Mismatch in length of {self.name} ({self.length}) and {value.name} ({value.length})."
                 )
             if value_cond is not None and not isinstance(value_cond, Parameter):
-                raise ValueError(
-                    "Invalid input. value_cond should be of same type as value."
-                )
+                raise ValueError("Invalid input. value_cond should be of same type as value.")
             if self.is_array:
                 with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
                     assign_with_condition(
@@ -599,9 +577,7 @@ class Parameter:
                         value_cond.var[self._ctr] if value_cond else None,
                     )
             else:
-                assign_with_condition(
-                    self.var, value.var, value_cond.var if value_cond else None
-                )
+                assign_with_condition(self.var, value.var, value_cond.var if value_cond else None)
         else:
             if self.is_array:
                 if isinstance(value, QuaArrayVariable):
@@ -613,18 +589,12 @@ class Parameter:
                         )
                 else:
                     if len(value) != self.length:
-                        raise ValueError(
-                            f"Invalid input. {self.name} should be a list of length {self.length}."
-                        )
+                        raise ValueError(f"Invalid input. {self.name} should be a list of length {self.length}.")
                     for i in range(self.length):
-                        assign_with_condition(
-                            self.var[i], value[i], value_cond[i] if value_cond else None
-                        )
+                        assign_with_condition(self.var[i], value[i], value_cond[i] if value_cond else None)
             else:
                 if isinstance(value, List):
-                    raise ValueError(
-                        f"Invalid input. {self.name} should be a single value, not a list."
-                    )
+                    raise ValueError(f"Invalid input. {self.name} should be a single value, not a list.")
                 assign_with_condition(self.var, value, value_cond)
 
     def declare(self, pause_program=False, declare_stream=True):
@@ -637,16 +607,14 @@ class Parameter:
         if self.input_type == InputType.OPNIC:
             opnic_table = self._require_standalone_opnic_table(context="declare")
             require_qua_program("Parameter.declare")
-            return opnic_table.declare(
-                pause_program=pause_program, declare_stream=declare_stream
-            )
+            return opnic_table.declare(pause_program=pause_program, declare_stream=declare_stream)
         require_qua_program("Parameter.declare")
         if self.is_declared:
             raise ValueError("Variable already declared. Cannot declare again.")
         else:
             if self.input_type == InputType.INPUT_STREAM:
                 # if self.is_array:
-                    # self._var = declare_input_stream('client', self.name, self.type, size=self.length)
+                # self._var = declare_input_stream('client', self.name, self.type, size=self.length)
                 # else:
                 #     self._var = declare_input_stream('client', self.name, self.type)
                 self._var = declare_input_stream(self.type, name=self.name, value=self.value)
@@ -723,10 +691,7 @@ class Parameter:
         ``ParameterTable``).
         """
         if self.input_type != InputType.OPNIC:
-            raise ValueError(
-                "Invalid input type for calling opnic_struct property. "
-                "Must be set to InputType.OPNIC."
-            )
+            raise ValueError("Invalid input type for calling opnic_struct property. " "Must be set to InputType.OPNIC.")
         if self._main_table is None:
             raise RuntimeError(
                 f"Parameter {self.name!r} is OPNIC but has not been bound to a "
@@ -741,9 +706,7 @@ class Parameter:
         if self._input_type != InputType.OPNIC:
             raise ValueError("Stream ID is only defined for OPNIC parameters.")
         if self._main_table is None:
-            raise RuntimeError(
-                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable."
-            )
+            raise RuntimeError(f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable.")
         return self._main_table.stream_id
 
     @property
@@ -752,9 +715,7 @@ class Parameter:
         if self._input_type != InputType.OPNIC:
             raise ValueError("Incoming stream ID is only defined for OPNIC parameters.")
         if self._main_table is None:
-            raise RuntimeError(
-                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable."
-            )
+            raise RuntimeError(f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable.")
         owner = self._main_table
         if not hasattr(owner, "incoming_stream_id"):
             return owner.stream_id
@@ -766,9 +727,7 @@ class Parameter:
         if self._input_type != InputType.OPNIC:
             raise ValueError("Outgoing stream ID is only defined for OPNIC parameters.")
         if self._main_table is None:
-            raise RuntimeError(
-                f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable."
-            )
+            raise RuntimeError(f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable.")
         owner = self._main_table
         if not hasattr(owner, "outgoing_stream_id"):
             return owner.stream_id
@@ -782,9 +741,7 @@ class Parameter:
         """
         require_qua_program("Parameter.var")
         if not self.is_declared:
-            raise ValueError(
-                "Variable not declared. Declare the variable first through declare_variable method."
-            )
+            raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
         return self._var
 
     def _require_standalone_opnic_table(self, *, context: str) -> "ParameterTable":
@@ -805,9 +762,7 @@ class Parameter:
         in the error message.
         """
         if not self.is_stand_alone:
-            owning_table_name = (
-                self.main_table.name if self.main_table is not None else "<unknown>"
-            )
+            owning_table_name = self.main_table.name if self.main_table is not None else "<unknown>"
             owner_method = _OPNIC_OWNER_METHOD_MAP.get(context, context)
             raise RuntimeError(
                 f"Parameter.{context}() is table-managed for OPNIC fields "
@@ -844,8 +799,7 @@ class Parameter:
         """
         if self.input_type != InputType.OPNIC:
             raise RuntimeError(
-                f"Cannot promote non-OPNIC parameter {self.name!r} to a synthetic "
-                f"standalone ParameterTable."
+                f"Cannot promote non-OPNIC parameter {self.name!r} to a synthetic " f"standalone ParameterTable."
             )
         from .parameter_table import ParameterTable
 
@@ -986,12 +940,8 @@ class Parameter:
 
     def clip(
         self,
-        min_val: Optional[
-            Scalar[int], Scalar[float], Vector[int], Vector[float]
-        ] = None,
-        max_val: Optional[
-            Scalar[int], Scalar[float], Vector[int], Vector[float]
-        ] = None,
+        min_val: Optional[Scalar[int], Scalar[float], Vector[int], Vector[float]] = None,
+        max_val: Optional[Scalar[int], Scalar[float], Vector[int], Vector[float]] = None,
         is_qua_array: bool = False,
     ):
         """Clip the QUA variable to a given range.
@@ -1002,21 +952,11 @@ class Parameter:
             is_qua_array: If ``True``, treat bounds as QUA arrays.
         """
         if not self.is_declared:
-            raise ValueError(
-                "Variable not declared. Declare the variable first through declare_variable method."
-            )
+            raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
         if not self.is_array and is_qua_array:
-            raise ValueError(
-                "Invalid input. Single value cannot be clipped with array bounds."
-            )
-        elif (
-            isinstance(min_val, (int, float))
-            and isinstance(max_val, (int, float))
-            and min_val > max_val
-        ):
-            raise ValueError(
-                "Invalid range. Minimum value must be less than maximum value."
-            )
+            raise ValueError("Invalid input. Single value cannot be clipped with array bounds.")
+        elif isinstance(min_val, (int, float)) and isinstance(max_val, (int, float)) and min_val > max_val:
+            raise ValueError("Invalid range. Minimum value must be less than maximum value.")
 
         elif min_val is None and max_val is None:
             warnings.warn("No range specified. No clipping performed.")
@@ -1101,9 +1041,7 @@ class Parameter:
         if io_index not in (1, 2):
             raise ValueError(f"io_index must be 1 or 2, got {io_index!r}.")
         if not self.is_declared:
-            raise ValueError(
-                f"Parameter {self.name!r} must be declared before assign_from_io()."
-            )
+            raise ValueError(f"Parameter {self.name!r} must be declared before assign_from_io().")
         if self.is_array:
             raise ValueError(
                 f"Parameter {self.name!r}: assign_from_io is only valid for a single "
@@ -1144,28 +1082,20 @@ class Parameter:
 
         if self.is_array:
             if not isinstance(value, (List, np.ndarray)):
-                raise ValueError(
-                    f"Invalid input. {self.name} should be a list of {self.type}."
-                )
+                raise ValueError(f"Invalid input. {self.name} should be a list of {self.type}.")
             if len(value) != self.length:
-                raise ValueError(
-                    f"Invalid input. {self.name} should be a list of length {self.length}."
-                )
+                raise ValueError(f"Invalid input. {self.name} should be a list of length {self.length}.")
         param_type = self.type if self.type != fixed else float
         if self.is_array and not all(isinstance(x, param_type) for x in value):
             try:
                 value = [param_type(x) for x in value]
             except ValueError:
-                raise ValueError(
-                    f"Invalid input. {self.name} should be a list of {param_type}."
-                )
+                raise ValueError(f"Invalid input. {self.name} should be a list of {param_type}.")
         elif not self.is_array and not isinstance(value, param_type):
             try:
                 value = param_type(value)
             except ValueError:
-                raise ValueError(
-                    f"Invalid input. {self.name} should be a single value of type {param_type}."
-                )
+                raise ValueError(f"Invalid input. {self.name} should be a single value of type {param_type}.")
 
         if self.input_type in [InputType.IO1, InputType.IO2]:
             if job is None:
@@ -1180,9 +1110,7 @@ class Parameter:
                         job.set_io_values(**{io: value[i]})
                     else:
                         if qm is None:
-                            raise ValueError(
-                                "QuantumMachine object is required to set IO values."
-                            )
+                            raise ValueError("QuantumMachine object is required to set IO values.")
                         qm.set_io_values(**{io: value[i]})
                     job.resume()
             else:
@@ -1194,9 +1122,7 @@ class Parameter:
                     job.set_io_values(**{io: value})
                 else:
                     if qm is None:
-                        raise ValueError(
-                            "QuantumMachine object is required to set IO values."
-                        )
+                        raise ValueError("QuantumMachine object is required to set IO values.")
                     qm.set_io_values(**{io: value})
                 job.resume()
 
@@ -1204,9 +1130,7 @@ class Parameter:
             if verbosity > 1:
                 print(f"Pushing value {value} to {self.name} through input stream.")
             if job is None:
-                raise ValueError(
-                    "Job object is required to push values to the input stream."
-                )
+                raise ValueError("Job object is required to push values to the input stream.")
             job.push_to_input_stream(self.name, value)
 
         elif self.input_type == InputType.OPNIC:
@@ -1223,10 +1147,7 @@ class Parameter:
         Args:
             reset: Whether to reset the parameter to a 0 value (in the appropriate QUA type) after sending it to the client/server side.
         """
-        if (
-            self.input_type in [InputType.INPUT_STREAM, None]
-            and self.stream is not None
-        ):
+        if self.input_type in [InputType.INPUT_STREAM, None] and self.stream is not None:
             self.save_to_stream(reset)
         elif self.input_type == InputType.OPNIC:
             self._require_standalone_opnic_table(context="stream_back").stream_back(reset=reset)
@@ -1274,13 +1195,9 @@ class Parameter:
         """
         if self.input_type == InputType.INPUT_STREAM or self.input_type is None:
             if job is None:
-                raise ValueError(
-                    "Job object is required to fetch values from the result handles."
-                )
+                raise ValueError("Job object is required to fetch values from the result handles.")
             if verbosity > 1:
-                print(
-                    f"Fetching value from {self.name} with input type {self.input_type}"
-                )
+                print(f"Fetching value from {self.name} with input type {self.input_type}")
             result_handle = job.result_handles
             if self.name not in result_handle:
                 raise ValueError(
@@ -1289,9 +1206,7 @@ class Parameter:
                 )
             result = result_handle.get(self.name)
             result.wait_for_values(fetching_index + fetching_size, time_out)
-            value = result.fetch(slice(fetching_index, fetching_index + fetching_size))[
-                "value"
-            ]
+            value = result.fetch(slice(fetching_index, fetching_index + fetching_size))["value"]
 
         elif self.input_type == InputType.OPNIC:
             res = self._require_standalone_opnic_table(context="fetch_from_opx").fetch_from_opx(
@@ -1303,9 +1218,7 @@ class Parameter:
             )
             return res[self.name]
         elif self.input_type in [InputType.IO1, InputType.IO2]:
-            io_method = (
-                "get_io1_value" if self.input_type == InputType.IO1 else "get_io2_value"
-            )
+            io_method = "get_io1_value" if self.input_type == InputType.IO1 else "get_io2_value"
             if self.is_array:
                 value = []
                 for i in range(self.length):
@@ -1334,7 +1247,6 @@ class Parameter:
         self._stream = None
         self._ctr = None
 
-
     def reset_qua(self):
         """
         QUA Macro: Assign the QUA variable to 0 (in the appropriate QUA type).
@@ -1348,9 +1260,9 @@ class Parameter:
     # ------------------------------------------------------------------
     # Deprecated aliases — removed in v1.2. Use the canonical names instead.
     # ------------------------------------------------------------------
-    declare_variable = _DeprecatedAlias("declare",    removal="1.2")
-    load_input_value = _DeprecatedAlias("rcv",        removal="1.2")
-    reset_var        = _DeprecatedAlias("reset_qua",  removal="1.2")
+    declare_variable = _DeprecatedAlias("declare", removal="1.2")
+    load_input_value = _DeprecatedAlias("rcv", removal="1.2")
+    reset_var = _DeprecatedAlias("reset_qua", removal="1.2")
     # declare_stream is already the canonical name — no alias needed
 
     def to_spec(self) -> Dict[str, Any]:
@@ -1361,7 +1273,7 @@ class Parameter:
             "qua_type": _qua_type_str.get(self._type, "fixed"),
             "is_array": self.is_array,
             "length": self._length,
-            "input_type": self._input_type.value if self._input_type is not None else None,
+            "input_type": (self._input_type.value if self._input_type is not None else None),
         }
         if self._input_type == InputType.OPNIC:
             spec["direction"] = self._direction.value if self._direction is not None else None

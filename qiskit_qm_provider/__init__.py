@@ -118,9 +118,7 @@ def __getattr__(name: str):
     """Lazy-load Quarc-backed symbols so ``import qiskit_qm_provider`` stays quarc-free."""
     if name == "QiskitQMModule":
         if not QUARC_AVAILABLE:
-            raise ImportError(
-                "QiskitQMModule requires the `quarc` package. Install `quarc` to use it."
-            ) from None
+            raise ImportError("QiskitQMModule requires the `quarc` package. Install `quarc` to use it.") from None
         from .qiskit_qm_module import QiskitQMModule
 
         globals()["QiskitQMModule"] = QiskitQMModule

@@ -103,9 +103,7 @@ class QUAArray(Parameter):
             )
 
         if shape is not None:
-            if not (
-                isinstance(shape, tuple) and all(isinstance(d, int) for d in shape)
-            ):
+            if not (isinstance(shape, tuple) and all(isinstance(d, int) for d in shape)):
                 raise TypeError(
                     f"'shape' must be a tuple of ints, got {type(shape)}: {shape!r}. "
                     "To initialise from data use the 'value' kwarg instead."
@@ -155,30 +153,20 @@ class QUAArray(Parameter):
         """
         if len(indices) != len(self.shape):
             raise IndexError(
-                f"Expected {len(self.shape)} indices, got {len(indices)}. "
-                f"Array shape is {self.shape}."
+                f"Expected {len(self.shape)} indices, got {len(indices)}. " f"Array shape is {self.shape}."
             )
 
         flat_idx = 0
-        for i, (ind, stride, dim_size) in enumerate(
-            zip(indices, self.strides, self.shape)
-        ):
+        for i, (ind, stride, dim_size) in enumerate(zip(indices, self.strides, self.shape)):
             if isinstance(ind, int):
                 if not (0 <= ind < dim_size):
-                    raise IndexError(
-                        f"Index {ind} out of bounds for dimension {i} "
-                        f"(size {dim_size})."
-                    )
+                    raise IndexError(f"Index {ind} out of bounds for dimension {i} " f"(size {dim_size}).")
                 if ind == 0:
                     continue  # contributes nothing; skip to avoid spurious QUA ops
 
             term = ind if stride == 1 else ind * stride
 
-            flat_idx = (
-                term
-                if (isinstance(flat_idx, int) and flat_idx == 0)
-                else flat_idx + term
-            )
+            flat_idx = term if (isinstance(flat_idx, int) and flat_idx == 0) else flat_idx + term
 
         return flat_idx
 
@@ -206,8 +194,7 @@ class QUAArray(Parameter):
         """
         if self.var is None:
             raise RuntimeError(
-                f"QUAArray '{self.name}' has not been declared yet. "
-                "Call declare() before accessing elements."
+                f"QUAArray '{self.name}' has not been declared yet. " "Call declare() before accessing elements."
             )
 
         if not isinstance(key, tuple):
@@ -217,10 +204,7 @@ class QUAArray(Parameter):
         for i, k in enumerate(key):
             if isinstance(k, slice):
                 start, stop, step = k.indices(self.shape[i])
-                return [
-                    self[key[:i] + (v,) + key[i + 1 :]]
-                    for v in range(start, stop, step)
-                ]
+                return [self[key[:i] + (v,) + key[i + 1 :]] for v in range(start, stop, step)]
 
         # No slices remain — key contains only scalar indices (Python int or QUA var).
         if len(key) == len(self.shape):
@@ -230,9 +214,7 @@ class QUAArray(Parameter):
             # Partial rank → return a view proxy for further indexing / assignment.
             return _QUAArrayView(self, key)
         else:
-            raise IndexError(
-                f"Too many indices: got {len(key)}, array has {len(self.shape)} dimensions."
-            )
+            raise IndexError(f"Too many indices: got {len(key)}, array has {len(self.shape)} dimensions.")
 
     # ------------------------------------------------------------------
     # Assignment
@@ -283,8 +265,7 @@ class QUAArray(Parameter):
             _QUAArrayView(self, indices).assign(val)
         else:
             raise IndexError(
-                f"Too many indices in assign: got {len(indices)}, "
-                f"array has {len(self.shape)} dimensions."
+                f"Too many indices in assign: got {len(indices)}, " f"array has {len(self.shape)} dimensions."
             )
 
     # ------------------------------------------------------------------
@@ -318,17 +299,13 @@ class QUAArray(Parameter):
             ValueError: ``value`` shape does not match ``self.shape``.
         """
         if not isinstance(value, (np.ndarray, list)):
-            raise TypeError(
-                f"'value' must be a numpy array or a (nested) list, "
-                f"got {type(value).__name__}."
-            )
+            raise TypeError(f"'value' must be a numpy array or a (nested) list, " f"got {type(value).__name__}.")
 
         arr = np.asarray(value)
 
         if arr.shape != self.shape:
             raise ValueError(
-                f"Shape mismatch: QUAArray '{self.name}' has shape {self.shape} "
-                f"but 'value' has shape {arr.shape}."
+                f"Shape mismatch: QUAArray '{self.name}' has shape {self.shape} " f"but 'value' has shape {arr.shape}."
             )
 
         # Flatten to 1-D in row-major (C) order — matches the flat QUA allocation.
@@ -391,10 +368,7 @@ class QUAArray(Parameter):
         elif isinstance(buffer, tuple):
             buffer_tuple = buffer
         else:
-            raise TypeError(
-                f"'buffer' must be None, an int, or a tuple of ints, "
-                f"got {type(buffer).__name__}."
-            )
+            raise TypeError(f"'buffer' must be None, an int, or a tuple of ints, " f"got {type(buffer).__name__}.")
 
         if self.stream is None:
             raise ValueError(
@@ -420,9 +394,7 @@ class _QUAArrayView:
 
     def __init__(self, parent: QUAArray, indices: Tuple):
         self._parent = parent
-        self._indices = (
-            indices  # already-resolved prefix indices (Python int or QUA var)
-        )
+        self._indices = indices  # already-resolved prefix indices (Python int or QUA var)
 
     # ------------------------------------------------------------------
     # Indexing
@@ -485,8 +457,7 @@ class _QUAArrayView:
             flat_val = np.asarray(val).flatten().tolist()
             if len(flat_val) != view_size:
                 raise ValueError(
-                    f"Length mismatch: view covers {view_size} elements but "
-                    f"'val' has {len(flat_val)}."
+                    f"Length mismatch: view covers {view_size} elements but " f"'val' has {len(flat_val)}."
                 )
             # Compile-time unroll — no QUA for_ needed.
             # Each assignment emits a single QUA assign instruction.
@@ -502,7 +473,5 @@ class _QUAArrayView:
                 ctr = declare(int)
 
             with for_(ctr, 0, ctr < view_size, ctr + 1):
-                flat_pos = (
-                    base + ctr if (isinstance(base, int) and base == 0) else base + ctr
-                )
+                flat_pos = base + ctr if (isinstance(base, int) and base == 0) else base + ctr
                 qua_assign(self._parent.var[flat_pos], val[ctr])

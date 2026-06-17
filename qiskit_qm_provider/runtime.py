@@ -3,6 +3,7 @@
 Provides job-access utilities that work across local QMBackend mode and
 IQCC sync-hook mode without modifying quarc or the qm-qua SDK.
 """
+
 from __future__ import annotations
 import argparse
 import logging

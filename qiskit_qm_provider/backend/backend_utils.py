@@ -73,17 +73,21 @@ qasm3_keyword_instructions = (
 )
 _QASM3_DUMP_LOOSE_BIT_PREFIX = "_bit"
 
+
 class _LooseBitRegister:
     """
     A register for loose bits in a QASM3 program.
     This is used to store the results of measurements that are not assigned to a classical register.
     """
+
     name: Literal["_bit"] = _QASM3_DUMP_LOOSE_BIT_PREFIX
+
     def __init__(self, qc: QuantumCircuit):
         self.size = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
-    
+
     def value(self, result: CompilationResult):
         return [result.result_program[f"{self.name}{i}"] for i in range(self.size)]
+
 
 def validate_machine(machine) -> QuamRoot:
     """Validate a QuAM instance before use with the backend.
@@ -100,14 +104,10 @@ def validate_machine(machine) -> QuamRoot:
         ValueError: If required attributes are missing or have wrong types.
     """
     if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
-        raise ValueError(
-            "Invalid QuAM instance provided, should have qubits and qubit_pairs attributes"
-        )
+        raise ValueError("Invalid QuAM instance provided, should have qubits and qubit_pairs attributes")
     if not all(isinstance(qubit, Qubit) for qubit in machine.qubits.values()):
         raise ValueError("All qubits should be of type Qubit")
-    if not all(
-        isinstance(qubit_pair, QubitPair) for qubit_pair in machine.qubit_pairs.values()
-    ):
+    if not all(isinstance(qubit_pair, QubitPair) for qubit_pair in machine.qubit_pairs.values()):
         raise ValueError("All qubit pairs should be of type QubitPair")
 
     return machine
@@ -297,7 +297,7 @@ def add_basic_macros(
         backend: A :class:`~.QMBackend` or :class:`~quam.core.QuamRoot` instance.
         reset_type: Reset macro variant, ``"active"`` or ``"thermalize"``.
     """
-    
+
     from qiskit_qm_provider.quam_macros.superconducting.single_qubit_macros import (
         ResetMacro,
         VirtualZMacro,
@@ -317,32 +317,26 @@ def add_basic_macros(
 
     for qubit in machine.active_qubits:
         if not qubit.macros:
-            
+
             qubit.macros["x"] = PulseMacro(pulse="x180")
             qubit.macros["rz"] = VirtualZMacro()
             qubit.macros["sx"] = PulseMacro(pulse="x90")
             qubit.macros["sy"] = PulseMacro(pulse="y90")
             qubit.macros["sydg"] = PulseMacro(pulse="-y90")
             qubit.macros["measure"] = MeasureMacro(pulse="readout")
-            qubit.macros["reset"] = ResetMacro(
-                reset_type=reset_type, pi_pulse="x180", readout_pulse="readout"
-            )
+            qubit.macros["reset"] = ResetMacro(reset_type=reset_type, pi_pulse="x180", readout_pulse="readout")
             qubit.macros["delay"] = DelayMacro()
             qubit.macros["id"] = IdMacro()
 
     for qubit_pair in machine.active_qubit_pairs:
-        if 'cz' not in qubit_pair.macros:
+        if "cz" not in qubit_pair.macros:
             try:
                 qubit_pair.macros["cz"] = None
                 qubit_pair.macros["cz"] = CZGate(
-                    flux_pulse_control=qubit_pair.qubit_control.z.operations[
-                        "const"
-                    ].get_reference(),
+                    flux_pulse_control=qubit_pair.qubit_control.z.operations["const"].get_reference(),
                 )
             except ValueError as e:
-                warnings.warn(
-                    f"Could not add default two qubit gates. Add it manually if necessary. Error: {e}"
-                )
+                warnings.warn(f"Could not add default two qubit gates. Add it manually if necessary. Error: {e}")
     if isinstance(backend, QMBackend):
         backend.update_target()
 
@@ -352,13 +346,10 @@ def _require_qua_struct_handle(struct: Any) -> Any:
     try:
         from quarc.dsl.structs.qua_struct_handle import QuaStructHandle
     except ImportError as exc:
-        raise ImportError(
-            "assign_struct_with_table requires the `quarc` package. Install `quarc` to use it."
-        ) from exc
+        raise ImportError("assign_struct_with_table requires the `quarc` package. Install `quarc` to use it.") from exc
     if not isinstance(struct, QuaStructHandle):
         raise TypeError(
-            "struct must be a quarc QuaStructHandle (from module.add_struct). "
-            f"Got {type(struct).__name__}."
+            "struct must be a quarc QuaStructHandle (from module.add_struct). " f"Got {type(struct).__name__}."
         )
     return struct
 
@@ -379,9 +370,7 @@ def _struct_field_specs(struct: Any) -> Dict[str, Dict[str, Any]]:
             args = get_args(annotation)
             specs[field_name] = {"is_array": True, "length": args[1]}
         else:
-            raise TypeError(
-                f"Struct field {field_name!r} has unsupported Quarc annotation {annotation!r}."
-            )
+            raise TypeError(f"Struct field {field_name!r} has unsupported Quarc annotation {annotation!r}.")
     return specs
 
 
@@ -398,8 +387,7 @@ def _validate_struct_table_match(struct: Any, table: "ParameterTable") -> None:
         if missing_in_struct:
             details.append(f"missing from struct: {missing_in_struct}")
         raise ValueError(
-            "Struct fields and ParameterTable parameters must have exactly the same names. "
-            + "; ".join(details)
+            "Struct fields and ParameterTable parameters must have exactly the same names. " + "; ".join(details)
         )
 
     for field_name, spec in struct_fields.items():
@@ -421,9 +409,7 @@ def _validate_struct_table_match(struct: Any, table: "ParameterTable") -> None:
             )
 
     if struct.qua_struct is None:
-        raise ValueError(
-            "Struct is not initialized in QUA. Call QuaStructHandle.initialize_in_qua() first."
-        )
+        raise ValueError("Struct is not initialized in QUA. Call QuaStructHandle.initialize_in_qua() first.")
 
 
 def assign_struct_with_table(struct: Any, table: "ParameterTable") -> None:
@@ -457,9 +443,7 @@ def assign_struct_with_table(struct: Any, table: "ParameterTable") -> None:
     from ..parameter_table import ParameterTable
 
     if not isinstance(table, ParameterTable):
-        raise TypeError(
-            f"table must be a ParameterTable, got {type(table).__name__}."
-        )
+        raise TypeError(f"table must be a ParameterTable, got {type(table).__name__}.")
 
     struct = _require_qua_struct_handle(struct)
     _validate_struct_table_match(struct, table)
@@ -511,8 +495,7 @@ def pack_register_to_int(var, size: int):
 
     if size != 1:
         raise ValueError(
-            f"Expected a QUA bool array for a {size}-bit classical register, "
-            f"got scalar {type(var).__name__}."
+            f"Expected a QUA bool array for a {size}-bit classical register, " f"got scalar {type(var).__name__}."
         )
     return Cast.to_int(var)
 
@@ -555,9 +538,7 @@ def get_measurement_outcomes(
     if isinstance(result, QuaCircuitCompilation):
         table = result.outputs
     else:
-        table = MeasurementOutcomeTable.from_compilation(
-            qc, result, compute_state_int=compute_state_int
-        )
+        table = MeasurementOutcomeTable.from_compilation(qc, result, compute_state_int=compute_state_int)
 
     loose_keys = _loose_bit_keys_from_circuit(qc)
     clbits_dict: dict[str, dict] = {}
@@ -616,9 +597,7 @@ def logically_active_qubits(circuit):
     return sorted(active, key=lambda q: circuit.find_bit(q).index)
 
 
-def get_non_trivial_observables(
-    observables: PauliList, active_qubit_indices: List[int]
-) -> PauliList:
+def get_non_trivial_observables(observables: PauliList, active_qubit_indices: List[int]) -> PauliList:
     """Restrict observables to logically active qubits.
 
     Args:
@@ -657,9 +636,7 @@ def get_qua_script(
     Returns:
         The QUA script string (Python source of the program that would be executed).
     """
-    compilation_result = backend.quantum_circuit_to_qua(
-        circuit, param_table=param_table
-    )
+    compilation_result = backend.quantum_circuit_to_qua(circuit, param_table=param_table)
     qua_program = compilation_result.result_program.dsl_program
     config = backend.generate_config()
     return generate_qua_script(qua_program, config)

@@ -25,14 +25,10 @@ from qiskit_qm_provider.parameter_table import InputType, ParameterTable
 from qm.qua import fixed
 
 
-def generate_sync_hook_sampler(
-    pubs: List[SamplerPub], parameter_tables: List[ParameterTable]
-) -> str:
+def generate_sync_hook_sampler(pubs: List[SamplerPub], parameter_tables: List[ParameterTable]) -> str:
     """Generate the sync hook code for the sampler."""
 
-    parameter_value_dicts = np.array(
-        [pub.parameter_values.ravel().as_array() for pub in pubs]
-    )
+    parameter_value_dicts = np.array([pub.parameter_values.ravel().as_array() for pub in pubs])
     new_param_table_contents = []
     for parameter_table in parameter_tables:
         if parameter_table is None:
@@ -89,9 +85,7 @@ def generate_sync_hook_sampler(
             # Build ParameterTable initialization string
             table_name = repr(parameter_table.name)
             param_list_str = "[" + ", ".join(param_init_strings) + "]"
-            table_init_str = (
-                f"ParameterTable(parameters_dict={param_list_str}, name={table_name})"
-            )
+            table_init_str = f"ParameterTable(parameters_dict={param_list_str}, name={table_name})"
             new_param_table_contents.append(table_init_str)
 
     # Format parameter_tables list for insertion into sync_hook_code

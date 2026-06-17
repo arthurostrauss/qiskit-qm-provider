@@ -29,7 +29,6 @@ from quarc import Scalar, Struct
 
 from qiskit_qm_provider.parameter_table.parameter_pool import ParameterPool
 
-
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
@@ -100,12 +99,8 @@ class QiskitQMModule(BaseModule):
     # classical entrypoint can reconnect after quarc's deploy phase and
     # discover the running job via qmm.get_jobs() / list_open_qms().
     # ------------------------------------------------------------------
-    qmm_host: Optional[str] = Field(
-        default=None, description="QMM server host."
-    )
-    qmm_port: Optional[int] = Field(
-        default=None, description="QMM server port."
-    )
+    qmm_host: Optional[str] = Field(default=None, description="QMM server host.")
+    qmm_port: Optional[int] = Field(default=None, description="QMM server port.")
 
     def __init__(self, **data: Any) -> None:
         # Pop private-attr keys that Pydantic can't consume as fields.
@@ -199,11 +194,7 @@ class QiskitQMModule(BaseModule):
         from qiskit_qm_provider.parameter_table.parameter_table import ParameterTable
 
         for obj in list(ParameterPool.get_all_objs()):
-            if (
-                isinstance(obj, ParameterTable)
-                and obj.input_type == InputType.OPNIC
-                and not obj._is_emitted
-            ):
+            if isinstance(obj, ParameterTable) and obj.input_type == InputType.OPNIC and not obj._is_emitted:
                 obj._emit_to_module(self)
 
         for param in list(ParameterPool._pending_standalone_opnic):
@@ -225,11 +216,7 @@ class QiskitQMModule(BaseModule):
                 if obj.name not in existing_names:
                     self.parameter_specs.append(obj.to_spec())
                     existing_names.add(obj.name)
-            elif (
-                isinstance(obj, Parameter)
-                and obj.input_type != InputType.OPNIC
-                and not obj.tables
-            ):
+            elif isinstance(obj, Parameter) and obj.input_type != InputType.OPNIC and not obj.tables:
                 if obj.name not in existing_names:
                     self.parameter_specs.append(obj.to_spec())
                     existing_names.add(obj.name)
@@ -357,9 +344,7 @@ class QiskitQMModule(BaseModule):
 
         from qm import QuantumMachinesManager
 
-        qmm = QuantumMachinesManager(
-            host=self.qmm_host, port=self.qmm_port, log_level=logging.ERROR
-        )
+        qmm = QuantumMachinesManager(host=self.qmm_host, port=self.qmm_port, log_level=logging.ERROR)
         return _poll_running_job_from_qmm(qmm, timeout=timeout, poll_interval=poll_interval)
 
     # ------------------------------------------------------------------

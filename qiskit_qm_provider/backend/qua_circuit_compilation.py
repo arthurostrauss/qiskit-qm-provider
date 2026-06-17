@@ -16,10 +16,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Sequence
 
 from qm.qua._expressions import QuaArrayVariable
-from quam.utils.qua_types import QuaVariable
+from qm.qua.type_hints import StreamType
+from quam.utils.qua_types import QuaVariable, QuaScalarInt
 
 from ..parameter_table import ParameterPool
 from ..parameter_table._mixins import QuaFieldTable
@@ -82,18 +83,18 @@ class MeasurementOutcomeTable(QuaFieldTable):
                 :class:`~qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField`.
             name: Human-readable table name (e.g. ``my_circuit_output``).
         """
-        self.table = fields
+        self.table: dict[str, MeasurementRegisterField] = fields
         self.name = name
         self._id = 0
         ParameterPool._register_measurement_outcome_table(self)
 
     @property
-    def parameters(self) -> List[MeasurementRegisterField]:
+    def parameters(self) -> Sequence[MeasurementRegisterField]:
         """All :class:`~qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField` handles in this table."""
         return list(self.table.values())
 
     @property
-    def state_ints(self) -> dict[str, Any]:
+    def state_ints(self) -> dict[str, QuaScalarInt]:
         """Bulk accessor: ``{output_key: packed_int_var}`` for every field.
 
         Must be accessed inside ``with program():``. Equivalent to
@@ -103,7 +104,7 @@ class MeasurementOutcomeTable(QuaFieldTable):
         return {name: self.get_parameter(name).state_int for name in self.table}
 
     @property
-    def streams(self) -> dict[str, Any]:
+    def streams(self) -> dict[str, StreamType]:
         """Bulk accessor: ``{output_key: stream}`` for every field.
 
         Must be accessed inside ``with program():``. Equivalent to
@@ -114,7 +115,7 @@ class MeasurementOutcomeTable(QuaFieldTable):
 
     def declare(
         self, pause_program=False, declare_stream=True
-    ) -> Union[QuaVariable, QuaArrayVariable, List[Union[QuaVariable, QuaArrayVariable]]]:
+    ) -> QuaVariable | QuaArrayVariable | Sequence[QuaVariable | QuaArrayVariable]:
         """No-op compatibility shim — measurement vars are compiler-owned.
 
         Returns the wired QUA variable(s) without declaring anything new.
@@ -126,10 +127,10 @@ class MeasurementOutcomeTable(QuaFieldTable):
 
     def rewire(
         self,
-        qc: "QuantumCircuit",
-        compilation_result: "CompilationResult",
+        qc: QuantumCircuit,
+        compilation_result: CompilationResult,
         *,
-        parent: Optional["QuaCircuitCompilation"] = None,
+        parent: QuaCircuitCompilation | None = None,
     ) -> None:
         """Refresh wiring from a new compilation result (same table object).
 
@@ -146,9 +147,7 @@ class MeasurementOutcomeTable(QuaFieldTable):
         """
         for creg in qc.cregs:
             field = self.table[creg.name]
-            field._wire_from_result(
-                compilation_result, creg.name, register_size=creg.size
-            )
+            field._wire_from_result(compilation_result, creg.name, register_size=creg.size)
         for key in _loose_bit_keys(qc):
             self.table[key]._wire_from_result(compilation_result, key, register_size=1)
         if parent is not None:
@@ -157,12 +156,12 @@ class MeasurementOutcomeTable(QuaFieldTable):
     @classmethod
     def from_compilation(
         cls,
-        qc: "QuantumCircuit",
-        compilation_result: "CompilationResult",
+        qc: QuantumCircuit,
+        compilation_result: CompilationResult,
         *,
-        parent: Optional["QuaCircuitCompilation"] = None,
+        parent: QuaCircuitCompilation | None = None,
         compute_state_int: bool = True,
-    ) -> "MeasurementOutcomeTable":
+    ) -> MeasurementOutcomeTable:
         """Build a measurement output table from a compiled circuit.
 
         Creates one
@@ -190,9 +189,7 @@ class MeasurementOutcomeTable(QuaFieldTable):
                 compute_state_int=compute_state_int,
                 parent=parent,
             )
-            field._wire_from_result(
-                compilation_result, creg.name, register_size=creg.size
-            )
+            field._wire_from_result(compilation_result, creg.name, register_size=creg.size)
             fields[creg.name] = field
 
         for key in _loose_bit_keys(qc):
@@ -222,7 +219,7 @@ class QuaCircuitCompilation:
 
     def __init__(
         self,
-        compilation_result: "CompilationResult",
+        compilation_result: CompilationResult,
         circuit: "QuantumCircuit",
         *,
         compute_state_int: bool = True,
@@ -246,12 +243,12 @@ class QuaCircuitCompilation:
         )
 
     @property
-    def compilation_result(self) -> "CompilationResult":
+    def compilation_result(self) -> CompilationResult:
         """Underlying qm-qasm :class:`~qm_qasm.CompilationResult`."""
         return self._compilation_result
 
     @property
-    def circuit(self) -> "QuantumCircuit":
+    def circuit(self) -> QuantumCircuit:
         """The Qiskit circuit that was compiled."""
         return self._circuit
 
@@ -267,8 +264,8 @@ class QuaCircuitCompilation:
 
     def rewire_outputs(
         self,
-        circuit: "QuantumCircuit",
-        compilation_result: "CompilationResult",
+        circuit: QuantumCircuit,
+        compilation_result: CompilationResult,
     ) -> None:
         """Re-bind measurement fields from a new compilation (same wrapper object).
 
@@ -293,7 +290,4 @@ class QuaCircuitCompilation:
         return getattr(self._compilation_result, name)
 
     def __repr__(self) -> str:
-        return (
-            f"QuaCircuitCompilation(name={self._compilation_result.name!r}, "
-            f"outputs={self._outputs.name!r})"
-        )
+        return f"QuaCircuitCompilation(name={self._compilation_result.name!r}, " f"outputs={self._outputs.name!r})"

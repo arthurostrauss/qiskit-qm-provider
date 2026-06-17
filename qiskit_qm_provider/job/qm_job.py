@@ -153,11 +153,7 @@ class QMJob(JobV1):
                             .tolist()
                         )
                     else:
-                        data = (
-                            np.array(results_handle.get(f"{creg}_{i}"))  # type: ignore[index]
-                            .flatten()
-                            .tolist()
-                        )
+                        data = np.array(results_handle.get(f"{creg}_{i}")).flatten().tolist()  # type: ignore[index]
 
                     if meas_level == MeasLevel.CLASSIFIED:
                         bit_array = BitArray.from_samples(data, creg_size)
@@ -245,9 +241,7 @@ class QMJob(JobV1):
         if not isinstance(run_input, list):
             run_input = [run_input]
 
-        new_circuits = validate_circuits(
-            run_input, should_reset=not skip_reset, check_for_params=True
-        )
+        new_circuits = validate_circuits(run_input, should_reset=not skip_reset, check_for_params=True)
         num_circuits = len(new_circuits)
 
         # Synchronize backend target and (optionally) pulse calibrations
@@ -261,13 +255,9 @@ class QMJob(JobV1):
         qm = backend.qm
 
         job_id = "pending"
-        cregs_dicts: List[Dict[str, int]] = [
-            {creg.name: creg.size for creg in qc.cregs} for qc in new_circuits
-        ]
+        cregs_dicts: List[Dict[str, int]] = [{creg.name: creg.size for creg in qc.cregs} for qc in new_circuits]
         for i, qc in enumerate(new_circuits):
-            solo_bits = [
-                bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0
-            ]
+            solo_bits = [bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0]
             if len(solo_bits) > 0:
                 cregs_dicts[i][_QASM3_DUMP_LOOSE_BIT_PREFIX] = len(solo_bits)
 
@@ -337,9 +327,7 @@ class QMJob(JobV1):
             if "timeout" in self.metadata:
                 kwargs["options"] = {"timeout": self.metadata["timeout"]}
         if isinstance(simulate, SimulationConfig):
-            self._qm_job = self.qm.simulate(
-                self.program, simulate=simulate, compiler_options=compiler_options
-            )
+            self._qm_job = self.qm.simulate(self.program, simulate=simulate, compiler_options=compiler_options)
         else:
             if isinstance(self.program, list):
                 self._job_id = ""
@@ -396,9 +384,7 @@ class IQCCJob(QMJob):
         self._qm_job = None
 
     def status(self) -> JobStatus:
-        raise NotImplementedError(
-            "IQCCJob does not support status method. Use IQCC_Cloud methods to check job status."
-        )
+        raise NotImplementedError("IQCCJob does not support status method. Use IQCC_Cloud methods to check job status.")
 
     def submit(self):
         """Submit the job to the IQCC backend."""
@@ -407,9 +393,7 @@ class IQCCJob(QMJob):
         try:
             config = self.metadata["config"]
         except KeyError:
-            raise ValueError(
-                "Job metadata must contain 'config' key for IQCC job submission"
-            )
+            raise ValueError("Job metadata must contain 'config' key for IQCC job submission")
 
         qm: IQCC_Cloud = self.qm
         timeout = self.metadata.get("timeout", None)

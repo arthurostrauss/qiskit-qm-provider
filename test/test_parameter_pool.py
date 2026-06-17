@@ -65,13 +65,9 @@ class TestParameterPoolCollections:
 
 class TestParameterPoolNamedRegistration:
     def test_duplicate_parameter_table_name_raises(self):
-        p1 = Parameter(
-            "a", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING
-        )
+        p1 = Parameter("a", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
         ParameterTable([p1], name="policy")
-        p2 = Parameter(
-            "b", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING
-        )
+        p2 = Parameter("b", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)
         with pytest.raises(ValueError, match="Duplicate pool registration name"):
             ParameterTable([p2], name="policy")
 

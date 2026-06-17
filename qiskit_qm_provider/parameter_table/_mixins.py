@@ -126,8 +126,7 @@ class QuaFieldTable:
             if field.is_declared:
                 return field.var
             raise ValueError(
-                f"No QUA variable found for parameter {item}. "
-                f"Please declare variables within a QUA program first."
+                f"No QUA variable found for parameter {item}. " f"Please declare variables within a QUA program first."
             )
         if isinstance(item, int):
             field = self._resolve_index(item)

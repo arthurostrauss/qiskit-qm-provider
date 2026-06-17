@@ -314,11 +314,22 @@ class TestAssignStructWithTable:
         pytest.importorskip("quarc")
         from qm.qua import program
         from quarc import Array, Direction as QuarcDirection, Scalar, Struct
-        from qiskit_qm_provider import Parameter, ParameterTable, Direction, InputType, QiskitQMModule
+        from qiskit_qm_provider import (
+            Parameter,
+            ParameterTable,
+            Direction,
+            InputType,
+            QiskitQMModule,
+        )
 
         source_table = ParameterTable(
             [
-                Parameter("theta", 0.0, input_type=InputType.OPNIC, direction=Direction.INCOMING),
+                Parameter(
+                    "theta",
+                    0.0,
+                    input_type=InputType.OPNIC,
+                    direction=Direction.INCOMING,
+                ),
                 Parameter(
                     "amps",
                     [0.0, 0.0],

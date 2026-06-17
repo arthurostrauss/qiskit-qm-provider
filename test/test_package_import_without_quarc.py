@@ -17,8 +17,7 @@ def _run_isolated(script: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_top_level_import_without_quarc():
-    result = _run_isolated(
-        """
+    result = _run_isolated("""
         import builtins
         import importlib.util
         import sys
@@ -57,14 +56,12 @@ def test_top_level_import_without_quarc():
             raise SystemExit("expected ImportError for QiskitQMModule")
         if not any("quarc" in str(w.message).lower() for w in caught):
             raise SystemExit("expected ImportWarning when quarc is unavailable")
-        """
-    )
+        """)
     assert result.returncode == 0, result.stderr + result.stdout
 
 
 def test_top_level_import_does_not_eagerly_load_quarc_when_installed():
-    result = _run_isolated(
-        """
+    result = _run_isolated("""
         import builtins
         import importlib.util
         import sys
@@ -93,8 +90,7 @@ def test_top_level_import_does_not_eagerly_load_quarc_when_installed():
 
         if not quarc_loaded:
             raise SystemExit("QiskitQMModule access should load quarc")
-        """
-    )
+        """)
     if result.returncode == 0 and not result.stdout and not result.stderr:
         return  # passed or skipped (exit 0 with no quarc)
     assert result.returncode == 0, result.stderr + result.stdout

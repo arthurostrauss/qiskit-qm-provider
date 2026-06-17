@@ -19,7 +19,10 @@ from __future__ import annotations
 import functools
 from typing import Callable, TypeVar
 
-from qm.qua._scope_management.scopes_manager import NoScopeFoundException, scopes_manager
+from qm.qua._scope_management.scopes_manager import (
+    NoScopeFoundException,
+    scopes_manager,
+)
 
 F = TypeVar("F", bound=Callable)
 

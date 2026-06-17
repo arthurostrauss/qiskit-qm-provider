@@ -28,6 +28,7 @@ def _reset_pool():
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_input_stream_param(name: str = "p") -> Parameter:
     return Parameter(name, value=0.0, qua_type="fixed", input_type=InputType.INPUT_STREAM)
 
@@ -40,8 +41,7 @@ def _make_input_stream_table(names=("a", "b")) -> ParameterTable:
 def _assert_deprecation(w, *, old: str, new: str, version: str = "1.2"):
     messages = [str(warning.message) for warning in w]
     assert any(
-        old in msg and new in msg and f"v{version}" in msg
-        for msg in messages
+        old in msg and new in msg and f"v{version}" in msg for msg in messages
     ), f"Expected deprecation for {old!r} → {new!r} in v{version}, got: {messages}"
 
 
@@ -56,6 +56,7 @@ def _call_safely(fn):
 # ---------------------------------------------------------------------------
 # Parameter deprecated aliases — warning emission
 # ---------------------------------------------------------------------------
+
 
 class TestParameterDeprecatedAliases:
 
@@ -113,6 +114,7 @@ class TestParameterDeprecatedAliases:
 # ---------------------------------------------------------------------------
 # ParameterTable deprecated aliases — warning emission
 # ---------------------------------------------------------------------------
+
 
 class TestParameterTableDeprecatedAliases:
 

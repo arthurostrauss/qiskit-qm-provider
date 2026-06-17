@@ -16,9 +16,7 @@ backend = provider.get_backend()
 
 # 2. Define an opaque parametric two-qubit gate at the circuit level
 theta = QiskitParameter("theta")  # Use ASCII names
-cx_cal = Gate(
-    "cx_cal", num_qubits=2, params=[theta]
-)  # No logical definition: opaque gate
+cx_cal = Gate("cx_cal", num_qubits=2, params=[theta])  # No logical definition: opaque gate
 
 # (Optional) You may instead provide a logical definition for cx_cal so that the
 # transpiler can optimize it; see the Qiskit backend transpiler interface docs.

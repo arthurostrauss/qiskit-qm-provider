@@ -137,10 +137,7 @@ class MeasurementRegisterField:
             self._register_size = new_size
             self._state_int_var = None
             self._stream = None
-        elif (
-            self._wired_program_key != program_key
-            or self._wired_compilation_uuid != compilation_uuid
-        ):
+        elif self._wired_program_key != program_key or self._wired_compilation_uuid != compilation_uuid:
             self._state_int_var = None
             self._stream = None
 
@@ -172,8 +169,7 @@ class MeasurementRegisterField:
         require_qua_program("MeasurementRegisterField.state_int")
         if not self._compute_state_int:
             raise AttributeError(
-                f"state_int is disabled for {self.name!r}; use .var instead "
-                f"(compute_state_int=False)."
+                f"state_int is disabled for {self.name!r}; use .var instead " f"(compute_state_int=False)."
             )
         return self._materialize_state_int()
 
@@ -208,6 +204,4 @@ class MeasurementRegisterField:
 
     def __deepcopy__(self, memo):
         """Refuse duplication — handles are tied to a single compilation wiring."""
-        raise TypeError(
-            "MeasurementRegisterField handles are compilation-owned and cannot be deepcopied."
-        )
+        raise TypeError("MeasurementRegisterField handles are compilation-owned and cannot be deepcopied.")

@@ -89,15 +89,10 @@ def _process_sampler_pub(
         with for_(p, 0, p < pub.parameter_values.ravel().size, p + 1):
             if param_table.input_type is None:
                 # Declare the parameters at compile time
-                param_values_qua = QUA2DArray(
-                    "param_values", pub.parameter_values.ravel().as_array()
-                )
+                param_values_qua = QUA2DArray("param_values", pub.parameter_values.ravel().as_array())
                 param_values_qua.declare_variable()
                 param_table.assign_parameters(
-                    {
-                        param.name: param_values_qua[p][i]
-                        for i, param in enumerate(param_table.parameters)
-                    }
+                    {param.name: param_values_qua[p][i] for i, param in enumerate(param_table.parameters)}
                 )
             else:
                 param_table.load_input_values()
@@ -136,9 +131,7 @@ def sampler_program(
         with stream_processing():
             for i, clbits_dict in enumerate(clbits_dicts):
                 for creg_name, creg_dict in clbits_dict.items():
-                    creg_dict["stream"].buffer(pubs[i].shots).save_all(
-                        f"{creg_name}_{i}"
-                    )
+                    creg_dict["stream"].buffer(pubs[i].shots).save_all(f"{creg_name}_{i}")
     return sampler_prog
 
 
@@ -167,9 +160,7 @@ def _process_observables_with_circuit(
         obs_length_var.declare_variable()
     if plan.observables_var.input_type is None:
         obs_indices_qua_list = [
-            QUA2DArray(
-                f"obs_indices_{j}", np.array(obs_indices, dtype=np.int32), qua_type=int
-            )
+            QUA2DArray(f"obs_indices_{j}", np.array(obs_indices, dtype=np.int32), qua_type=int)
             for j, obs_indices in enumerate(plan.obs_indices)
         ]
         for obs_indices_qua_item in obs_indices_qua_list:
@@ -177,16 +168,11 @@ def _process_observables_with_circuit(
 
             with for_(obs_idx, 0, obs_idx < obs_indices_qua_item.n_rows, obs_idx + 1):
                 plan.observables_var.assign_parameters(
-                    {
-                        f"obs_{i}": obs_indices_qua_item[obs_idx, i]
-                        for i in range(num_qubits)
-                    }
+                    {f"obs_{i}": obs_indices_qua_item[obs_idx, i] for i in range(num_qubits)}
                 )
                 # Combine param_table and observables_var if param_table is provided
                 process_param_table = (
-                    [plan.param_table, plan.observables_var]
-                    if plan.param_table is not None
-                    else plan.observables_var
+                    [plan.param_table, plan.observables_var] if plan.param_table is not None else plan.observables_var
                 )
                 clbits_dict = _process_circuit(
                     plan.pub.circuit,
@@ -203,9 +189,7 @@ def _process_observables_with_circuit(
             plan.observables_var.load_input_values()
             # Combine param_table and observables_var if param_table is provided
             process_param_table = (
-                [plan.param_table, plan.observables_var]
-                if plan.param_table is not None
-                else plan.observables_var
+                [plan.param_table, plan.observables_var] if plan.param_table is not None else plan.observables_var
             )
             clbits_dict = _process_circuit(
                 plan.pub.circuit,
@@ -252,10 +236,7 @@ def _process_estimator_pub(
         with for_(p, 0, p < plan.pub.parameter_values.ravel().size, p + 1):
             if plan.param_table.input_type is None:
                 plan.param_table.assign_parameters(
-                    {
-                        param.name: param_values_qua[p, i]
-                        for i, param in enumerate(plan.param_table.parameters)
-                    }
+                    {param.name: param_values_qua[p, i] for i, param in enumerate(plan.param_table.parameters)}
                 )
             else:
                 plan.param_table.load_input_values()
@@ -269,9 +250,7 @@ def _process_estimator_pub(
     return clbits_dict
 
 
-def estimator_program(
-    backend: QMBackend, execution_plans: List[_ExecutionPlan], **kwargs
-) -> Program:
+def estimator_program(backend: QMBackend, execution_plans: List[_ExecutionPlan], **kwargs) -> Program:
     """
     Return the QUA program for the estimator primitive based on pre-computed plans.
     """
@@ -292,16 +271,14 @@ def estimator_program(
         with stream_processing():
             for i, clbits_dict in enumerate(clbits_dicts):
                 for creg_name, creg_dict in clbits_dict.items():
-                    creg_dict["stream"].boolean_to_int().buffer(
-                        execution_plans[i].shots, creg_dict["size"]
-                    ).save_all(f"{creg_name}_{i}")
+                    creg_dict["stream"].boolean_to_int().buffer(execution_plans[i].shots, creg_dict["size"]).save_all(
+                        f"{creg_name}_{i}"
+                    )
 
     return estimator_prog
 
 
-def get_run_program(
-    backend: QMBackend, num_shots, circuits: List[QuantumCircuit]
-) -> Program | List[Program]:
+def get_run_program(backend: QMBackend, num_shots, circuits: List[QuantumCircuit]) -> Program | List[Program]:
     """
     QUA program generated upon the call of backend.run().
     If the circuits have conflicting calibrations, a list of programs is returned.

@@ -73,9 +73,7 @@ class TestQMInstructionPropertiesInit:
         mock_quam.fidelity = 0.97
         mock_quam.apply = MagicMock()
         plain_callable = lambda: None
-        prop = QMInstructionProperties(
-            qua_pulse_macro=plain_callable, quam_macro=mock_quam
-        )
+        prop = QMInstructionProperties(qua_pulse_macro=plain_callable, quam_macro=mock_quam)
         assert prop.quam_macro is mock_quam
         assert prop.qua_pulse_macro is mock_quam.apply
         assert prop.duration == 70e-9
