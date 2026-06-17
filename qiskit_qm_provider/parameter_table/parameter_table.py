@@ -45,6 +45,8 @@ from quam.utils.qua_types import QuaVariable
 
 from .parameter_pool import ParameterPool
 from .parameter import Parameter
+from ._mixins import QuaFieldTable
+from ._scope import requires_qua_program
 from .input_type import InputType, Direction
 from ._deprecation import _DeprecatedAlias
 
@@ -53,7 +55,22 @@ if TYPE_CHECKING:
     from qiskit.circuit import QuantumCircuit, Parameter as QiskitParameter
 
 
-class ParameterTable:
+def _reject_measurement_output_in_runtime_table(
+    parameter: Parameter, table: "ParameterTable"
+) -> None:
+    """Refuse attaching compiler measurement handles to runtime tables."""
+    if getattr(parameter, "is_measurement_output", False) and not getattr(
+        table, "_is_measurement_outcome_table", False
+    ):
+        raise ValueError(
+            f"MeasurementRegisterField {parameter.name!r} cannot be attached to "
+            f"runtime ParameterTable {table.name!r}. Measurement outputs are "
+            f"read-only handles from quantum_circuit_to_qua; access them via "
+            f"comp.outputs instead."
+        )
+
+
+class ParameterTable(QuaFieldTable):
     """Map runtime parameters to QUA variables declared in a program.
 
     Each entry stores the Python initial value and the corresponding QUA
@@ -87,6 +104,7 @@ class ParameterTable:
         *,
         _quarc_handle: Optional[Any] = None,
         _is_synthetic_standalone: bool = False,
+        _register_in_pool: bool = True,
     ):
         """Create a parameter table from a dictionary or list of parameters.
 
@@ -213,6 +231,7 @@ class ParameterTable:
                 assert isinstance(
                     parameter, Parameter
                 ), "Invalid format for parameter value. Please use Parameter object."
+                _reject_measurement_output_in_runtime_table(parameter, self)
                 if (
                     getattr(parameter, "opnic_table", None) is not None
                     and parameter.opnic_table is not self
@@ -237,7 +256,10 @@ class ParameterTable:
                             "All parameters in the table must have the same direction."
                         )
 
-        self._id = ParameterPool.get_id(self)
+        self._id = ParameterPool.get_id(self) if _register_in_pool else 0
+
+        if not _register_in_pool:
+            return
 
         # OPNIC tables: build the Quarc Struct *type* eagerly (cheap, no stream ids
         # consumed). Emission to a module — the step that actually consumes stream ids
@@ -306,6 +328,13 @@ class ParameterTable:
         self._incoming_stream_id = getattr(incoming, "id", None)
         self._outgoing_stream_id = getattr(outgoing, "id", None)
 
+    def _resolve_index(self, index: int) -> Parameter:
+        for parameter in self.table.values():
+            if parameter.get_index(self) == index:
+                return parameter
+        raise IndexError(f"No parameter with index {index} in the parameter table.")
+
+    @requires_qua_program
     def declare(
         self, pause_program=False, declare_stream=True
     ) -> QuaVariable | List[QuaVariable | QuaArrayVariable]:
@@ -403,6 +432,7 @@ class ParameterTable:
 
         return streams
 
+    @requires_qua_program
     def rcv(
         self, filter_function: Optional[Callable[[Parameter], bool]] = None
     ):
@@ -483,7 +513,7 @@ class ParameterTable:
         values: Dict[
             Union[str, Parameter],
             Union[int, float, bool, List, np.ndarray, Parameter, QuaVariable],
-        ],
+        ] ,
     ):
         """
         Assign values to the parameters of the parameter table within the QUA program.
@@ -565,37 +595,6 @@ class ParameterTable:
             )
         return self.table[parameter_name].get_index(self)
 
-    def get_parameter(self, parameter: Union[str, int, Parameter]) -> Parameter:
-        """
-        Get the Parameter object of a specific parameter in the parameter table.
-        This object contains the QUA variable corresponding to the parameter, its type,
-        its index within the current table.
-
-        Args: parameter: Name or index (within current table) of the parameter to be returned.
-
-        Returns: Parameter object corresponding to the specified input.
-        """
-        if isinstance(parameter, str):
-            if parameter not in self.table.keys():
-                raise KeyError(
-                    f"No parameter named {parameter} in the parameter table."
-                )
-            return self.table[parameter]
-        elif isinstance(parameter, int):
-            for param in self.parameters:
-                if param.get_index(self) == parameter:
-                    return param
-
-            raise IndexError(
-                f"No parameter with index {parameter} in the parameter table."
-            )
-        elif isinstance(parameter, Parameter):
-            if parameter not in self.parameters:
-                raise KeyError("Provided Parameter not in this ParameterTable.")
-            return parameter
-        else:
-            raise ValueError("Invalid parameter name. Please use a string or an int.")
-
     def has_parameter(self, parameter: Union[str, int, Parameter]) -> bool:
         """
         Check if a parameter is in the parameter table.
@@ -614,38 +613,6 @@ class ParameterTable:
         else:
             raise ValueError("Invalid parameter name. Please use a string or an int.")
 
-    def get_variable(
-        self, parameter: Union[str, int, Parameter]
-    ) -> QuaVariable | QuaArrayVariable:
-        """
-        Get the QUA variable corresponding to the specified parameter name.
-
-        Args: parameter: Name or index (within the current table) of the parameter to be returned.
-        Returns: QUA variable corresponding to the parameter name.
-
-        """
-        if isinstance(parameter, str):
-            try:
-                return self.table[parameter].var
-            except KeyError:
-                raise KeyError(
-                    f"No parameter named {parameter} in the parameter table."
-                )
-
-        if isinstance(parameter, int):
-            for param in self.parameters:
-                if param.get_index(self) == parameter:
-                    return param.var
-            raise IndexError(
-                f"No parameter with index {parameter} in the parameter table."
-            )
-        if isinstance(parameter, Parameter):
-            if parameter not in self.parameters:
-                raise KeyError("Provided ParameterValue not in this ParameterTable.")
-            return parameter.var
-
-        raise ValueError("Invalid parameter name. Please use a string or an int.")
-
     def add_parameters(self, parameters: Union[Parameter, List[Parameter]]):
         """
         Add a (list of) parameter(s) to the parameter table. The index of the parameter is automatically set to the
@@ -661,9 +628,23 @@ class ParameterTable:
             )
         if isinstance(parameters, Parameter):
             parameters = [parameters]
+        elif getattr(parameters, "is_measurement_output", False):
+            raise ValueError(
+                f"MeasurementRegisterField {parameters.name!r} cannot be attached to "
+                f"runtime ParameterTable {self.name!r}. Access measurement outputs "
+                f"via comp.outputs instead."
+            )
+        elif not isinstance(parameters, list):
+            parameters = [parameters]
 
         start_idx = len(self.table)
         for i, parameter in enumerate(parameters):
+            if getattr(parameter, "is_measurement_output", False):
+                raise ValueError(
+                    f"MeasurementRegisterField {parameter.name!r} cannot be attached to "
+                    f"runtime ParameterTable {self.name!r}. Access measurement outputs "
+                    f"via comp.outputs instead."
+                )
             if not isinstance(parameter, Parameter):
                 raise ValueError(
                     "Invalid parameter type. Please use a Parameter object."
@@ -759,52 +740,6 @@ class ParameterTable:
             raise KeyError(f"No parameter named {key} in the parameter table.")
         self.table[key].assign(value)
 
-    def __getitem__(self, item: Union[str, int]):
-        """
-        Returns the QUA variable corresponding to the specified parameter name or parameter index.
-        """
-        if isinstance(item, str):
-            if item not in self.table.keys():
-                raise KeyError(f"No parameter named {item} in the parameter table.")
-            if self.table[item].is_declared:
-                return self.table[item].var
-            else:
-                raise ValueError(
-                    f"No QUA variable found for parameter {item}. Please use "
-                    f"ParameterTable.declare() within QUA program first."
-                )
-        elif isinstance(item, int):
-            for parameter in self.table.values():
-                if parameter.get_index(self) == item:
-                    if parameter.is_declared:
-                        return parameter.var
-                    else:
-                        raise ValueError(
-                            f"No QUA variable found for parameter with index {item}. Please use "
-                            f"ParameterTable.declare() within QUA program first."
-                        )
-            raise IndexError(f"No parameter with index {item} in the parameter table.")
-        else:
-            raise ValueError("Invalid parameter name. Please use a string or an int.")
-
-    def __len__(self):
-        return len(self.table)
-
-    def __getattr__(self, item):
-        # Get the QUA variable corresponding to the specified parameter name.
-        if item in self.table.keys():
-            return self.table[item].var
-        else:
-            raise AttributeError(f"No attribute named {item} in the parameter table.")
-
-    @property
-    def variables(self):
-        """
-        List of the QUA variables corresponding to the parameters in the parameter table.
-        """
-
-        return [self[item] for item in self.table.keys()]
-
     @property
     def variables_dict(self) -> Dict[str, QuaVariable | QuaArrayVariable]:
         """Dictionary of the QUA variables corresponding to the parameters in the parameter table."""
@@ -842,6 +777,10 @@ class ParameterTable:
 
     @property
     def packet(self):
+        """
+        Get the packet instanceassociated with the parameter table.
+        Relevant for OPNIC parameter tables.
+        """
         if not self.input_type == InputType.OPNIC:
             raise ValueError("No packet declared for non-OPNIC parameter tables.")
         if not self.is_declared:
@@ -854,7 +793,7 @@ class ParameterTable:
         Get the struct type of the parameter table.
         Relevant for OPNIC parameter tables.
         """
-        if not self.input_type == InputType.OPNIC:
+        if self.input_type != InputType.OPNIC:
             raise ValueError("No struct declared for non-OPNIC parameter tables.")
         return self._packet_type
 
@@ -957,11 +896,14 @@ class ParameterTable:
         if verbosity > 1:
             print(f"Sent packet {self.name!r} via {type(self._var).__name__}.")
 
+    @requires_qua_program
     def stream_back(self, reset: bool = False):
         """
-        QUA Macro: Stream the values of the parameters to Python.
+        QUA Macro: Stream the values of the parameters to client/server side.
             This method is used as a QUA macro to send the values of the parameters to the client/server side.
             It is expected to work jointly with the use of fetch_from_opx method on the client side.
+            If InputType is OPNIC, the values are sent to the external stream. Additionally, if the user has declared a client stream on top,
+            the values are also saved to the client stream.
 
         Args:
             reset: Whether to reset the parameter to a 0 value (in the appropriate QUA type) after sending it to the client/server side.
@@ -1187,7 +1129,7 @@ class ParameterTable:
                 p.name: {
                     "qua_type": _qua_type_str.get(p.type, "fixed"),
                     "is_array": p.is_array,
-                    "length": p._length,
+                    "length": p.length,
                 }
                 for p in self.parameters
             },

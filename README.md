@@ -214,14 +214,12 @@ We envision this tool as more than just a Qiskit bridge; it is a new interface t
 
 ### Workflow: Embedding and Processing
 
-When embedding Qiskit circuits into QUA programs, the typical workflow involves two steps using `backend.quantum_circuit_to_qua()` and `get_measurement_outcomes()`:
+When embedding Qiskit circuits into QUA programs, compile with `backend.quantum_circuit_to_qua()` and read classical outcomes from the returned **`QuaCircuitCompilation`** wrapper:
 
-1. `**backend.quantum_circuit_to_qua(qc, ...)`**: This function compiles the Qiskit circuit into QUA instructions and inserts them into the current QUA program context. It returns a result object.
-2. `**get_measurement_outcomes(qc, result, compute_state_int=True)**`: This utility function takes the circuit and the result from the previous step. It returns a dictionary containing all the circuit classical registers names (as you would collect them from `qc` by doing `[creg.name for creg in qc.cregs]`) as keys and the following dictionaries as values:
-  - `"value"`: QUA array of boolean variables storing all the measured classical bits included in the `ClassicalRegister` object.
-  - `"size"`:  The size (Python integer) relative to the `ClassicalRegister` (i.e., its number of bits).
-  - `**state_int**`, a QUA integer variable representing the integer representation formed by all the bits measured in this register. This can be useful for bitpacking.
-  - `"stream"`: a stream object that can be retrieved to perform arbitrary saving of the variables obtained by the circuit for this register, and that can be used for buffering in the `stream_processing` segment of the QUA program
+1. **`comp = backend.quantum_circuit_to_qua(qc, ...)`** — compiles the Qiskit circuit into QUA instructions inside the current `with program():` block. Returns a `QuaCircuitCompilation` that delegates to the underlying `CompilationResult` (`.result_program`, `.name`, …) and exposes **`comp.outputs`**: a local-only `MeasurementOutcomeTable` of `MeasurementRegisterField` handles (one per classical register, plus `_bit0`, … for loose clbits).
+2. **Access measurement outputs** — `comp.outputs["c"]` returns the QUA var; use `comp.outputs.state_ints["c"]` and `comp.outputs.streams["c"]` for packed integers and streams. Field handles: `comp.outputs.get_parameter("c")`. `comp.outputs` is not registered in the runtime OPNIC registry; bridge to transport tables manually when needed.
+
+Legacy **`get_measurement_outcomes(qc, comp, compute_state_int=True)`** remains available and returns the older dict-of-dicts API (`"value"`, `"size"`, `"state_int"`, `"stream"` per register).
 
 ### Example: Embedding Qiskit Circuits in QUA
 
@@ -232,9 +230,8 @@ from qiskit_qm_provider import ParameterTable
 # ... Define Qiskit circuit 'qc' ...
 
 with program() as prog:
-    # Embed the Qiskit circuit as a QUA macro
-    # param_table allows passing real-time QUA variables to the circuit parameters
-    backend.quantum_circuit_to_qua(qc, param_table=my_param_table)
+    comp = backend.quantum_circuit_to_qua(qc, param_table=my_param_table)
+    save(comp.outputs.state_ints["c"], comp.outputs.streams["c"])
 ```
 
 ### Error Correction and Parameter Table

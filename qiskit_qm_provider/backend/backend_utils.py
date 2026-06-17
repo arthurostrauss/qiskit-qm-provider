@@ -21,7 +21,7 @@ Date: 2026-02-08
 from __future__ import annotations
 
 import warnings
-from typing import List, TYPE_CHECKING, Dict, Literal, Type
+from typing import Any, List, TYPE_CHECKING, Dict, Literal, Type
 
 from qiskit.circuit import QuantumCircuit, Parameter
 from qiskit.circuit.controlflow import (
@@ -43,6 +43,7 @@ from ..additional_gates import CRGate, FSimGate, SYGate, SYdgGate
 
 if TYPE_CHECKING:
     from qm_qasm import CompilationResult
+    from ..parameter_table import ParameterTable
     from .qm_backend import QMBackend
 try:
     from qiskit.circuit.controlflow import get_control_flow_name_mapping
@@ -346,6 +347,143 @@ def add_basic_macros(
         backend.update_target()
 
 
+def _require_qua_struct_handle(struct: Any) -> Any:
+    """Return ``struct`` after validating it is a Quarc :class:`QuaStructHandle`."""
+    try:
+        from quarc.dsl.structs.qua_struct_handle import QuaStructHandle
+    except ImportError as exc:
+        raise ImportError(
+            "assign_struct_with_table requires the `quarc` package. Install `quarc` to use it."
+        ) from exc
+    if not isinstance(struct, QuaStructHandle):
+        raise TypeError(
+            "struct must be a quarc QuaStructHandle (from module.add_struct). "
+            f"Got {type(struct).__name__}."
+        )
+    return struct
+
+
+def _struct_field_specs(struct: Any) -> Dict[str, Dict[str, Any]]:
+    """Return ``{field_name: {is_array, length}}`` for a QuaStructHandle."""
+    from typing import get_args, get_origin, get_type_hints
+
+    from quarc import Array, Scalar
+
+    annotations = get_type_hints(struct._struct_spec.struct)
+    specs: Dict[str, Dict[str, Any]] = {}
+    for field_name, annotation in annotations.items():
+        origin = get_origin(annotation)
+        if origin is Scalar:
+            specs[field_name] = {"is_array": False, "length": 0}
+        elif origin is Array:
+            args = get_args(annotation)
+            specs[field_name] = {"is_array": True, "length": args[1]}
+        else:
+            raise TypeError(
+                f"Struct field {field_name!r} has unsupported Quarc annotation {annotation!r}."
+            )
+    return specs
+
+
+def _validate_struct_table_match(struct: Any, table: "ParameterTable") -> None:
+    struct_fields = _struct_field_specs(struct)
+    table_fields = {parameter.name: parameter for parameter in table.parameters}
+
+    if set(struct_fields) != set(table_fields):
+        missing_in_table = sorted(set(struct_fields) - set(table_fields))
+        missing_in_struct = sorted(set(table_fields) - set(struct_fields))
+        details = []
+        if missing_in_table:
+            details.append(f"missing from ParameterTable: {missing_in_table}")
+        if missing_in_struct:
+            details.append(f"missing from struct: {missing_in_struct}")
+        raise ValueError(
+            "Struct fields and ParameterTable parameters must have exactly the same names. "
+            + "; ".join(details)
+        )
+
+    for field_name, spec in struct_fields.items():
+        parameter = table_fields[field_name]
+        if parameter.is_array != spec["is_array"]:
+            raise ValueError(
+                f"Field {field_name!r}: struct/table shape mismatch "
+                f"(struct is_array={spec['is_array']}, parameter is_array={parameter.is_array})."
+            )
+        if spec["is_array"] and parameter.length != spec["length"]:
+            raise ValueError(
+                f"Field {field_name!r}: struct array length {spec['length']} does not match "
+                f"parameter length {parameter.length}."
+            )
+        if not parameter.is_declared:
+            raise ValueError(
+                f"Parameter {field_name!r} is not declared in QUA. Call "
+                f"ParameterTable.declare() (or initialize the owning OPNIC table) first."
+            )
+
+    if struct.qua_struct is None:
+        raise ValueError(
+            "Struct is not initialized in QUA. Call QuaStructHandle.initialize_in_qua() first."
+        )
+
+
+def assign_struct_with_table(struct: Any, table: "ParameterTable") -> None:
+    """QUA macro: copy declared parameter values into a matching OPNIC struct.
+
+    Call inside the same ``with program():`` block after both sides are ready:
+    the :class:`~.ParameterTable` parameters must already be declared (via
+    :meth:`~.ParameterTable.declare` or OPNIC
+    :meth:`~.ParameterTable.initialize_in_qua`), and ``struct`` must be a Quarc
+    **QuaStructHandle** returned by ``module.add_struct(...)`` with
+    :meth:`QuaStructHandle.initialize_in_qua` already invoked.
+
+    For each field, this macro assigns the table parameter's QUA variable onto
+    the corresponding struct field using ``qm.qua.assign``. Field names and
+    shapes (scalar vs. array length) must match exactly between the struct spec
+    and the table.
+
+    Args:
+        struct: A Quarc ``QuaStructHandle`` bound to the destination OPNIC struct.
+            The type is validated at runtime via a lazy ``quarc`` import; it is
+            not imported for static type checking in this module.
+        table: Source :class:`~.ParameterTable` whose declared QUA variables are
+            copied field-by-field into ``struct``.
+
+    Raises:
+        ImportError: If ``quarc`` is not installed.
+        TypeError: If ``struct`` is not a Quarc ``QuaStructHandle``.
+        ValueError: If field names or sizes differ, parameters are undeclared,
+            or ``struct`` was not initialized in QUA.
+    """
+    from ..parameter_table import ParameterTable
+
+    if not isinstance(table, ParameterTable):
+        raise TypeError(
+            f"table must be a ParameterTable, got {type(table).__name__}."
+        )
+
+    struct = _require_qua_struct_handle(struct)
+    _validate_struct_table_match(struct, table)
+
+    for field_name in _struct_field_specs(struct):
+        parameter = table.table[field_name]
+        struct_field = getattr(struct.qua_struct, field_name)
+        if parameter.is_array:
+            for index in range(parameter.length):
+                assign(struct_field[index], parameter.var[index])
+        else:
+            assign(struct_field[0], parameter.var)
+
+
+def pack_register_to_int(var, size: int):
+    """Pack a classical register QUA var into a single integer (LSB = bit index 0)."""
+    if size == 1:
+        return Cast.to_int(var)
+    return sum(
+        (((1 << i) * Cast.to_int(var[i])) for i in range(1, size)),
+        start=Cast.to_int(var[0]),
+    )
+
+
 def get_measurement_outcomes(
     qc: QuantumCircuit, result: CompilationResult, compute_state_int: bool = True
 ) -> dict[str, dict[str, QuaVariableInt]]:
@@ -358,49 +496,75 @@ def get_measurement_outcomes(
 
     Args:
         qc: The :class:`~qiskit.circuit.QuantumCircuit` that was compiled.
-        result: The compilation result returned by ``quantum_circuit_to_qua``.
+        result: The compilation result returned by ``quantum_circuit_to_qua``, or a
+            :class:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation`
+            wrapper.
         compute_state_int: If ``True`` (default), declare an integer packing of
             each register's bits (LSB = qubit index 0).
 
     Returns:
         A dictionary mapping each classical register name to a sub-dictionary:
 
-        - ``"value"``: list of QUA variables, one per measured bit (0/1 outcomes).
+        - ``"value"``: QUA variable for the register (array or scalar), or a list of
+          scalars for the synthetic loose-bit key ``"_bit"``.
         - ``"size"``: number of bits in the register.
         - ``"state_int"``: QUA ``int`` with packed bit values (when
           ``compute_state_int=True``).
         - ``"stream"``: QUA stream for ``stream_processing()`` on the host.
 
-        Loose clbits not in any register appear under the synthetic key ``"_bit"``.
+        Loose clbits not in any register appear under the synthetic key ``"_bit"`` in
+        this legacy dict API (the
+        :attr:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation.outputs`
+        table exposes one field per loose bit as ``_bit0``, ``_bit1``, …).
     """
-    loose_bit_register = _LooseBitRegister(qc)
-    cregs = qc.cregs
-    if loose_bit_register.size > 0:
-        cregs.append(loose_bit_register)
-    clbits_dict = {
-        creg.name: {
-            "value": result.result_program[creg.name] if creg.name != loose_bit_register.name else loose_bit_register.value(result),
-            "stream": declare_stream(),
-            "size": creg.size,
+    from .qua_circuit_compilation import MeasurementOutcomeTable, QuaCircuitCompilation
+
+    if isinstance(result, QuaCircuitCompilation):
+        table = result.outputs
+    else:
+        table = MeasurementOutcomeTable.from_compilation(
+            qc, result, compute_state_int=compute_state_int
+        )
+
+    loose_keys = _loose_bit_keys_from_circuit(qc)
+    clbits_dict: dict[str, dict] = {}
+
+    for creg in qc.cregs:
+        param = table.get_parameter(creg.name)
+        entry = {
+            "value": table[creg.name],
+            "stream": param.stream,
+            "size": param.size,
         }
-        for creg in cregs
-    }
-    
-    if compute_state_int:
-        for creg_dict in clbits_dict.values():
-            c_reg_res = creg_dict["value"]
-            creg_dict["state_int"] = declare(int)
+        if compute_state_int:
+            entry["state_int"] = param.state_int
+        clbits_dict[creg.name] = entry
+
+    if loose_keys:
+        loose_vars = [table[key] for key in loose_keys]
+        loose_streams = [table.get_parameter(key).stream for key in loose_keys]
+        entry = {
+            "value": loose_vars,
+            "stream": loose_streams,
+            "size": len(loose_keys),
+        }
+        if compute_state_int:
+            entry["state_int"] = declare(int)
             assign(
-                creg_dict["state_int"],
+                entry["state_int"],
                 sum(
-                    (
-                        ((1 << i) * Cast.to_int(c_reg_res[i]))
-                        for i in range(1, creg_dict["size"])
-                    ),
-                    start=Cast.to_int(c_reg_res[0]),
+                    (((1 << i) * Cast.to_int(loose_vars[i])) for i in range(1, len(loose_keys))),
+                    start=Cast.to_int(loose_vars[0]),
                 ),
             )
+        clbits_dict[_LooseBitRegister.name] = entry
+
     return clbits_dict
+
+
+def _loose_bit_keys_from_circuit(qc: QuantumCircuit) -> list[str]:
+    loose_count = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
+    return [f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}" for i in range(loose_count)]
 
 
 def logically_active_qubits(circuit):

@@ -49,9 +49,16 @@ from .primitives.qm_estimator import QMEstimatorV2, QMEstimatorOptions
 from .backend.backend_utils import (
     get_measurement_outcomes,
     add_basic_macros,
+    assign_struct_with_table,
     dump_qua_script,
     get_qua_script,
+    pack_register_to_int,
 )
+from .backend.qua_circuit_compilation import (
+    QuaCircuitCompilation,
+    MeasurementOutcomeTable,
+)
+from .backend.measurement_field import MeasurementRegisterField
 
 __all__ = [
     "QMBackend",
@@ -70,8 +77,13 @@ __all__ = [
     "QMEstimatorOptions",
     "get_measurement_outcomes",
     "add_basic_macros",
+    "assign_struct_with_table",
     "dump_qua_script",
     "get_qua_script",
+    "pack_register_to_int",
+    "QuaCircuitCompilation",
+    "MeasurementRegisterField",
+    "MeasurementOutcomeTable",
     "QMProvider",
     "QUARC_AVAILABLE",
 ]

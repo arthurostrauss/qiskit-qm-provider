@@ -13,6 +13,7 @@ from qiskit_qm_provider.backend.backend_utils import (
     binary,
     logically_active_qubits,
     get_non_trivial_observables,
+    assign_struct_with_table,
 )
 
 
@@ -223,6 +224,116 @@ class TestLogicallyActiveQubits:
         qc = QuantumCircuit(3)
         active = logically_active_qubits(qc)
         assert len(active) == 0
+
+
+@pytest.fixture(autouse=True)
+def _reset_parameter_pool():
+    from qiskit_qm_provider import ParameterPool
+
+    ParameterPool.reset()
+    yield
+    ParameterPool.reset()
+
+
+class TestAssignStructWithTable:
+    def test_rejects_non_handle(self):
+        pytest.importorskip("quarc")
+        from qiskit_qm_provider import Parameter, ParameterTable, Direction, InputType
+
+        table = ParameterTable(
+            [Parameter("x", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)],
+            name="Cfg",
+        )
+        with pytest.raises(TypeError, match="QuaStructHandle"):
+            assign_struct_with_table(object(), table)
+
+    def test_rejects_field_name_mismatch(self):
+        pytest.importorskip("quarc")
+        from quarc import Array, BaseModule, Direction as QuarcDirection, Scalar, Struct
+        from qiskit_qm_provider import Parameter, ParameterTable, Direction, InputType
+
+        class Mod(BaseModule):
+            def __init__(self) -> None:
+                super().__init__()
+                st = Struct(struct_name="Cfg", theta=Scalar[float], amps=Array[float, 2])
+                self.handle = self.add_struct(st, QuarcDirection.OUTGOING)
+
+        module = Mod()
+        table = ParameterTable(
+            [
+                Parameter("phi", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING),
+                Parameter(
+                    "amps",
+                    [0.0, 0.0],
+                    input_type=InputType.OPNIC,
+                    direction=Direction.OUTGOING,
+                ),
+            ],
+            name="Other",
+            _register_in_pool=False,
+        )
+        for parameter in table.parameters:
+            parameter._is_declared = True
+
+        with pytest.raises(ValueError, match="exactly the same names"):
+            assign_struct_with_table(module.handle, table)
+
+    def test_rejects_length_mismatch(self):
+        pytest.importorskip("quarc")
+        from quarc import Array, BaseModule, Direction as QuarcDirection, Struct
+        from qiskit_qm_provider import Parameter, ParameterTable, Direction, InputType
+
+        class Mod(BaseModule):
+            def __init__(self) -> None:
+                super().__init__()
+                st = Struct(struct_name="Cfg", amps=Array[float, 2])
+                self.handle = self.add_struct(st, QuarcDirection.OUTGOING)
+
+        module = Mod()
+        table = ParameterTable(
+            [
+                Parameter(
+                    "amps",
+                    [0.0, 0.0, 0.0],
+                    input_type=InputType.OPNIC,
+                    direction=Direction.OUTGOING,
+                )
+            ],
+            name="Cfg",
+            _register_in_pool=False,
+        )
+        for parameter in table.parameters:
+            parameter._is_declared = True
+
+        with pytest.raises(ValueError, match="array length"):
+            assign_struct_with_table(module.handle, table)
+
+    def test_assigns_in_qua_program(self):
+        pytest.importorskip("quarc")
+        from qm.qua import program
+        from quarc import Array, Direction as QuarcDirection, Scalar, Struct
+        from qiskit_qm_provider import Parameter, ParameterTable, Direction, InputType, QiskitQMModule
+
+        source_table = ParameterTable(
+            [
+                Parameter("theta", 0.0, input_type=InputType.OPNIC, direction=Direction.INCOMING),
+                Parameter(
+                    "amps",
+                    [0.0, 0.0],
+                    input_type=InputType.OPNIC,
+                    direction=Direction.INCOMING,
+                ),
+            ],
+            name="Source",
+        )
+        module = QiskitQMModule()
+        dest = Struct(struct_name="Dest", theta=Scalar[float], amps=Array[float, 2])
+        dest_handle = module.add_struct(dest, QuarcDirection.OUTGOING)
+
+        with program():
+            source_table.declare()
+            dest_handle.initialize_in_qua()
+            assign_struct_with_table(dest_handle, source_table)
 
 
 class TestGetNonTrivialObservables:

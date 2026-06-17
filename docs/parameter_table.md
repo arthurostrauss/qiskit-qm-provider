@@ -64,7 +64,7 @@ syndrome_data = Parameter(
     direction=Direction.INCOMING,
 )
 
-### `__init__(name, value, qua_type, input_type, direction, units)`
+**Parameter `__init__` arguments:**
 - `name`: Parameter name.
 - `value`: Initial Python-side value (also used by `push_to_opx()` when called with no argument).
 - `qua_type`: `int`, `float`, `bool`, or `fixed`.
@@ -141,6 +141,6 @@ Enum for input mechanisms:
 
 ## Related
 
-- **Guide:** [Backend — embedding](backend.md#embed-in-qua-hybrid), [Error correction](error_correction.md)
-- **API:** [Parameter Table reference](apidocs/qm_parameter_table.rst)
-- **Workflows:** [Hybrid embedding](workflows.md#hybrid-qua-qiskit-programs-embedding-circuits-in-qua)
+- **Guide:** [Measurement outputs](measurement_outputs.md), [Backend — embedding](backend.md#embed-in-qua-hybrid), [Error correction](error_correction.md)
+- **API:** [Parameter Table reference](apidocs/qm_parameter_table.rst), [Backend — measurement outputs](apidocs/qm_backend.rst#circuit-compilation-and-measurement-outputs)
+- **Workflows:** [Hybrid embedding](workflows.md#4-hybrid-quaqiskit-programs-embedding-circuits-in-qua)

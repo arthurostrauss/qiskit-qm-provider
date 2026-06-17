@@ -28,6 +28,19 @@ This document provides a detailed presentation of the **Parameter**, **Parameter
 
 All of these can be used inside `with program():` blocks and interoperate with `ParameterTable` (e.g., you can put `Parameter`, `QUAArray`, and `QUA2DArray` instances in a table).
 
+### Measurement outputs (dual namespace)
+
+Compiled-circuit measurement fields (`MeasurementRegisterField`, exposed via `comp.outputs`) are **not** runtime `Parameter` objects. They live in a separate weakref-tracked registry on `ParameterPool` and are owned per `QuaCircuitCompilation`.
+
+| Access | Runtime `ParameterTable` | `MeasurementOutcomeTable` |
+|--------|--------------------------|---------------------------|
+| `table["c"]` / `table.c` | QUA var (inside `with program():`) | QUA var (inside `with program():`) |
+| `table.get_parameter("c")` | `Parameter` handle | `MeasurementRegisterField` handle |
+
+QUA variable accessors (`.var`, `__getitem__`, `state_ints`, `streams`, `declare`, `assign`, …) raise outside `with program():`. Use `ParameterPool.lookup_runtime_parameter(name)` for runtime-only name lookup.
+
+See [docs/measurement_outputs.md](../../docs/measurement_outputs.md) for the full locality model.
+
 ---
 
 ## Parameter

@@ -48,6 +48,7 @@ from qualang_tools.results import wait_until_job_is_paused
 
 from .parameter_pool import ParameterPool
 from .input_type import Direction, InputType
+from ._scope import require_qua_program, requires_qua_program
 from ._deprecation import _DeprecatedAlias
 
 if TYPE_CHECKING:
@@ -541,6 +542,7 @@ class Parameter:
         """
         return self._main_table
 
+    @requires_qua_program
     def assign(
         self,
         value: Union["Parameter", ScalarOfAnyType, VectorOfAnyType],
@@ -634,10 +636,11 @@ class Parameter:
         """
         if self.input_type == InputType.OPNIC:
             opnic_table = self._require_standalone_opnic_table(context="declare")
-            opnic_table.declare(
+            require_qua_program("Parameter.declare")
+            return opnic_table.declare(
                 pause_program=pause_program, declare_stream=declare_stream
             )
-            return self._var
+        require_qua_program("Parameter.declare")
         if self.is_declared:
             raise ValueError("Variable already declared. Cannot declare again.")
         else:
@@ -777,6 +780,7 @@ class Parameter:
         Returns:
             QUA variable associated with the parameter.
         """
+        require_qua_program("Parameter.var")
         if not self.is_declared:
             raise ValueError(
                 "Variable not declared. Declare the variable first through declare_variable method."

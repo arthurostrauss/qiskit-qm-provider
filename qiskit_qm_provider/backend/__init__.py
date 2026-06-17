@@ -23,17 +23,29 @@ from .flux_tunable_transmon_backend import FluxTunableTransmonBackend
 from .qm_instruction_properties import QMInstructionProperties
 from .backend_utils import (
     add_basic_macros,
+    assign_struct_with_table,
     get_measurement_outcomes,
     dump_qua_script,
     get_qua_script,
+    pack_register_to_int,
 )
+from .qua_circuit_compilation import (
+    QuaCircuitCompilation,
+    MeasurementOutcomeTable,
+)
+from .measurement_field import MeasurementRegisterField
 
 __all__ = [
     "QMBackend",
     "FluxTunableTransmonBackend",
     "QMInstructionProperties",
     "add_basic_macros",
+    "assign_struct_with_table",
     "get_measurement_outcomes",
     "dump_qua_script",
     "get_qua_script",
+    "pack_register_to_int",
+    "QuaCircuitCompilation",
+    "MeasurementRegisterField",
+    "MeasurementOutcomeTable",
 ]

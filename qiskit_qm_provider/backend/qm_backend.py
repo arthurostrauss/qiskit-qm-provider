@@ -938,12 +938,12 @@ class QMBackend(Backend):
             | Sequence[ParameterTable | Parameter]
             | Dict[str | QiskitParameter | Var, Scalar]
         ] = None,
-    ) -> CompilationResult:
+    ) -> "QuaCircuitCompilation":
         """Convert a :class:`~qiskit.circuit.QuantumCircuit` to a QUA program fragment.
 
         Can be called inside an existing ``with program():`` block or standalone.
         When called standalone, access the generated program via
-        ``result.result_program.dsl_program``.
+        ``result.qua_program`` or ``result.result_program.dsl_program``.
 
         Args:
             qc: The circuit to compile.
@@ -952,8 +952,11 @@ class QMBackend(Backend):
                 that must be streamed during execution.
 
         Returns:
-            Compilation result containing the generated QUA program fragment.
+            :class:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation`
+            wrapping the compilation result and
+            wired measurement outputs.
         """
+        from .qua_circuit_compilation import QuaCircuitCompilation
 
         basis_gates = self.qm_qasm_basis_gates
         # Check if all custom calibrations are in the qasm3 basis gates
@@ -1003,7 +1006,7 @@ class QMBackend(Backend):
             compilation_name=f"{qc.name}_qua",
             inputs=inputs,
         )
-        return result
+        return QuaCircuitCompilation(result, qc)
 
     @property
     def compiler(self) -> Compiler:

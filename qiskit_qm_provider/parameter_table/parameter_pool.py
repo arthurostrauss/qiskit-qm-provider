@@ -78,13 +78,23 @@ Python session (typical for ``quarc.run()`` driven from a single entry point) th
 the same module instance. For multi-process deployments the classical side must rebuild
 the wrapper tables — typically by calling :meth:`from_quarc_module` against the same
 ``BaseModule`` subclass / serialized representation.
+
+**Measurement outputs (separate namespace).** Compiled-circuit measurement tables and
+their :class:`~qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField`
+fields (including loose-bit ``_bitN`` keys) are tracked in private pool containers
+(``_measurement_outcome_tables``, ``_measurement_register_fields``), not in
+``_registry``. They share no ids with runtime/OPNIC objects. Field names may match
+runtime struct fields or creg names; resolve handles via ``comp.outputs`` vs your
+input ``ParameterTable``. :meth:`reset` clears measurement registries together with
+the runtime registry.
 """
 
 from __future__ import annotations
 
 import itertools
 import warnings
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+import weakref
+from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .parameter_table import ParameterTable
@@ -116,10 +126,65 @@ class ParameterPool:
     #: :meth:`to_quarc_module` (Pipeline 2). Re-binding a different module without an
     #: intervening :meth:`reset` raises.
     _quarc_module: Optional[Any] = None
+    #: :class:`~qiskit_qm_provider.backend.qua_circuit_compilation.MeasurementOutcomeTable`
+    #: instances tracked separately from the runtime/OPNIC registry (not assigned ids).
+    _measurement_outcome_tables: weakref.WeakSet[Any] = weakref.WeakSet()
+    #: :class:`~qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField`
+    #: handles (including loose-bit ``_bitN`` fields), weakref-tracked.
+    _measurement_register_fields: List[weakref.ref] = []
 
     # ------------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------------
+
+    @classmethod
+    def _register_measurement_outcome_table(cls, table: Any) -> None:
+        """Track a compiled-circuit measurement table outside the runtime registry."""
+        cls._prune_measurement_field_refs()
+        cls._measurement_outcome_tables.add(table)
+        for field in table.parameters:
+            cls._register_measurement_register_field(field)
+
+    @classmethod
+    def _register_measurement_register_field(cls, field: Any) -> None:
+        """Track a measurement register handle (creg or loose bit) outside the runtime registry."""
+        cls._prune_measurement_field_refs()
+        for ref in cls._measurement_register_fields:
+            if ref() is field:
+                return
+        cls._measurement_register_fields.append(weakref.ref(field))
+
+    @classmethod
+    def _prune_measurement_field_refs(cls) -> None:
+        cls._measurement_register_fields = [
+            ref for ref in cls._measurement_register_fields if ref() is not None
+        ]
+
+    @classmethod
+    def _reset_measurement_registries(cls) -> None:
+        """Clear measurement-only registries (called from :meth:`reset`)."""
+        from ..backend.qua_circuit_compilation import reset_output_table_name_registry
+
+        cls._measurement_outcome_tables = weakref.WeakSet()
+        cls._measurement_register_fields.clear()
+        reset_output_table_name_registry()
+
+    @classmethod
+    def iter_measurement_outcome_tables(cls) -> Iterator[Any]:
+        """Yield live :class:`~qiskit_qm_provider.backend.qua_circuit_compilation.MeasurementOutcomeTable` instances (debug/introspection)."""
+        cls._prune_measurement_field_refs()
+        for table in cls._measurement_outcome_tables:
+            if table is not None:
+                yield table
+
+    @classmethod
+    def iter_measurement_register_fields(cls) -> Iterator[Any]:
+        """Yield live :class:`~qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField` handles (debug/introspection)."""
+        cls._prune_measurement_field_refs()
+        for ref in cls._measurement_register_fields:
+            field = ref()
+            if field is not None:
+                yield field
 
     @classmethod
     def _assert_unique_registered_name(cls, obj: Any) -> None:
@@ -172,6 +237,11 @@ class ParameterPool:
                 return param
         return None
 
+    @classmethod
+    def lookup_runtime_parameter(cls, name: str) -> Optional["Parameter"]:
+        """Return the runtime :class:`Parameter` named ``name`` (excludes measurement fields)."""
+        return cls._lookup_parameter_by_name(name)
+
     # ------------------------------------------------------------------------
     # Id allocation / registry CRUD
     # ------------------------------------------------------------------------
@@ -190,11 +260,12 @@ class ParameterPool:
 
     @classmethod
     def reset(cls) -> None:
-        """Clear all pool state — registry, id counter, pending list, and Quarc module."""
+        """Clear all pool state — runtime registry, measurement registries, and Quarc module."""
         cls._counter = itertools.count(1)
         cls._registry.clear()
         cls._pending_standalone_opnic.clear()
         cls._quarc_module = None
+        cls._reset_measurement_registries()
 
     @classmethod
     def get_all_ids(cls) -> List[int]:
@@ -229,14 +300,10 @@ class ParameterPool:
     def iter_standalone_opnic_parameters(cls) -> List["Parameter"]:
         """Return every OPNIC Parameter that is, or was, treated as standalone.
 
-        The returned list is the *union* of:
-        - parameters still in :data:`_pending_standalone_opnic` (created with
-          ``input_type=OPNIC`` and never attached to a non-synthetic table), and
-        - parameters that have been promoted into a synthetic single-field
-          :class:`ParameterTable` (i.e. the table has ``_is_synthetic_standalone == True``).
-
-        Order: pending parameters first (in insertion order), then promoted ones in
-        registry order.
+        Union of parameters still in :data:`_pending_standalone_opnic` and parameters
+        promoted into a synthetic single-field :class:`ParameterTable`
+        (``_is_synthetic_standalone == True``). Pending entries come first, then
+        promoted entries in registry order.
         """
         from .parameter_table import ParameterTable
 
