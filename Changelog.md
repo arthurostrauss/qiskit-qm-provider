@@ -77,14 +77,23 @@ Changes on the `quarc-support` branch relative to `main` (22 commits, ~8.5k line
   - Sync-hook job reconstruction from IQCC CLI args (`-j/-q/-i/-p`).
   - Running-job polling compatible with QOP 3.x (`get_jobs(status=["Running"])`) and QOP 2.x (`list_open_qms()` fallback).
 
+#### Self-contained IQCC sync hooks
+
+- **Dependency-free sync-hook generation** — `generate_sync_hook_sampler()` and `generate_sync_hook_estimator()` now emit a sync hook that runs on **any** IQCC user's cloud runtime: the generated code imports only `from iqcc_cloud_client.runtime import get_qm_job` and no longer requires `qiskit_qm_provider` or `numpy` to be installed on the sync-hook side. Parameter tables and observable indices are serialised to plain-Python data; the push logic is rendered from Jinja templates (`qiskit_qm_provider/job/templates/`).
+- **`INPUT_STREAM` and `IO1`/`IO2` over IQCC** — both delivery mechanisms are fully runnable from the sync hook. `INPUT_STREAM` pushes via `job.push_to_input_stream(name, value)`; `IO1`/`IO2` set `job.set_io_values(...)` with an inlined pause/resume loop (an in-template equivalent of `qualang_tools.results.wait_until_job_is_paused`), so `qualang_tools` is not required in the cloud runtime either.
+- **Per-parameter type coercion** — streamed values are coerced according to each parameter's QUA type (`int` / `fixed` / `bool`) instead of a blanket `float()` cast.
+- **`jinja2`** added to the `[iqcc]` optional extra.
+
 #### Documentation
 
+- **[Primitives guide — Running on IQCC Cloud](docs/primitives.md)** — explains the self-contained sync-hook behavior, supported `input_type` mechanisms (`INPUT_STREAM`, `IO1`/`IO2`), and the `OPNIC` limitation on IQCC jobs.
 - **[Measurement outputs guide](docs/measurement_outputs.md)** — locality model, accessor contract, RL reward and QEC worked examples.
 - **[Error-correction workflow guide](docs/error_correction.md)** — expanded hybrid QEC patterns (syndrome streaming, detection events, decoder integration).
 - **Parameter table and backend API docs** — updated Sphinx stubs, scope-guard reference, and OPNIC workflow documentation.
 
 ### Changed
 
+- **IQCC sync-hook generation rewritten** — the previously emitted hook re-declared `ParameterTable`/`Parameter` objects and called `push_to_opx()` (requiring `qiskit_qm_provider` + `numpy` in the cloud runtime). It now injects plain data into a Jinja template that talks to the QM job directly. `QMSamplerV2.run()` / `QMEstimatorV2.run()` raise `NotImplementedError` when `input_type=InputType.OPNIC` is combined with an IQCC job (`IQCCSamplerJob` / `IQCCEstimatorJob`), since OPNIC transport is not yet available over the cloud sync hook — use `INPUT_STREAM` or `IO1`/`IO2`.
 - **`QMBackend.quantum_circuit_to_qua()`** now returns `QuaCircuitCompilation` instead of a raw qm-qasm `CompilationResult`.
 - **`InputType.DGX_Q` renamed to `InputType.OPNIC`** throughout the codebase, primitives options, and documentation. OPNIC is presented as a QUARC-backed host↔OPX transport; the legacy "DGX Quantum" naming is fully retired from code and docs.
 - **`Parameter.dgx_struct` / `opnic_struct` replaced by `Parameter.struct_type`** (and equivalent on `ParameterTable`); the `opnic_struct` name was removed outright (see Removed).
