@@ -36,6 +36,21 @@ def is_inside_scope() -> bool:
         return False
 
 
+def current_scope_token() -> object | None:
+    """Return a stable token identifying the active QUA *program* scope, or ``None``.
+
+    Uses the program-root scope (``scopes_manager.program_scope``), which keeps a single
+    identity for the whole ``with program():`` block — unchanged across nested ``for_`` /
+    ``if_`` scopes. A fresh ``with program():`` yields a new object. Used to (a) bind QUA
+    declaration validity to the program it was made in (``Parameter.is_declared``), and
+    (b) enforce the single-program guard for OPNIC struct emission.
+    """
+    try:
+        return scopes_manager.program_scope
+    except NoScopeFoundException:
+        return None
+
+
 def require_qua_program(context: str) -> None:
     """Raise if not inside an active QUA program scope.
 

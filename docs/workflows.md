@@ -153,7 +153,7 @@ See [measurement_outputs.md](measurement_outputs.md) for the full locality model
 
 Legacy [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) remains available and accepts either `QuaCircuitCompilation` or a raw `CompilationResult`.
 
-Powerful for error correction, closed-loop calibration, and DGX hybrid loops.
+Powerful for error correction, closed-loop calibration, and QUARC/OPNIC hybrid loops.
 
 - **Guides:** [Backend](backend.md), [Parameter Table](parameter_table.md)
 - **Example:** [Error-Correction Workflow](error_correction.md)

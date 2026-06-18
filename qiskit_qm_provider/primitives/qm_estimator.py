@@ -139,6 +139,10 @@ class QMEstimatorV2(BaseEstimatorV2):
         from qm import QuantumMachinesManager
 
         job_obj = QMEstimatorJob if isinstance(self.backend.qmm, QuantumMachinesManager) else IQCCEstimatorJob
+        if self.options.input_type == InputType.OPNIC and issubclass(job_obj, IQCCEstimatorJob):
+            raise NotImplementedError(
+                "OPNIC input_type is not yet supported for IQCC cloud jobs; use INPUT_STREAM or IO1/IO2."
+            )
         backend_options = deepcopy(self.backend.options.__dict__)
         backend_options.update(self._options.run_options or {})
         job = job_obj(

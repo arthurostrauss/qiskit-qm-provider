@@ -46,13 +46,31 @@ from quam.utils.qua_types import QuaVariable
 from .parameter_pool import ParameterPool
 from .parameter import Parameter
 from ._mixins import QuaFieldTable
-from ._scope import requires_qua_program
+from ._scope import requires_qua_program, current_scope_token
 from .input_type import InputType, Direction
 from ._deprecation import _DeprecatedAlias
 
 if TYPE_CHECKING:
     from qiskit.circuit.classical.expr import Var
     from qiskit.circuit import QuantumCircuit, Parameter as QiskitParameter
+
+
+def _detect_var_is_quarc_handle(handle: Any) -> bool:
+    """Return whether ``handle`` is an in-process Quarc ``QuaStructHandle``.
+
+    Runtime pybind endpoints (classical entrypoint) expose ``send`` / ``recv`` and field
+    accessors only — they carry no ``_struct_spec`` and are not ``QuaStructHandle`` instances.
+    """
+    if handle is None:
+        return False
+    if getattr(handle, "_struct_spec", None) is not None:
+        return True
+    try:
+        from quarc.dsl.structs.qua_struct_handle import QuaStructHandle
+
+        return isinstance(handle, QuaStructHandle)
+    except ImportError:
+        return False
 
 
 def _reject_measurement_output_in_runtime_table(parameter: Parameter, table: "ParameterTable") -> None:
@@ -101,6 +119,7 @@ class ParameterTable(QuaFieldTable):
         name: Optional[str] = None,
         *,
         _quarc_handle: Optional[Any] = None,
+        _var_is_quarc_handle: Optional[bool] = None,
         _is_synthetic_standalone: bool = False,
         _register_in_pool: bool = True,
     ):
@@ -145,11 +164,20 @@ class ParameterTable(QuaFieldTable):
         #: lazily by :meth:`ParameterPool.to_quarc_module` (which sweeps unemitted
         #: tables onto the freshly-allocated module).
         self._var: Optional[Any] = _quarc_handle
-        #: Quarc ``Struct`` *type* (a class with annotations) — built eagerly for OPNIC
-        #: tables at the end of :meth:`__init__`. This costs no stream ids and does not
-        #: require a Quarc :class:`BaseModule`. It is the input to ``module.add_struct``
-        #: when the table is later emitted (by :meth:`to_quarc_module` /
-        #: :meth:`from_quarc_module`).
+        #: ``True`` when ``_var`` is an in-process ``QuaStructHandle`` (Flow A emission or
+        #: Flow B Mode 1 reconstruction). ``False`` when ``_var`` is a generated runtime
+        #: endpoint (Flow B Mode 2 classical entrypoint) or unset. INPUT_STREAM / IO1 / IO2
+        #: tables keep this ``False`` — their QUA variables are declared locally, not via a
+        #: Quarc struct handle.
+        if _var_is_quarc_handle is not None:
+            self._var_is_quarc_handle = _var_is_quarc_handle
+        else:
+            self._var_is_quarc_handle = _detect_var_is_quarc_handle(_quarc_handle)
+        #: Quarc ``Struct`` *type* (a class with annotations), built lazily from the FINAL
+        #: field set at emission time (:meth:`_emit_to_module`, called from
+        #: :meth:`declare`) and cached here. Deliberately NOT built at construction: the
+        #: field set may still change via :meth:`add_parameters` / :meth:`remove_parameter`
+        #: until ``declare()``. Stays ``None`` for a Flow-B table whose handle was supplied.
         self._struct_type: Optional[type] = None
         #: ``True`` once the table's struct has been added to a Quarc module via
         #: ``module.add_struct`` (or once a pre-built handle was bound via
@@ -157,10 +185,9 @@ class ParameterTable(QuaFieldTable):
         self._is_emitted: bool = _quarc_handle is not None
         #: ``True`` for the synthetic single-field table that wraps a standalone OPNIC
         #: ``Parameter`` after promotion (see
-        #: :meth:`Parameter._require_standalone_opnic_table`). Synthetic tables
-        #: force-emit at construction even if no Quarc module was bound yet (lazily
-        #: creating a default :class:`~qiskit_qm_provider.QiskitQMModule` if needed)
-        #: because the QUA program needs a real ``QuaStructHandle`` to declare against.
+        #: :meth:`Parameter._require_standalone_opnic_table`). Like any OPNIC table, a
+        #: synthetic table emits its Quarc struct lazily at :meth:`declare` inside the
+        #: QUA program (the single commit point) — never at construction.
         self._is_synthetic_standalone: bool = bool(_is_synthetic_standalone)
 
         if isinstance(parameters_dict, Dict):
@@ -236,34 +263,20 @@ class ParameterTable(QuaFieldTable):
         if not _register_in_pool:
             return
 
-        # OPNIC tables: build the Quarc Struct *type* eagerly (cheap, no stream ids
-        # consumed). Emission to a module — the step that actually consumes stream ids
-        # via ``module.add_struct`` — is governed by the hybrid emission rule below.
-        if self._input_type == InputType.OPNIC:
-            if self._var is not None:
-                # Pipeline 1 wrap path: a pre-existing handle was supplied (caller is
-                # ``ParameterPool.from_quarc_module``). Don't rebuild the type or call
-                # add_struct; just hydrate stream ids from the handle.
+        # OPNIC tables: the Quarc ``Struct`` *type* is NOT built here. The field set is
+        # not final at construction — the user may ``add_parameters`` / ``remove_parameter``
+        # right up until ``declare()``. Both the struct-type construction and the emission
+        # (``module.add_struct``, which mints the stream ids) are therefore DEFERRED to
+        # :meth:`declare` (the single commit point, Flow A), where ``_emit_to_module``
+        # builds the type from the final fields. The only exception is the Flow-B wrap
+        # path, where a pre-built handle (and thus a finalized struct) is supplied.
+        if self._input_type == InputType.OPNIC and self._var is not None:
+            # Flow B (reconstruction) wrap path: a pre-existing handle was supplied
+            # (caller is ``ParameterPool.from_quarc_module``). Hydrate stream ids from the
+            # handle when it is a QuaStructHandle; runtime endpoints rely on the caller
+            # passing serialized stream specs via ``_sync_stream_ids_from_state``.
+            if self._var_is_quarc_handle:
                 self._sync_stream_ids_from_handle(self._var)
-            else:
-                from .quarc_emit import build_quarc_struct
-
-                self._struct_type = build_quarc_struct(self)
-                # Hybrid emission rule:
-                # - If the pool already has a Quarc module bound (Pipeline 1 after a
-                #   from_quarc_module call, or Pipeline 2 after a to_quarc_module call),
-                #   eagerly emit onto it.
-                # - If this is a synthetic single-field standalone table, force-emit
-                #   regardless (lazily creating a default ``QiskitQMModule`` if needed),
-                #   because the parameter is being promoted right now and the caller
-                #   immediately needs a handle.
-                # - Otherwise leave the table unemitted — :meth:`to_quarc_module` will
-                #   sweep it later.
-                pool_module = ParameterPool._quarc_module
-                if pool_module is not None:
-                    self._emit_to_module(pool_module)
-                elif self._is_synthetic_standalone:
-                    self._emit_to_module(ParameterPool.quarc_module())
 
     def _emit_to_module(self, module: Any) -> Any:
         """Add this table's Quarc struct to ``module`` and bind the resulting handle.
@@ -287,9 +300,20 @@ class ParameterTable(QuaFieldTable):
             raise RuntimeError(f"ParameterTable {self.name!r} has no direction; cannot emit.")
         handle = module.add_struct(self._struct_type, quarc_direction_for(self._direction))
         self._var = handle
+        self._var_is_quarc_handle = True
         self._is_emitted = True
         self._sync_stream_ids_from_handle(handle)
         return handle
+
+    def _sync_stream_ids_from_state(self, struct_info: Dict[str, Any]) -> None:
+        """Hydrate stream ids from serialized ``_structs`` entry (Mode 2 classical path)."""
+        for spec_key, attr in (
+            ("incoming_stream_spec", "_incoming_stream_id"),
+            ("outgoing_stream_spec", "_outgoing_stream_id"),
+        ):
+            stored = struct_info.get(spec_key)
+            if isinstance(stored, dict) and "id" in stored:
+                setattr(self, attr, stored["id"])
 
     def _sync_stream_ids_from_handle(self, handle: Any) -> None:
         """Hydrate stream ids from Quarc handle._struct_spec when available."""
@@ -318,18 +342,23 @@ class ParameterTable(QuaFieldTable):
 
         """
         if self.input_type == InputType.OPNIC:
+            # Single commit point (Flow A): enforce one-program-per-process for OPNIC and
+            # emit the struct now if it has not been emitted yet (mints the Quarc stream
+            # ids in declare() order). Flow-B tables arrive already emitted (handle bound
+            # at construction via ``_quarc_handle``).
+            ParameterPool.guard_single_program_opnic(current_scope_token(), table_name=self.name)
+            if not self._is_emitted:
+                self._emit_to_module(ParameterPool.quarc_module())
             if self._var is None:
                 raise RuntimeError(
-                    f"ParameterTable {self.name!r} has no Quarc struct handle (table is "
-                    f"unemitted). Call ParameterPool.to_quarc_module() to flush pending "
-                    f"OPNIC tables onto a Quarc module, or use "
-                    f"ParameterPool.from_quarc_module(my_module) if you have a "
-                    f"hand-built BaseModule."
+                    f"ParameterTable {self.name!r} could not be emitted to a Quarc module; "
+                    f"no struct handle is available."
                 )
             self._var.initialize_in_qua()
             self._packet = self._var.qua_struct
 
             for parameter in self.parameters:
+                parameter._reset_if_stale_scope()
                 if parameter.is_declared:
                     main_table_name = parameter.main_table.name if parameter.main_table is not None else self.name
                     raise ValueError(
@@ -339,14 +368,15 @@ class ParameterTable(QuaFieldTable):
                 var = getattr(self._packet, parameter.name)
                 parameter._var = var if parameter.is_array else var[0]
                 parameter._is_declared = True
+                parameter._declared_scope = current_scope_token()
                 parameter._main_table = self
                 if declare_stream:
                     parameter.declare_stream()
                 if parameter.is_array:
                     parameter._ctr = declare(int)
 
-            if self._direction == Direction.INCOMING:
-                # OPX -> classical: QUA initializes the outgoing packet with default values.
+            if self._direction == Direction.OUTGOING:
+                # OUT of QUA (OPX -> classical): QUA seeds the outgoing packet with defaults.
                 for parameter in self.parameters:
                     if parameter.is_array:
                         for i in range(parameter.length):
@@ -414,9 +444,9 @@ class ParameterTable(QuaFieldTable):
                 )
             if filter_function is not None:
                 warnings.warn("Filter function is not supported for OPNIC parameter tables.")
-            if self.direction == Direction.INCOMING:
+            if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot load input values for outgoing OPNIC parameter tables.")
-            elif self.direction == Direction.OUTGOING or self.direction == Direction.BOTH:
+            elif self.direction == Direction.INCOMING or self.direction == Direction.BOTH:
                 self._var.recv()
 
         else:
@@ -702,14 +732,28 @@ class ParameterTable(QuaFieldTable):
         return self._packet
 
     @property
-    def opnic_struct(self):
-        """
-        Get the struct type of the parameter table.
-        Relevant for OPNIC parameter tables.
+    def struct_type(self):
+        """The Quarc ``Struct`` *type* (a class with ``Scalar`` / ``Array`` annotations)
+        for this OPNIC table — suitable for building a matching struct elsewhere. This is
+        **not** the bound handle; reach the handle via :pyattr:`var`.
+
+        Resolution order: the frozen ``_struct_type`` cached at emission (``declare``);
+        else the type recovered from a bound Quarc handle (``handle._struct_spec.struct``,
+        for Flow-B reconstructed tables); else — for a not-yet-emitted table — a **fresh,
+        uncached** type built from the *current* field set. The pre-emission build is not
+        cached because fields may still change (``add_parameters`` / ``remove_parameter``)
+        until ``declare()`` finalizes them. Relevant for OPNIC tables.
         """
         if self.input_type != InputType.OPNIC:
             raise ValueError("No struct declared for non-OPNIC parameter tables.")
-        return self._packet_type
+        if self._struct_type is not None:
+            return self._struct_type
+        spec = getattr(self._var, "_struct_spec", None)
+        if spec is not None:
+            return getattr(spec, "struct", None)
+        from .quarc_emit import build_quarc_struct
+
+        return build_quarc_struct(self)
 
     @property
     def incoming_stream_id(self) -> int:
@@ -730,9 +774,9 @@ class ParameterTable(QuaFieldTable):
         """
         Get the direction of the parameter table.
         Relevant for OPNIC parameter tables.
-        "INCOMING": OPX -> OPNIC
-        "OUTGOING": OPNIC -> OPX
-        "BOTH": OPNIC <-> OPX
+        "INCOMING": into QUA (classical/OPNIC -> OPX)
+        "OUTGOING": out of QUA (OPX -> classical/OPNIC)
+        "BOTH": bidirectional
         Returns: Direction of the parameter table. None if the parameter table is not an OPNIC parameter table.
 
         """
@@ -774,8 +818,12 @@ class ParameterTable(QuaFieldTable):
                 f"ParameterPool.from_quarc_module(my_module) so the struct is "
                 f"registered and the handle is bound."
             )
-        if self.direction == Direction.INCOMING:
-            raise ValueError("Cannot push values to incoming OPNIC parameter tables.")
+        if self.direction == Direction.OUTGOING:
+            raise ValueError("Cannot push values to outgoing OPNIC parameter tables.")
+
+        if param_dict is None:
+            # Mirror the non-OPNIC branch: fall back to each field's stored value.
+            param_dict = {p.name: p.value for p in self.parameters}
 
         for p in self.parameters:
             if p in param_dict:
@@ -816,8 +864,8 @@ class ParameterTable(QuaFieldTable):
                     "Parameter table not usable for OPNIC communication, as it contains parameters that "
                     "were either undeclared or declared through a different table forming main communication packet."
                 )
-            if self.direction == Direction.OUTGOING:
-                raise ValueError("Cannot send values to outgoing OPNIC parameter tables.")
+            if self.direction == Direction.INCOMING:
+                raise ValueError("Cannot send values to incoming OPNIC parameter tables.")
 
             self._var.send()
 
@@ -854,8 +902,8 @@ class ParameterTable(QuaFieldTable):
                     f"ParameterPool.from_quarc_module(my_module) so the struct is "
                     f"registered and the handle is bound."
                 )
-            if self.direction == Direction.OUTGOING:
-                raise ValueError("Cannot fetch values from outgoing OPNIC parameter tables.")
+            if self.direction == Direction.INCOMING:
+                raise ValueError("Cannot fetch values from incoming OPNIC parameter tables.")
             collected: Dict[str, list] = {p.name: [] for p in self.parameters}
             for i in range(fetching_size):
                 self._var.recv()
@@ -923,7 +971,7 @@ class ParameterTable(QuaFieldTable):
                                 f"_{param_vec.name}_{i}_",
                                 qua_type=fixed,
                                 input_type=input_type,
-                                direction=Direction.OUTGOING,
+                                direction=Direction.INCOMING,
                             )
                             for i in range(len(param_vec))
                         )
@@ -936,7 +984,7 @@ class ParameterTable(QuaFieldTable):
                         parameter.name,
                         qua_type=fixed,
                         input_type=input_type,
-                        direction=Direction.OUTGOING,
+                        direction=Direction.INCOMING,
                     )
                 )
         if isinstance(qc, QuantumCircuit):
@@ -949,7 +997,7 @@ class ParameterTable(QuaFieldTable):
                             var.name,
                             qua_type=int,
                             input_type=input_type,
-                            direction=Direction.OUTGOING,
+                            direction=Direction.INCOMING,
                         )
                     )
                 elif var.type.kind == types.Bool:
@@ -958,7 +1006,7 @@ class ParameterTable(QuaFieldTable):
                             var.name,
                             qua_type=bool,
                             input_type=input_type,
-                            direction=Direction.OUTGOING,
+                            direction=Direction.INCOMING,
                         )
                     )
                 else:  # Float
@@ -967,7 +1015,7 @@ class ParameterTable(QuaFieldTable):
                             var.name,
                             qua_type=fixed,
                             input_type=input_type,
-                            direction=Direction.OUTGOING,
+                            direction=Direction.INCOMING,
                         )
                     )
         if len(param_list) == 0:
@@ -1081,6 +1129,9 @@ class ParameterTable(QuaFieldTable):
     load_input_values = _DeprecatedAlias("rcv", removal="1.2")
     declare_streams = _DeprecatedAlias("declare_stream", removal="1.2")
     reset_vars = _DeprecatedAlias("reset_qua", removal="1.2")
+    # Note: the former ``opnic_struct`` alias was removed outright (no deprecation
+    # cycle) — OPNIC transport never shipped working, so it had no usable callers.
+    # Use ``struct_type`` for the Quarc struct type and ``var`` for the bound handle.
 
     def __deepcopy__(self, memo=None):
         if memo is None:
@@ -1116,7 +1167,7 @@ class ParameterTable(QuaFieldTable):
         # - Populating self.table with copied_parameters_list.
         # - Calling param.set_index(new_table, ...) for each copied_param.
         # - Setting self._input_type and self._direction.
-        # - Rebuilding self._packet_type if OPNIC, and updating opnic_struct/stream_id on copied_params.
+        # - Rebuilding self._struct_type if OPNIC, and re-resolving struct_type / directional stream ids.
         # - Initializing self._qua_external_stream and self._packet to None.
 
         return new_table

@@ -2,7 +2,7 @@
 Example: Running expectation-value jobs with QMEstimatorV2.
 
 This script shows how to use the Estimator primitive with optional real-time
-parameter input (e.g. Input Streaming or DGX Quantum).
+parameter input (e.g. Input Streaming or QUARC-backed OPNIC).
 """
 
 from qiskit.circuit import QuantumCircuit, Parameter

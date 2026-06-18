@@ -109,19 +109,24 @@ class QiskitQMModule(BaseModule):
         super().__init__(**data)
 
         # Bind this module to the ParameterPool so all subsequent OPNIC
-        # ParameterTable / Parameter constructions are routed onto self. Mirrors
-        # the single-slot constraint enforced by ParameterPool.
+        # ParameterTable / Parameter declares emit onto self. Single-slot constraint:
+        # one module per process until ParameterPool.reset().
         if ParameterPool.has_quarc_module():
             raise RuntimeError(
-                "ParameterPool already has a Quarc module bound. "
-                "Call ParameterPool.reset() before creating a new QiskitQMModule."
+                "ParameterPool already has a Quarc module bound, so a new QiskitQMModule "
+                "cannot be created. Either:\n"
+                "  • Construct the module BEFORE the `with program():` block that declares "
+                "OPNIC tables — declaring an OPNIC table with no module bound lazily creates "
+                "a default QiskitQMModule, which then occupies the slot; or\n"
+                "  • Call ParameterPool.reset() first if you genuinely want a fresh module."
             )
         ParameterPool.to_quarc_module(module=self)
 
-        # Sweep pre-existing pool state onto self so the contract-first invariant
-        # holds: every OPNIC parameter declared before this module exists must be
-        # part of the module's struct list, and every non-OPNIC parameter must be
-        # captured in parameter_specs.
+        # Capture pre-existing pool state. Only NON-OPNIC objects are swept here: their
+        # specs are stateless data, so capturing them at construction makes "params first,
+        # module after" work regardless of whether declare() already ran. OPNIC structs are
+        # deliberately NOT swept — see _sweep_preexisting_opnic for why the asymmetry is
+        # correct (stream-id minting must happen at declare(), in program order).
         self._sweep_preexisting_opnic()
         self._sweep_preexisting_non_opnic()
 
@@ -164,41 +169,75 @@ class QiskitQMModule(BaseModule):
                 for fn, fspec in fields.items()
             }
             struct_cls = Struct(struct_name=struct_name, **annotations)
-            self.add_struct(struct_cls, quarc_dir)
+            handle = self.add_struct(struct_cls, quarc_dir)
+            # Pin the stored stream ids onto the freshly-minted handle so reconstruction is
+            # independent of the global Quarc counter state / replay order. ``add_struct``
+            # mints ids from the counter; on a clean process (``ParameterPool.reset`` resets
+            # the counters) they already match, but pinning makes it robust and asserts it.
+            self._pin_stream_ids(handle, struct_info)
+
+    @staticmethod
+    def _pin_stream_ids(handle: Any, struct_info: Dict[str, Any]) -> None:
+        """Force the handle's incoming/outgoing stream ids to the stored values.
+
+        Catches counter drift (minted id != stored id) with a warning, then pins the
+        stored id so the classical side resolves the same stream the firmware uses.
+        """
+        import warnings
+
+        spec = getattr(handle, "_struct_spec", None)
+        if spec is None:
+            return
+        for key in ("incoming_stream_spec", "outgoing_stream_spec"):
+            sub = getattr(spec, key, None)
+            stored = struct_info.get(key)
+            if sub is None or not isinstance(stored, dict) or "id" not in stored:
+                continue
+            stored_id = stored["id"]
+            minted_id = getattr(sub, "id", None)
+            if minted_id != stored_id:
+                warnings.warn(
+                    f"Stream-id drift while replaying struct {key} (minted {minted_id}, "
+                    f"stored {stored_id}); pinning to the stored id. Ensure "
+                    f"ParameterPool.reset() ran before rebuilding the module.",
+                    stacklevel=3,
+                )
+                try:
+                    sub.id = stored_id
+                except Exception:  # pragma: no cover - defensive against frozen models
+                    pass
 
     # ------------------------------------------------------------------
     # Pre-existing pool state sweeps (run during __init__)
     # ------------------------------------------------------------------
 
     def _sweep_preexisting_opnic(self) -> None:
-        """Emit every pre-existing OPNIC :class:`ParameterTable` and pending
-        standalone OPNIC :class:`Parameter` onto this module.
+        """Intentionally a no-op — and deliberately *not* symmetric with
+        :meth:`_sweep_preexisting_non_opnic`.
 
-        Two paths:
+        The asymmetry is fundamental, not an oversight:
 
-        - **Path 1 — registry sweep.** Every unemitted OPNIC ``ParameterTable``
-          currently in :attr:`ParameterPool._registry` is emitted via
-          :meth:`ParameterTable._emit_to_module`.
-        - **Path 2 — pending standalone promotion.** Every solo OPNIC
-          ``Parameter`` in :attr:`ParameterPool._pending_standalone_opnic` is
-          promoted to a synthetic single-field table via
-          :meth:`Parameter._promote_to_synthetic_standalone_table`. The synthetic
-          table emits eagerly because the pool slot is already bound to ``self``.
+        * **Non-OPNIC** specs (``INPUT_STREAM`` / ``IO`` / plain QUA vars) are stateless
+          data — capturing them at module construction is free and idempotent, so the
+          sweep can safely snapshot any objects that already exist.
+        * **OPNIC** structs consume **global Quarc stream ids** at ``add_struct``, and those
+          ids must be minted in ``declare()`` order inside the one QUA program (the single
+          commit point) to stay deterministic and match the firmware. Emitting them at
+          module construction would mint ids out of program order — so OPNIC emission is
+          *always* deferred to :meth:`ParameterTable.declare`, never swept here.
 
-        Path 2 is required so that pre-existing standalone OPNIC parameters land
-        in the deployment artifact even if the QUA program has not yet executed
-        a transport call on them. Without it, ``quarc.init_module`` /
-        ``quarc.build`` would serialise an incomplete struct list.
+        Binding this module as the pool slot (in ``__init__``) is all that's needed: any
+        pending OPNIC table emits onto it at its ``declare()``; pending standalone OPNIC
+        parameters promote and emit at their first ``declare()``.
+
+        Ordering note: this means an OPNIC table must be declared *after* a module is bound.
+        Constructing the module before the ``with program():`` block satisfies that. The
+        unsupported order is declaring OPNIC tables in a program *before* constructing the
+        module — the first such ``declare()`` lazily binds a default module, after which an
+        explicit ``QiskitQMModule()`` raises (see ``__init__``). Non-OPNIC has no such
+        constraint: ``_sweep_preexisting_non_opnic`` captures it whenever the module is made.
         """
-        from qiskit_qm_provider.parameter_table.input_type import InputType
-        from qiskit_qm_provider.parameter_table.parameter_table import ParameterTable
-
-        for obj in list(ParameterPool.get_all_objs()):
-            if isinstance(obj, ParameterTable) and obj.input_type == InputType.OPNIC and not obj._is_emitted:
-                obj._emit_to_module(self)
-
-        for param in list(ParameterPool._pending_standalone_opnic):
-            param._promote_to_synthetic_standalone_table()
+        return
 
     def _sweep_preexisting_non_opnic(self) -> None:
         """Capture every pre-existing non-OPNIC ``ParameterTable`` /
@@ -257,15 +296,17 @@ class QiskitQMModule(BaseModule):
             ``pascal_to_snake_case(name)`` (current) to the reconstructed object.
         """
         from qiskit_qm_provider.parameter_table.parameter import Parameter
+        from qiskit_qm_provider.parameter_table.parameter_pool import _assign_reconstructed
         from qiskit_qm_provider.parameter_table.parameter_table import ParameterTable
 
         result: Dict[str, Any] = {}
         for spec in self.parameter_specs:
             key = self._spec_key(spec)
             if spec.get("is_table", False) and "fields" in spec:
-                result[key] = ParameterTable.from_spec(spec)
+                value: Any = ParameterTable.from_spec(spec)
             else:
-                result[key] = Parameter.from_spec(spec)
+                value = Parameter.from_spec(spec)
+            _assign_reconstructed(result, key, value, source_name=spec.get("name"))
         return result
 
     # ------------------------------------------------------------------

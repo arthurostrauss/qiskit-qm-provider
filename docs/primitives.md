@@ -6,7 +6,7 @@ For signatures and options fields, see the [Primitives API reference](apidocs/qm
 
 ## Purpose
 
-Generic cloud primitives assume parameters are bound at submission time. QOP workloads often **stream parameters cycle-by-cycle** via [`InputType`](apidocs/stubs/qiskit_qm_provider.parameter_table.InputType.rst) (`INPUT_STREAM`, `IO1`, `IO2`, `DGX_Q`). These primitives expose that capability while reusing QuAM-derived Targets for transpilation.
+Generic cloud primitives assume parameters are bound at submission time. QOP workloads often **stream parameters cycle-by-cycle** via [`InputType`](apidocs/stubs/qiskit_qm_provider.parameter_table.InputType.rst) (`INPUT_STREAM`, `IO1`, `IO2`, `OPNIC`). These primitives expose that capability while reusing QuAM-derived Targets for transpilation.
 
 The traditional [`QMBackend.run()`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) interface mimics Sampler-like behavior for users who prefer the classic backend API.
 
@@ -45,7 +45,7 @@ result = job.result()
 
 | Option | Sampler | Estimator | Meaning |
 |--------|---------|-----------|---------|
-| `input_type` | ✓ | ✓ | How parameters reach the OPX: stream, IO, DGX, or `None` (compile-time preload — only for small parameter sets) |
+| `input_type` | ✓ | ✓ | How parameters reach the OPX: stream, IO, QUARC-backed OPNIC, or `None` (compile-time preload — only for small parameter sets) |
 | `default_shots` | ✓ | — | Default shots when not specified in `run()` |
 | `default_precision` | — | ✓ | Default precision (e.g. 1/√4096) when not specified |
 | `abelian_grouping` | — | ✓ | Group commuting observables (default `True`) |

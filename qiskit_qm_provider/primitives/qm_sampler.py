@@ -130,6 +130,10 @@ class QMSamplerV2(BaseSamplerV2):
         coerced_pubs = [SamplerPub.coerce(pub, shots) for pub in pubs]
         coerced_pubs = self._validate_pubs(coerced_pubs)
         job_obj = QMSamplerJob if isinstance(self.backend.qmm, QuantumMachinesManager) else IQCCSamplerJob
+        if self.options.input_type == InputType.OPNIC and issubclass(job_obj, IQCCSamplerJob):
+            raise NotImplementedError(
+                "OPNIC input_type is not yet supported for IQCC cloud jobs; use INPUT_STREAM or IO1/IO2."
+            )
         backend_options = deepcopy(self.backend.options.__dict__)
 
         backend_options["meas_level"] = meas_level_dict[self._options.meas_level]

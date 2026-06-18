@@ -43,6 +43,14 @@ class TableFieldProtocol(Protocol):
     def var(self) -> QuaVariable | QuaArrayVariable:
         """QUA variable for this field (requires program scope when read)."""
 
+    @property
+    def is_array(self) -> bool:
+        """Whether this field holds a QUA array (``True``) or a scalar (``False``)."""
+
+    @property
+    def length(self) -> int:
+        """Number of elements: ``0`` for a scalar, the array length otherwise."""
+
 
 class QuaFieldTable:
     """Mixin providing ParameterTable-aligned QUA variable accessors.

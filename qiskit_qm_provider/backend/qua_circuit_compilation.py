@@ -38,22 +38,23 @@ def _sanitize_output_table_name(qc_name: str) -> str:
     return f"{base}_output"
 
 
-_used_output_table_names: dict[str, int] = {}
-
-
 def _allocate_output_table_name(qc_name: str) -> str:
-    """Return a unique table name, suffixing ``_2``, ``_3``, … on reuse."""
+    """Return a name unique among *currently live* measurement tables.
+
+    Names are documentation-only (measurement tables are not registered in the runtime
+    pool), so uniqueness only needs to hold across tables alive at the same time. We
+    derive it from the live WeakSet rather than a monotonic counter — a table whose name
+    is freed by garbage collection lets that name be reused, so a long-lived process that
+    recompiles the same circuit does not grow ``circuit_output_2``, ``_3``, … unboundedly.
+    """
     base = _sanitize_output_table_name(qc_name)
-    count = _used_output_table_names.get(base, 0) + 1
-    _used_output_table_names[base] = count
-    if count == 1:
+    live_names = {table.name for table in ParameterPool.iter_measurement_outcome_tables()}
+    if base not in live_names:
         return base
-    return f"{base}_{count}"
-
-
-def reset_output_table_name_registry() -> None:
-    """Clear output-table name counters (also invoked from :meth:`ParameterPool.reset`)."""
-    _used_output_table_names.clear()
+    i = 2
+    while f"{base}_{i}" in live_names:
+        i += 1
+    return f"{base}_{i}"
 
 
 def _loose_bit_keys(qc: "QuantumCircuit") -> list[str]:
@@ -116,9 +117,14 @@ class MeasurementOutcomeTable(QuaFieldTable):
     def declare(
         self, pause_program=False, declare_stream=True
     ) -> QuaVariable | QuaArrayVariable | Sequence[QuaVariable | QuaArrayVariable]:
-        """No-op compatibility shim — measurement vars are compiler-owned.
+        """Return the wired measurement QUA variable(s) — nothing new is declared.
 
-        Returns the wired QUA variable(s) without declaring anything new.
+        Measurement variables are compiler-owned, so this declares nothing; it exists
+        only so a :class:`MeasurementOutcomeTable` can stand in for a runtime
+        ``ParameterTable``. Must be called inside ``with program():`` (it reads each
+        field's :attr:`~.MeasurementRegisterField.var`). The ``pause_program`` and
+        ``declare_stream`` arguments are accepted for signature compatibility with
+        :meth:`ParameterTable.declare` and are ignored.
         """
         variables = [parameter.var for parameter in self.parameters]
         if len(variables) == 1:
@@ -147,9 +153,9 @@ class MeasurementOutcomeTable(QuaFieldTable):
         """
         for creg in qc.cregs:
             field = self.table[creg.name]
-            field._wire_from_result(compilation_result, creg.name, register_size=creg.size)
+            field._wire_from_result(compilation_result, creg.name, length=creg.size)
         for key in _loose_bit_keys(qc):
-            self.table[key]._wire_from_result(compilation_result, key, register_size=1)
+            self.table[key]._wire_from_result(compilation_result, key, length=0)
         if parent is not None:
             parent._fields.update(self.table)
 
@@ -160,7 +166,6 @@ class MeasurementOutcomeTable(QuaFieldTable):
         compilation_result: CompilationResult,
         *,
         parent: QuaCircuitCompilation | None = None,
-        compute_state_int: bool = True,
     ) -> MeasurementOutcomeTable:
         """Build a measurement output table from a compiled circuit.
 
@@ -175,31 +180,20 @@ class MeasurementOutcomeTable(QuaFieldTable):
             qc: Circuit whose measurement outcomes should be exposed.
             compilation_result: qm-qasm result with ``result_program[key]`` entries.
             parent: Optional :class:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation` that owns the fields.
-            compute_state_int: Passed through to each field's ``state_int`` support.
 
         Returns:
             A wired :class:`MeasurementOutcomeTable` (not registered in the runtime
-            OPNIC pool).
+            OPNIC pool). Every field's ``state_int`` is available lazily.
         """
         fields: dict[str, MeasurementRegisterField] = {}
         for creg in qc.cregs:
-            field = MeasurementRegisterField(
-                creg.name,
-                creg.size,
-                compute_state_int=compute_state_int,
-                parent=parent,
-            )
-            field._wire_from_result(compilation_result, creg.name, register_size=creg.size)
+            field = MeasurementRegisterField(creg.name, creg.size, parent=parent)
+            field._wire_from_result(compilation_result, creg.name, length=creg.size)
             fields[creg.name] = field
 
         for key in _loose_bit_keys(qc):
-            field = MeasurementRegisterField(
-                key,
-                1,
-                compute_state_int=compute_state_int,
-                parent=parent,
-            )
-            field._wire_from_result(compilation_result, key, register_size=1)
+            field = MeasurementRegisterField(key, 0, parent=parent)
+            field._wire_from_result(compilation_result, key, length=0)
             fields[key] = field
 
         if parent is not None:
@@ -221,25 +215,20 @@ class QuaCircuitCompilation:
         self,
         compilation_result: CompilationResult,
         circuit: "QuantumCircuit",
-        *,
-        compute_state_int: bool = True,
     ):
         """Wrap a compilation result and wire measurement output fields.
 
         Args:
             compilation_result: Raw qm-qasm compilation result.
             circuit: The Qiskit circuit that was compiled (defines output keys).
-            compute_state_int: Whether fields expose lazy :attr:`state_int` packing.
         """
         self._compilation_result = compilation_result
         self._circuit = circuit
-        self._compute_state_int = compute_state_int
         self._fields: dict[str, MeasurementRegisterField] = {}
         self._outputs = MeasurementOutcomeTable.from_compilation(
             circuit,
             compilation_result,
             parent=self,
-            compute_state_int=compute_state_int,
         )
 
     @property
@@ -286,7 +275,15 @@ class QuaCircuitCompilation:
         return self._compilation_result.result_program.dsl_program
 
     def __getattr__(self, name: str) -> Any:
-        """Delegate missing attributes to the wrapped compilation result."""
+        """Delegate missing attributes to the wrapped compilation result.
+
+        Private/dunder names are never delegated — this both avoids forwarding
+        ``copy``/``pickle`` probes (``__deepcopy__``, ``__getstate__``, …) to the wrapped
+        result and prevents infinite recursion if ``_compilation_result`` is not yet set
+        (it would otherwise re-enter ``__getattr__`` looking up ``_compilation_result``).
+        """
+        if name.startswith("_"):
+            raise AttributeError(name)
         return getattr(self._compilation_result, name)
 
     def __repr__(self) -> str:

@@ -102,7 +102,8 @@ class TestMeasurementOutcomeTableAccessors:
             assert isinstance(table["c"], QuaArrayVariable)
             field = table.get_parameter("c")
             assert isinstance(field, MeasurementRegisterField)
-            assert field.size == 2
+            assert field.is_array is True
+            assert field.length == 2
             assert table.state_ints["c"] is not None
             assert table.streams["c"] is not None
 
@@ -166,7 +167,8 @@ class TestMeasurementOutcomeTableAccessors:
         table = MeasurementOutcomeTable.from_compilation(qc, result)
 
         with qua.program():
-            assert table.get_parameter("b").size == 1
+            assert table.get_parameter("b").length == 1
+            assert table.get_parameter("b").is_array is True
             assert isinstance(table["b"], QuaArrayVariable)
             assert table["b"] is array_var
 
@@ -197,12 +199,14 @@ class TestMeasurementRegisterField:
         qc.add_register(creg)
         qc.measure(0, creg[0])
 
-        creg_field = MeasurementRegisterField("c", 1)
+        creg_field = MeasurementRegisterField("c", 1)  # size-1 register → array, length 1
         creg_field._wire_from_result(_mock_compilation_result({"c": array_var}), "c")
 
-        loose_field = MeasurementRegisterField("_bit0", 1)
+        loose_field = MeasurementRegisterField("_bit0", 0)  # loose bit → scalar, length 0
         loose_field._wire_from_result(_mock_compilation_result({"_bit0": scalar_var}), "_bit0")
 
+        assert creg_field.is_array is True
+        assert loose_field.is_array is False
         with qua.program():
             creg_state_int = creg_field.state_int
             loose_state_int = loose_field.state_int
@@ -225,20 +229,26 @@ class TestMeasurementRegisterField:
         result = _mock_compilation_result({"c": array_var, "_bit0": loose_var})
         table = MeasurementOutcomeTable.from_compilation(qc, result)
 
-        assert table.get_parameter("c").var_is_array is True
-        assert table.get_parameter("_bit0").var_is_array is False
+        # Parameter convention: a register is an array (length = width); a loose clbit is a
+        # scalar (length 0). is_array == length > 0.
+        assert table.get_parameter("c").is_array is True
+        assert table.get_parameter("c").length == 1
+        assert table.get_parameter("_bit0").is_array is False
+        assert table.get_parameter("_bit0").length == 0
 
         with qua.program():
             assert table.state_ints["c"] is not None
             assert table.state_ints["_bit0"] is not None
 
-    def test_wire_multi_bit_scalar_raises(self):
+    def test_multi_bit_scalar_raises_on_pack(self):
+        # A multi-bit register wired to a scalar is caught when state_int packs it
+        # (pack_register_to_int is the single shape validator).
         with qua.program():
             scalar = qua.declare(bool, value=False)
-
-        field = MeasurementRegisterField("c", 2)
-        with pytest.raises(ValueError, match="packed output"):
-            field._wire_from_result(_mock_compilation_result({"c": scalar}), "c", register_size=2)
+            field = MeasurementRegisterField("c", 2)
+            field._wire_from_result(_mock_compilation_result({"c": scalar}), "c", length=2)
+            with pytest.raises(ValueError, match="bool array"):
+                _ = field.state_int
 
     def test_rewire_invalidates_state_int_on_size_change(self):
         with qua.program():
@@ -253,15 +263,15 @@ class TestMeasurementRegisterField:
         )
         result2.uuid = "00000000-0000-0000-0000-000000000002"
 
-        field._wire_from_result(result1, "c", register_size=1)
+        field._wire_from_result(result1, "c", length=1)
         with qua.program():
             field._state_int_var = MagicMock(name="state_int_var")
-            field._wire_from_result(result2, "c", register_size=2)
+            field._wire_from_result(result2, "c", length=2)
 
         assert field._var is var2
         assert field._state_int_var is None
         assert field._stream is None
-        assert field.size == 2
+        assert field.length == 2
 
     def test_new_compilation_yields_new_field_objects(self):
         with qua.program():
@@ -378,7 +388,8 @@ class TestGetMeasurementOutcomesShim:
             meas = get_measurement_outcomes(qc, wrapper)
 
         assert "meas" in meas
-        assert meas["meas"]["size"] == 2
+        assert meas["meas"]["length"] == 2
+        assert meas["meas"]["is_array"] is True
         assert meas["meas"]["value"] is array_var
         assert "state_int" in meas["meas"]
         assert "stream" in meas["meas"]

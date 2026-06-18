@@ -38,7 +38,7 @@ from quam.components import Qubit, QubitPair
 from quam.core import QuamRoot
 from quam.utils.qua_types import QuaVariableInt
 from qm import generate_qua_script
-from qm.qua import declare, assign, Cast, declare_stream
+from qm.qua import assign, Cast
 from ..additional_gates import CRGate, FSimGate, SYGate, SYdgGate
 
 if TYPE_CHECKING:
@@ -72,21 +72,6 @@ qasm3_keyword_instructions = (
     "switch_case",
 )
 _QASM3_DUMP_LOOSE_BIT_PREFIX = "_bit"
-
-
-class _LooseBitRegister:
-    """
-    A register for loose bits in a QASM3 program.
-    This is used to store the results of measurements that are not assigned to a classical register.
-    """
-
-    name: Literal["_bit"] = _QASM3_DUMP_LOOSE_BIT_PREFIX
-
-    def __init__(self, qc: QuantumCircuit):
-        self.size = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
-
-    def value(self, result: CompilationResult):
-        return [result.result_program[f"{self.name}{i}"] for i in range(self.size)]
 
 
 def validate_machine(machine) -> QuamRoot:
@@ -519,66 +504,51 @@ def get_measurement_outcomes(
             each register's bits (LSB = qubit index 0).
 
     Returns:
-        A dictionary mapping each classical register name to a sub-dictionary:
+        A dictionary mapping each output key to a sub-dictionary:
 
-        - ``"value"``: QUA variable for the register (array or scalar), or a list of
-          scalars for the synthetic loose-bit key ``"_bit"``.
-        - ``"size"``: number of bits in the register.
-        - ``"state_int"``: QUA ``int`` with packed bit values (when
+        - ``"value"``: QUA variable for the output (a bool array for multi-bit
+          classical registers, a bool scalar for loose clbits).
+        - ``"is_array"``: ``True`` when ``"value"`` is a QUA array, ``False`` for a scalar
+          — lets callers choose ``value[i]`` vs ``value`` when saving. Mirrors
+          ``Parameter.is_array``.
+        - ``"length"``: ``Parameter`` convention — ``0`` for a scalar output (loose clbit),
+          otherwise the register's bit count.
+        - ``"state_int"``: QUA ``int`` with packed bit values, LSB = bit 0 (when
           ``compute_state_int=True``).
         - ``"stream"``: QUA stream for ``stream_processing()`` on the host.
 
-        Loose clbits not in any register appear under the synthetic key ``"_bit"`` in
-        this legacy dict API (the
+        Each classical register appears under its own name. Loose clbits not in any
+        register appear under their own per-bit keys ``_bit0``, ``_bit1``, … (one entry
+        per bit, never packed into a single register) — the same keys the
         :attr:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation.outputs`
-        table exposes one field per loose bit as ``_bit0``, ``_bit1``, …).
+        table exposes. All entries are sourced from that table, so ``state_int`` is the
+        cached, rewire-aware handle (``meas[key]["state_int"] ≡ comp.outputs.state_ints[key]``).
     """
-    from .qua_circuit_compilation import MeasurementOutcomeTable, QuaCircuitCompilation
+    from .qua_circuit_compilation import MeasurementOutcomeTable, QuaCircuitCompilation, _loose_bit_keys
 
     if isinstance(result, QuaCircuitCompilation):
         table = result.outputs
     else:
-        table = MeasurementOutcomeTable.from_compilation(qc, result, compute_state_int=compute_state_int)
+        table = MeasurementOutcomeTable.from_compilation(qc, result)
 
-    loose_keys = _loose_bit_keys_from_circuit(qc)
-    clbits_dict: dict[str, dict] = {}
-
-    for creg in qc.cregs:
-        param = table.get_parameter(creg.name)
+    def _entry(key: str) -> dict:
+        field = table.get_parameter(key)
         entry = {
-            "value": table[creg.name],
-            "stream": param.stream,
-            "size": param.size,
+            "value": table[key],
+            "is_array": field.is_array,
+            "stream": field.stream,
+            "length": field.length,
         }
         if compute_state_int:
-            entry["state_int"] = param.state_int
-        clbits_dict[creg.name] = entry
+            entry["state_int"] = field.state_int
+        return entry
 
-    if loose_keys:
-        loose_vars = [table[key] for key in loose_keys]
-        loose_streams = [table.get_parameter(key).stream for key in loose_keys]
-        entry = {
-            "value": loose_vars,
-            "stream": loose_streams,
-            "size": len(loose_keys),
-        }
-        if compute_state_int:
-            entry["state_int"] = declare(int)
-            assign(
-                entry["state_int"],
-                sum(
-                    (((1 << i) * Cast.to_int(loose_vars[i])) for i in range(1, len(loose_keys))),
-                    start=Cast.to_int(loose_vars[0]),
-                ),
-            )
-        clbits_dict[_LooseBitRegister.name] = entry
+    clbits_dict: dict[str, dict] = {creg.name: _entry(creg.name) for creg in qc.cregs}
+    # Loose clbits are independent single bits, not a register — expose one entry each.
+    for key in _loose_bit_keys(qc):
+        clbits_dict[key] = _entry(key)
 
     return clbits_dict
-
-
-def _loose_bit_keys_from_circuit(qc: QuantumCircuit) -> list[str]:
-    loose_count = len([bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0])
-    return [f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{i}" for i in range(loose_count)]
 
 
 def logically_active_qubits(circuit):

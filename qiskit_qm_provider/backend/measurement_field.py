@@ -17,14 +17,13 @@
 from __future__ import annotations
 
 import weakref
-from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Optional
 
 from qm.qua import assign, declare, declare_stream
 from qm.qua.type_hints import QuaScalar
 
-from ..parameter_table._scope import require_qua_program, requires_qua_program
-from .backend_utils import pack_register_to_int, _measurement_var_is_array
+from ..parameter_table._scope import require_qua_program
+from .backend_utils import pack_register_to_int
 
 if TYPE_CHECKING:
     from qm_qasm import CompilationResult
@@ -43,25 +42,25 @@ class MeasurementRegisterField:
     def __init__(
         self,
         name: str,
-        register_size: int,
+        length: int,
         *,
-        compute_state_int: bool = True,
         parent: Optional[Any] = None,
     ):
         """Create a measurement field handle before wiring from a compilation result.
 
+        Mirrors the :class:`~qiskit_qm_provider.parameter_table.Parameter` shape convention:
+        a multi-/single-bit classical register is an array (``length`` = register width),
+        while a loose clbit is a scalar (``length == 0``).
+
         Args:
             name: Output key in ``result_program`` (creg name, ``_bitN``, or other
                 compiler output key).
-            register_size: Number of classical bits represented by this field when
-                packed into :attr:`state_int`.
-            compute_state_int: If ``True``, :attr:`state_int` lazily packs bits into an
-                ``int`` QUA variable.
+            length: Number of elements — ``0`` for a scalar output (loose clbit),
+                otherwise the classical register width. Drives :attr:`is_array`.
             parent: Optional owning :class:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation` (stored as weakref).
         """
         self.name = name
-        self._register_size = register_size
-        self._compute_state_int = compute_state_int
+        self._length = length
         self._parent = weakref.ref(parent) if parent is not None else None
         self._var = None
         self._is_declared = False
@@ -70,7 +69,6 @@ class MeasurementRegisterField:
         self._stream = None
         self._wired_program_key: Optional[str] = None
         self._wired_compilation_uuid: Optional[str] = None
-        self._var_is_array: bool = False
 
     @property
     def is_measurement_output(self) -> bool:
@@ -83,18 +81,19 @@ class MeasurementRegisterField:
         return self._is_declared
 
     @property
-    def size(self) -> int:
-        """Number of classical bits in this register (``1`` for loose clbits)."""
-        return self._register_size
+    def is_array(self) -> bool:
+        """``True`` if this field holds a QUA array (``length > 0``), ``False`` for a scalar.
+
+        Same convention as :pyattr:`~qiskit_qm_provider.parameter_table.Parameter.is_array`;
+        part of the shared :class:`~qiskit_qm_provider.parameter_table._mixins.TableFieldProtocol`.
+        """
+        return self._length > 0
 
     @property
-    def var_is_array(self) -> bool:
-        """Whether :attr:`var` is a QUA array (``True``) or scalar (``False``).
-
-        Set when the field is wired from ``result_program``; packing in
-        :attr:`state_int` follows this shape, not circuit metadata.
-        """
-        return self._var_is_array
+    def length(self) -> int:
+        """Number of elements, ``Parameter`` convention: ``0`` for a scalar output (loose
+        clbit), otherwise the classical register width."""
+        return self._length
 
     @property
     def var(self):
@@ -117,24 +116,24 @@ class MeasurementRegisterField:
         result: "CompilationResult",
         program_key: str,
         *,
-        register_size: Optional[int] = None,
+        length: Optional[int] = None,
     ) -> None:
         """Bind compiler-owned QUA variables from ``result.result_program``.
 
         Called during compilation wiring, not by user code. Invalidates cached
-        :attr:`state_int` and :attr:`stream` handles when register size or compilation
+        :attr:`state_int` and :attr:`stream` handles when :attr:`length` or compilation
         identity changes.
 
         Args:
             result: qm-qasm compilation result exposing ``result_program[key]``.
             program_key: Key in ``result.result_program`` (creg name or ``_bitN``).
-            register_size: Override bit width; defaults to the value from ``__init__``.
+            length: Override element count; defaults to the value from ``__init__``.
         """
-        new_size = register_size if register_size is not None else self._register_size
+        new_length = length if length is not None else self._length
         compilation_uuid = getattr(result, "uuid", None)
 
-        if new_size != self._register_size:
-            self._register_size = new_size
+        if new_length != self._length:
+            self._length = new_length
             self._state_int_var = None
             self._stream = None
         elif self._wired_program_key != program_key or self._wired_compilation_uuid != compilation_uuid:
@@ -142,13 +141,6 @@ class MeasurementRegisterField:
             self._stream = None
 
         self._var = result.result_program[program_key]
-        self._var_is_array = _measurement_var_is_array(self._var)
-        if not self._var_is_array and self._register_size > 1:
-            raise ValueError(
-                f"Measurement field {self.name!r} expects a {self._register_size}-bit "
-                f"packed output (QUA array) but wired variable is a scalar "
-                f"({type(self._var).__name__})."
-            )
         self._is_declared = True
         self._wired_program_key = program_key
         self._wired_compilation_uuid = compilation_uuid
@@ -159,18 +151,12 @@ class MeasurementRegisterField:
     def state_int(self) -> QuaScalar[int]:
         """Lazy-packed ``int`` QUA variable (LSB = bit index 0).
 
-        Must be accessed inside ``with program():``. Prefer bulk access via
+        Must be accessed inside ``with program():``. Declared (and cached) on first
+        access; nothing is materialized unless you read it. Prefer bulk access via
         :attr:`~qiskit_qm_provider.backend.qua_circuit_compilation.MeasurementOutcomeTable.state_ints`
         when wiring multiple registers.
-
-        Raises:
-            AttributeError: If ``compute_state_int=False`` was passed at construction.
         """
         require_qua_program("MeasurementRegisterField.state_int")
-        if not self._compute_state_int:
-            raise AttributeError(
-                f"state_int is disabled for {self.name!r}; use .var instead " f"(compute_state_int=False)."
-            )
         return self._materialize_state_int()
 
     @property
@@ -185,8 +171,12 @@ class MeasurementRegisterField:
         return self._stream
 
     def _materialize_state_int(self) -> QuaScalar[int]:
-        """Declare (once) and assign the packed integer from :attr:`var`."""
-        packed = pack_register_to_int(self._var, self._register_size)
+        """Declare (once) and assign the packed integer from :attr:`var`.
+
+        ``pack_register_to_int`` inspects the wired QUA variable to choose array vs scalar
+        packing; a scalar output (``length == 0``) packs its single bit.
+        """
+        packed = pack_register_to_int(self._var, max(self._length, 1))
         if self._state_int_var is None:
             self._state_int_var = declare(int)
             assign(self._state_int_var, packed)
@@ -194,13 +184,6 @@ class MeasurementRegisterField:
             assign(self._state_int_var, packed)
             self._should_reset_state_int = False
         return self._state_int_var
-
-    @requires_qua_program
-    def declare_stream(self):
-        """Declare the output stream if not already created; return it."""
-        if self._stream is None:
-            self._stream = declare_stream()
-        return self._stream
 
     def __deepcopy__(self, memo):
         """Refuse duplication — handles are tied to a single compilation wiring."""

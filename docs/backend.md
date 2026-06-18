@@ -56,13 +56,14 @@ Call measurement wiring **immediately after** `quantum_circuit_to_qua` in the sa
 
 ## [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) return dictionary
 
-Returns `dict[creg_name, subdict]` — one entry per classical register in the circuit (plus a synthetic `_bit` register for loose clbits).
+Returns `dict[key, subdict]` — one entry per classical register in the circuit, plus one entry per loose clbit under its own key `_bit0`, `_bit1`, … (loose bits are independent single bits, never packed into a single register). Every entry is sourced from `comp.outputs`, so `meas[key]["state_int"]` is exactly `comp.outputs.state_ints[key]`.
 
 | Key | Role |
 |-----|------|
-| **`value`** | List of QUA variables — one per bit — holding discriminated 0/1 outcomes from the embedded circuit. Use for bit-level QUA logic. |
-| **`size`** | Python `int`: number of bits in the register. |
-| **`state_int`** | QUA `int` (when `compute_state_int=True`, the default): integer packing of all bits; **LSB = qubit index 0** (Qiskit convention). Use for compact syndromes or lookup-table indexing. |
+| **`value`** | The QUA variable holding discriminated 0/1 outcomes from the embedded circuit — a bool **array** for a multi-bit register, a bool **scalar** for a loose clbit. Use for bit-level QUA logic. |
+| **`is_array`** | Python `bool`: `True` when `value` is a QUA array, `False` when it is a scalar — pick `value[i]` vs `value` when saving. Mirrors `Parameter.is_array`. |
+| **`length`** | Python `int`, `Parameter` convention: `0` for a scalar output (loose clbit), otherwise the register's bit count. |
+| **`state_int`** | QUA `int` (when `compute_state_int=True`, the default): integer packing of all bits; **LSB = qubit index 0** (Qiskit convention). Lazily declared and cached on the underlying field. Use for compact syndromes or lookup-table indexing. |
 | **`stream`** | QUA stream object for `stream_processing()` — buffer outcomes to the host. |
 
 See [Parameter Table](parameter_table.md) for `stream_back` / `fetch_from_opx` on the Python side.

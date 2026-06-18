@@ -55,16 +55,19 @@ class InputType(Enum):
 
 
 class Direction(Enum):
-    """
-    The direction of the data flow for OPNIC packet streams.
-    INCOMING: OPX -> classical (OPNIC)
-    OUTGOING: classical (OPNIC) -> OPX
+    """Data-flow direction for OPNIC packet streams, expressed from the **QUA program's**
+    perspective and aligned 1:1 with Quarc's ``Direction``.
+
+    INCOMING: into the QUA program (classical/OPNIC -> OPX) — the ``rcv`` / ``push_to_opx``
+        direction.
+    OUTGOING: out of the QUA program (OPX -> classical/OPNIC) — the ``stream_back`` /
+        ``fetch_from_opx`` direction.
     BOTH: bidirectional.
     """
 
-    INCOMING = "INCOMING"  # OPX -> OPNIC
-    OUTGOING = "OUTGOING"  # OPNIC -> OPX
-    BOTH = "BOTH"  # OPNIC <-> OPX
+    INCOMING = "INCOMING"  # into QUA (classical/OPNIC -> OPX)
+    OUTGOING = "OUTGOING"  # out of QUA (OPX -> classical/OPNIC)
+    BOTH = "BOTH"  # bidirectional
 
     def __str__(self) -> str:
         return self.value

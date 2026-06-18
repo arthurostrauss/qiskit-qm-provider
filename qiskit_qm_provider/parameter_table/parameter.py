@@ -59,7 +59,7 @@ from qualang_tools.results import wait_until_job_is_paused
 
 from .parameter_pool import ParameterPool
 from .input_type import Direction, InputType
-from ._scope import require_qua_program, requires_qua_program
+from ._scope import require_qua_program, requires_qua_program, current_scope_token
 from ._deprecation import _DeprecatedAlias
 
 if TYPE_CHECKING:
@@ -133,7 +133,7 @@ def infer_type(
     raise ValueError("Value must be bool, int, float or array")
 
 
-def reset_var(var: QuaScalar, type: Type[int | float | bool]):
+def _assign_zero(var: QuaScalar, type: Type[int | float | bool]):
     """
     Reset the QUA variable to a 0 value (in the appropriate QUA type).
     """
@@ -165,154 +165,11 @@ _OPNIC_OWNER_METHOD_MAP: Dict[str, str] = {
 _PUSH_SENTINEL = object()
 
 
-def _resolve_struct_stream_ids(handle: Any) -> tuple[Optional[int], Optional[int]]:
-    """Extract (incoming_id, outgoing_id) from a Quarc handle-like object."""
-    struct_spec = getattr(handle, "_struct_spec", None)
-    if struct_spec is None:
-        return None, None
-    incoming = getattr(struct_spec, "incoming_stream_spec", None)
-    outgoing = getattr(struct_spec, "outgoing_stream_spec", None)
-    return getattr(incoming, "id", None), getattr(outgoing, "id", None)
-
-
-def _resolve_stream_id_for_direction(handle: Any, direction: Optional[Direction]) -> Optional[int]:
-    """Resolve the stream id for qiskit-qm-provider direction semantics."""
-    incoming_id, outgoing_id = _resolve_struct_stream_ids(handle)
-    if direction == Direction.OUTGOING:
-        # OPNIC -> OPX maps to Quarc incoming stream.
-        return incoming_id
-    if direction == Direction.INCOMING:
-        # OPX -> OPNIC maps to Quarc outgoing stream.
-        return outgoing_id
-    if direction == Direction.BOTH:
-        return incoming_id if incoming_id is not None else outgoing_id
-    return None
-
-
-def _assert_compatible_existing_parameter(
-    existing: "Parameter",
-    *,
-    requested_value: Any,
-    requested_qua_type: Any,
-    requested_input_type: Optional[InputType],
-    requested_direction: Optional[Direction],
-    requested_units: str,
-) -> None:
-    """Validate that re-declaring ``Parameter(name=existing.name, ...)`` would not change
-    its semantics. If the requested args genuinely differ from ``existing``'s current
-    state, raise :class:`ValueError` with a precise diff. Used by :meth:`Parameter.__new__`.
-
-    The caller has already asserted that ``existing.input_type`` is *not* ``OPNIC`` and
-    that the requested ``input_type`` is *not* ``OPNIC`` either — OPNIC collisions are
-    rejected unconditionally before we get here.
-    """
-    diffs: List[str] = []
-
-    # qua_type: either explicitly requested, or omitted (None), in which case we accept.
-    if requested_qua_type is not None:
-        normalized_requested = set_type(requested_qua_type)
-        if existing.type is not normalized_requested:
-            diffs.append(f"qua_type: existing={existing.type!r}, requested={normalized_requested!r}")
-
-    # input_type: only flag if the user passed a non-None value that disagrees.
-    if requested_input_type is not None and existing.input_type != requested_input_type:
-        diffs.append(f"input_type: existing={existing.input_type!r}, requested={requested_input_type!r}")
-
-    # direction: only flag if the user passed a non-None value that disagrees.
-    if requested_direction is not None and existing._direction != requested_direction:
-        diffs.append(f"direction: existing={existing._direction!r}, requested={requested_direction!r}")
-
-    # length / array shape: derived from `value`. Only check if the user actually passed one.
-    if requested_value is not None:
-        existing_length = existing.length
-        if isinstance(requested_value, (list, np.ndarray)):
-            requested_length = len(requested_value)
-        else:
-            requested_length = 0
-        if existing_length != requested_length:
-            diffs.append(f"length: existing={existing_length}, requested={requested_length}")
-
-    # units: only flag a non-empty mismatch.
-    if requested_units and existing.units != requested_units:
-        diffs.append(f"units: existing={existing.units!r}, requested={requested_units!r}")
-
-    if diffs:
-        raise ValueError(
-            f"Parameter named {existing.name!r} already exists in the pool with "
-            f"different attributes. Diffs:\n  - "
-            + "\n  - ".join(diffs)
-            + "\nIf you intended to reuse the existing parameter, drop the conflicting "
-            "constructor arguments. If you intended a fresh one, choose a different name."
-        )
-
-
 class Parameter:
     """
     Class enabling the mapping of a parameter to a QUA variable to be updated. The type of the QUA variable to be
     adjusted can be declared explicitly or either be automatically inferred from the type of provided initial value.
     """
-
-    def __new__(
-        cls,
-        name: str,
-        value: Optional[Union[int, float, bool, List, np.ndarray]] = None,
-        qua_type: Optional[Union[str, type]] = None,
-        input_type: Optional[Union[Literal["OPNIC", "INPUT_STREAM", "IO1", "IO2"], InputType]] = None,
-        direction: Optional[Union[Literal["INCOMING", "OUTGOING", "BOTH"], Direction]] = None,
-        units: str = "",
-    ):
-        """Construct, or look up, the :class:`Parameter` named ``name``.
-
-        Lookup semantics (Option 1 — validating dedup, OPNIC-strict):
-
-        - If no parameter named ``name`` exists in the pool (registry + pending
-          standalone OPNIC list), a fresh instance is constructed and returned.
-        - If a parameter named ``name`` already exists, **and either the existing one
-          or the requested one is OPNIC**, the call is rejected with a
-          :class:`ValueError`: OPNIC parameters are single-owner and cannot be
-          re-declared or shared by re-construction.
-        - Otherwise (both non-OPNIC), the existing instance is returned **only after**
-          validating that all requested constructor arguments match its current state.
-          Mismatches (e.g. different ``qua_type``, ``input_type``, ``direction``,
-          ``length``, ``units``) raise :class:`ValueError` with a per-field diff so the
-          user catches accidental aliasing instead of silently dropping the new args.
-
-        This replaces the historical "warn-and-return-existing" behavior, which silently
-        clobbered the new arguments.
-        """
-        # Normalize for the lookup-side comparison.
-        if isinstance(input_type, str):
-            input_type_norm: Optional[InputType] = InputType(input_type)
-        else:
-            input_type_norm = input_type
-        if isinstance(direction, str):
-            direction_norm: Optional[Direction] = Direction(direction)
-        else:
-            direction_norm = direction
-
-        existing = ParameterPool._lookup_parameter_by_name(name)
-        if existing is None:
-            return super().__new__(cls)
-
-        # OPNIC-strict: any collision involving an OPNIC parameter raises.
-        if existing.input_type == InputType.OPNIC or input_type_norm == InputType.OPNIC:
-            raise ValueError(
-                f"Parameter named {name!r} already exists in the pool with "
-                f"input_type={existing.input_type!r}; OPNIC parameters cannot be "
-                f"re-declared or shared. Use a different name, or fetch the existing "
-                f"parameter via ParameterPool._lookup_parameter_by_name(name)."
-            )
-
-        # Non-OPNIC: validate compatibility, then return the existing instance.
-        _assert_compatible_existing_parameter(
-            existing,
-            requested_value=value,
-            requested_qua_type=qua_type,
-            requested_input_type=input_type_norm,
-            requested_direction=direction_norm,
-            requested_units=units,
-        )
-        return existing
 
     def __init__(
         self,
@@ -333,8 +190,9 @@ class Parameter:
             input_type: Input type of the parameter (OPNIC, INPUT_STREAM, IO1, IO2).
                 Default is None.
             direction: Direction of the parameter stream (INCOMING, OUTGOING, BOTH).
-                The direction describes the relationship between OPNIC and OPX:
-                OPNIC -> OPX: OUTGOING; OPX -> OPNIC: INCOMING; OPNIC <-> OPX: BOTH.
+                Direction is from the QUA program's perspective (aligned with Quarc):
+                into QUA (classical/OPNIC -> OPX): INCOMING; out of QUA (OPX -> OPNIC):
+                OUTGOING; bidirectional: BOTH.
                 Default is None. Relevant only when ``input_type`` is OPNIC.
             units: Units of the parameter. Default is "".
 
@@ -347,6 +205,10 @@ class Parameter:
         self._index = -1  # Default value for parameters not part of a parameter table
         self._var = None
         self._is_declared = False
+        #: Program-scope token (``_scope.current_scope_token()``) under which the QUA
+        #: variable was declared. ``is_declared`` is only True while this matches the
+        #: active program scope, so a fresh ``with program():`` auto-invalidates it.
+        self._declared_scope = None
         self._stream = None
         self._type = set_type(qua_type) if qua_type is not None else infer_type(value)
         self._length = 0 if not isinstance(value, (List, np.ndarray)) else len(value)
@@ -609,6 +471,7 @@ class Parameter:
             require_qua_program("Parameter.declare")
             return opnic_table.declare(pause_program=pause_program, declare_stream=declare_stream)
         require_qua_program("Parameter.declare")
+        self._reset_if_stale_scope()
         if self.is_declared:
             raise ValueError("Variable already declared. Cannot declare again.")
         else:
@@ -628,6 +491,7 @@ class Parameter:
         if pause_program:
             pause()
         self._is_declared = True
+        self._declared_scope = current_scope_token()
         if declare_stream:
             self.declare_stream()
         # Auto-register non-OPNIC standalone parameters on the pool's bound module
@@ -655,8 +519,16 @@ class Parameter:
 
     @property
     def is_declared(self):
-        """Boolean indicating if the QUA variable has been declared."""
-        return self._is_declared
+        """Whether the QUA variable is declared **and** still valid in the active scope.
+
+        Declaration is bound to the program scope it was made in: a fresh
+        ``with program():`` (a different scope token) auto-invalidates a prior
+        declaration, so the same ``Parameter`` object can be re-declared across programs
+        without a manual reset. Outside any program scope this is ``False`` (the token is
+        ``None``) — note this is a transient QUA-side concept; client-side methods
+        (``push_to_opx`` / ``fetch_from_opx``) do not gate on it.
+        """
+        return self._is_declared and self._declared_scope is current_scope_token()
 
     @property
     def name(self):
@@ -666,72 +538,69 @@ class Parameter:
     @property
     def direction(self):
         """
-        Direction of the parameter stream (INCOMING, OUTGOING, BOTH).
-        For OPNIC, direction describes data flow vs OPX:
-        OPNIC -> OPX: OUTGOING
-        OPX -> OPNIC: INCOMING
-        OPNIC <-> OPX: BOTH
+        Direction of the parameter stream (INCOMING, OUTGOING, BOTH), from the QUA
+        program's perspective (aligned with Quarc):
+        into QUA (classical/OPNIC -> OPX): INCOMING
+        out of QUA (OPX -> classical/OPNIC): OUTGOING
+        bidirectional: BOTH
         Default is None. Relevant only if input_type is OPNIC.
         """
         if self.input_type != InputType.OPNIC:
-            warnings.warn("This parameter is not associated with an OPNIC stream.")
             raise ValueError("This parameter is not associated with an OPNIC stream.")
         return self._direction
 
     @property
-    def opnic_struct(self):
-        """The Quarc :class:`QuaStructHandle` (or pybind runtime endpoint) bound to the
-        ``ParameterTable`` that owns this OPNIC parameter.
+    def struct_type(self):
+        """The Quarc ``Struct`` *type* of the OPNIC table that owns this parameter.
 
-        For a parameter inside a regular multi-field ``ParameterTable``, returns
-        ``main_table._var``. For a promoted standalone parameter, returns
-        ``opnic_table._var`` (which is the synthetic single-field table's handle).
-        Raises :class:`RuntimeError` if the parameter is OPNIC but still pending (no
-        owning table yet — call :meth:`declare_variable` to promote, or attach it to a
-        ``ParameterTable``).
+        This is the typed struct definition (a class with ``Scalar`` / ``Array``
+        annotations) — suitable for building a matching struct elsewhere — **not** the
+        bound handle. The handle is reachable via the owning table's ``var``. Delegates
+        to :pyattr:`ParameterTable.struct_type`.
+
+        Raises :class:`RuntimeError` if the parameter is OPNIC but not yet bound to a
+        ``ParameterTable`` (attach it to a table, or declare it in a program to promote
+        it as a standalone).
         """
         if self.input_type != InputType.OPNIC:
-            raise ValueError("Invalid input type for calling opnic_struct property. " "Must be set to InputType.OPNIC.")
+            raise ValueError("Invalid input type for struct_type property. Must be InputType.OPNIC.")
         if self._main_table is None:
             raise RuntimeError(
                 f"Parameter {self.name!r} is OPNIC but has not been bound to a "
-                f"ParameterTable yet. Either attach it to a ParameterTable or call "
-                f"declare_variable() / to_quarc_module() to promote it as a standalone."
+                f"ParameterTable yet. Either attach it to a ParameterTable or declare it "
+                f"in a program to promote it as a standalone."
             )
-        return self._main_table._var
+        return self._main_table.struct_type
 
     @property
-    def stream_id(self) -> int:
-        """Stream id of the owning OPNIC table (delegates to the table's id)."""
-        if self._input_type != InputType.OPNIC:
-            raise ValueError("Stream ID is only defined for OPNIC parameters.")
-        if self._main_table is None:
-            raise RuntimeError(f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable.")
-        return self._main_table.stream_id
+    def var_is_quarc_handle(self) -> bool:
+        """Whether the owning OPNIC table's transport ``_var`` is a ``QuaStructHandle``.
+
+        ``True`` for in-process generation / Mode 1 reconstruction (QUA ``declare`` binds
+        against ``initialize_in_qua``). ``False`` for Mode 2 classical runtime endpoints
+        (field accessors + ``send`` / ``recv`` only) and for non-OPNIC input types.
+        """
+        if self._input_type != InputType.OPNIC or self._main_table is None:
+            return False
+        return getattr(self._main_table, "_var_is_quarc_handle", False)
 
     @property
     def incoming_stream_id(self) -> int:
-        """Incoming stream id exposed by the owning OPNIC table."""
+        """Incoming Quarc stream id exposed by the owning OPNIC table."""
         if self._input_type != InputType.OPNIC:
             raise ValueError("Incoming stream ID is only defined for OPNIC parameters.")
         if self._main_table is None:
             raise RuntimeError(f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable.")
-        owner = self._main_table
-        if not hasattr(owner, "incoming_stream_id"):
-            return owner.stream_id
-        return owner.incoming_stream_id
+        return self._main_table.incoming_stream_id
 
     @property
     def outgoing_stream_id(self) -> int:
-        """Outgoing stream id exposed by the owning OPNIC table."""
+        """Outgoing Quarc stream id exposed by the owning OPNIC table."""
         if self._input_type != InputType.OPNIC:
             raise ValueError("Outgoing stream ID is only defined for OPNIC parameters.")
         if self._main_table is None:
             raise RuntimeError(f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable.")
-        owner = self._main_table
-        if not hasattr(owner, "outgoing_stream_id"):
-            return owner.stream_id
-        return owner.outgoing_stream_id
+        return self._main_table.outgoing_stream_id
 
     @property
     def var(self) -> QuaArrayVariable | QuaScalar:
@@ -785,10 +654,9 @@ class Parameter:
     def _promote_to_synthetic_standalone_table(self) -> "ParameterTable":
         """Build the synthetic single-field ``ParameterTable`` that wraps this parameter.
 
-        The synthetic table is constructed with ``_is_synthetic_standalone=True`` so
-        that the hybrid emission rule force-emits its Quarc struct immediately
-        (creating a default :class:`~qiskit_qm_provider.QiskitQMModule` via
-        :meth:`ParameterPool.quarc_module` if no module is bound yet). After
+        The synthetic table is constructed with ``_is_synthetic_standalone=True``. Like
+        any OPNIC table it emits its Quarc struct lazily at :meth:`ParameterTable.declare`
+        inside the QUA program (the single commit point) — not at construction. After
         construction this parameter's :attr:`main_table` points at the synthetic table,
         and the entry is removed from :data:`ParameterPool._pending_standalone_opnic`.
 
@@ -899,11 +767,11 @@ class Parameter:
                 with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
                     save(self.var[self._ctr], self.stream)
                     if reset:
-                        reset_var(self.var[self._ctr], self.type)
+                        _assign_zero(self.var[self._ctr], self.type)
             else:
                 save(self.var, self.stream)
                 if reset:
-                    reset_var(self.var, self.type)
+                    _assign_zero(self.var, self.type)
         else:
             raise ValueError("Output stream or variable itself not declared.")
 
@@ -1158,13 +1026,13 @@ class Parameter:
                 with for_(i, 0, i < self.length, i + 1):
                     assign(io, self.var[i])
                     if reset:
-                        reset_var(self.var[i], self.type)
+                        _assign_zero(self.var[i], self.type)
                     pause()
 
             else:
                 assign(io, self.var)
                 if reset:
-                    reset_var(self.var, self.type)
+                    _assign_zero(self.var, self.type)
                 pause()
 
     def fetch_from_opx(
@@ -1235,6 +1103,22 @@ class Parameter:
             print(f"Fetched value: {value}")
         return value
 
+    def _reset_if_stale_scope(self) -> None:
+        """Clear transient QUA state left over from a *different* program scope.
+
+        ``is_declared`` is scope-bound, so a parameter declared in a previous
+        ``with program():`` reads as not-declared in a new one — but its ``_var`` /
+        ``_stream`` / ``_ctr`` still point at the old program's objects. Calling this
+        before re-declaring drops that stale state so the new declaration is clean (and
+        ``declare_stream`` does not warn about an already-declared stream).
+        """
+        if self._declared_scope is not None and self._declared_scope is not current_scope_token():
+            self._var = None
+            self._stream = None
+            self._ctr = None
+            self._is_declared = False
+            self._declared_scope = None
+
     def reset(self):
         """Client function: reset transient QUA-side declaration state.
 
@@ -1243,6 +1127,7 @@ class Parameter:
         synthetic) so the binding to module/runtime transport survives across resets.
         """
         self._is_declared = False
+        self._declared_scope = None
         self._var = None
         self._stream = None
         self._ctr = None
@@ -1253,9 +1138,9 @@ class Parameter:
         """
         if self.is_array:
             with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
-                reset_var(self.var[self._ctr], self.type)
+                _assign_zero(self.var[self._ctr], self.type)
         else:
-            reset_var(self.var, self.type)
+            _assign_zero(self.var, self.type)
 
     # ------------------------------------------------------------------
     # Deprecated aliases — removed in v1.2. Use the canonical names instead.
@@ -1264,6 +1149,9 @@ class Parameter:
     load_input_value = _DeprecatedAlias("rcv", removal="1.2")
     reset_var = _DeprecatedAlias("reset_qua", removal="1.2")
     # declare_stream is already the canonical name — no alias needed
+    # Note: the former ``opnic_struct`` alias was removed outright (no deprecation
+    # cycle) — OPNIC transport never shipped working, so it had no usable callers.
+    # Use ``struct_type`` for the Quarc struct type and ``var`` for the bound handle.
 
     def to_spec(self) -> Dict[str, Any]:
         """Serialize this parameter to a plain dict suitable for JSON persistence."""
@@ -1325,6 +1213,7 @@ class Parameter:
         # Reset QUA-specific and context-dependent state
         new_param._var = None
         new_param._is_declared = False
+        new_param._declared_scope = None
         new_param._stream = None
         new_param._ctr = None
         new_param._qua_external_stream_in = None

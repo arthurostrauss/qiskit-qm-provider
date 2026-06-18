@@ -7,6 +7,19 @@ a mismatched default ``python``.
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _reset_parameter_pool():
+    """Isolate the process-global ``ParameterPool`` (registry, bound Quarc module, and
+    Quarc's stream-id counters) around every test. Without this, name/struct state and
+    monotonic stream ids leak across tests and make outcomes order-dependent."""
+    from qiskit_qm_provider.parameter_table.parameter_pool import ParameterPool
+
+    ParameterPool.reset()
+    yield
+    ParameterPool.reset()
+
+
 try:
     from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import (
         FluxTunableQuam,

@@ -6,10 +6,10 @@ For method signatures, see the [Parameter Table API reference](apidocs/qm_parame
 
 ## Purpose
 
-Qiskit assumes parameters are bound per circuit run. QUA assumes **long-running programs** with nested loops, streaming, and explicit buffers. Hybrid workflows (feedback, error correction, DGX control) need a stable mapping between:
+Qiskit assumes parameters are bound per circuit run. QUA assumes **long-running programs** with nested loops, streaming, and explicit buffers. Hybrid workflows (feedback, error correction, QUARC/OPNIC control) need a stable mapping between:
 
 - Qiskit circuit parameters and classical input variables, and
-- QUA variables loaded from streams, IO, or DGX.
+- QUA variables loaded from streams, IO, or QUARC-backed OPNIC.
 
 [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) and [`Parameter`](apidocs/stubs/qiskit_qm_provider.parameter_table.Parameter.rst) provide that mapping.
 
@@ -38,9 +38,9 @@ Both `ParameterTable` and `Parameter` share **the same canonical verb names**, s
 
 **QUA side:**
 
-1. `declare_variables()` / `declare_variable()` — create QUA variables inside `with program():`.
+1. `declare()` — create QUA variables inside `with program():` (works for both `Parameter` and `ParameterTable`).
 2. Pass the table to `quantum_circuit_to_qua(qc, param_table=...)`.
-3. `load_input_values()` — read streamed parameters from the host.
+3. `rcv()` — read streamed parameters from the host.
 4. `stream_back()` — push values to output streams.
 
 **Python side:**
@@ -87,8 +87,8 @@ Inside QUA:
 - **`push_to_opx(value=self.value, ...)`**: Sends a value to the OPX. When called with no positional argument, uses `self.value` — set it once and call `push_to_opx()` without repeating the value.
 
 ```python
-recovery_vars.declare_variables()
-syndrome_data.declare_variable()
+recovery_vars.declare()
+syndrome_data.declare()
 syndrome_data.declare_stream()
 ```
 

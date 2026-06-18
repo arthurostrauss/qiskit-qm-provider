@@ -2,6 +2,7 @@
 This module contains a reference implementation of the single qubit macros for the superconducting backend.
 It is used to populate the backend with the standard gate-level macros.
 """
+
 from typing import Union, Literal, Optional
 from quam.components.macro import QubitMacro
 from quam.components import Qubit
@@ -9,7 +10,7 @@ from quam.core import quam_dataclass
 from quam.components.pulses import Pulse, ReadoutPulse
 from quam.utils.qua_types import QuaVariableBool, StreamType
 
-from qm.qua import declare, fixed, save, assign, wait
+from qm.qua import declare, fixed, save, assign, wait, align
 from quam_builder.architecture.superconducting.components.readout_resonator import (
     ReadoutResonatorIQ,
     ReadoutResonatorMW,
@@ -17,6 +18,7 @@ from quam_builder.architecture.superconducting.components.readout_resonator impo
 from quam_builder.architecture.superconducting.qubit import AnyTransmon
 
 Resonator = Union[ReadoutResonatorIQ, ReadoutResonatorMW]
+
 
 def get_pulse_name(pulse: Pulse) -> str:
     """
@@ -27,9 +29,8 @@ def get_pulse_name(pulse: Pulse) -> str:
     elif pulse.parent is not None:
         return pulse.parent.get_attr_name(pulse)
     else:
-        raise AttributeError(
-            f"Cannot infer id of {pulse} because it is not attached to a parent"
-        )
+        raise AttributeError(f"Cannot infer id of {pulse} because it is not attached to a parent")
+
 
 def get_pulse(pulse: Pulse | str, qubit: Qubit | None = None) -> Pulse:
     """
@@ -42,12 +43,14 @@ def get_pulse(pulse: Pulse | str, qubit: Qubit | None = None) -> Pulse:
     else:
         raise ValueError(f"Cannot get pulse {pulse} because qubit is not provided")
 
+
 @quam_dataclass
 class MeasureMacro(QubitMacro):
     """
     Macro for measuring a qubit.
     """
-    pulse: Union[ReadoutPulse, str]="readout"
+
+    pulse: Union[ReadoutPulse, str] = "readout"
 
     def apply(self, **kwargs) -> QuaVariableBool:
 
@@ -69,22 +72,24 @@ class MeasureMacro(QubitMacro):
             save(Q, stream_Q)
 
         return state
-    
+
     @property
     def inferred_duration(self) -> float:
         readout_pulse: ReadoutPulse = get_pulse(self.pulse, self.qubit)
         return readout_pulse.length * 1e-9
+
 
 @quam_dataclass
 class ResetMacro(QubitMacro):
     """
     Macro for resetting a qubit.
     """
+
     reset_type: Literal["thermalize", "active", "active_gef"] = "active"
-    pi_pulse: Union[Pulse, str]= "x180"
-    readout_pulse: Union[ReadoutPulse, str]= "readout"
-    pi_12_pulse: Optional[Union[Pulse, str]]= None
-    max_attempts: int= 5
+    pi_pulse: Union[Pulse, str] = "x180"
+    readout_pulse: Union[ReadoutPulse, str] = "readout"
+    pi_12_pulse: Optional[Union[Pulse, str]] = None
+    max_attempts: int = 5
 
     def apply(self, **kwargs) -> None:
 
@@ -95,13 +100,21 @@ class ResetMacro(QubitMacro):
         if self.reset_type == "thermalize":
             qubit.reset_qubit_thermal()
         elif self.reset_type == "active":
-            qubit.reset_qubit_active(kwargs.get("save_qua_var", None), pi_pulse_name=get_pulse_name(pi_pulse), readout_pulse_name=get_pulse_name(readout_pulse), max_attempts=self.max_attempts)
+            qubit.reset_qubit_active(
+                kwargs.get("save_qua_var", None),
+                pi_pulse_name=get_pulse_name(pi_pulse),
+                readout_pulse_name=get_pulse_name(readout_pulse),
+                max_attempts=self.max_attempts,
+            )
         elif self.reset_type == "active_gef":
             if pi_12_pulse is None:
                 raise ValueError("pi_12_pulse is required for active_gef reset")
-            qubit.reset_qubit_active_gef(readout_pulse_name=get_pulse_name(readout_pulse), pi_01_pulse_name=get_pulse_name(pi_pulse), pi_12_pulse_name=get_pulse_name(pi_12_pulse))
+            qubit.reset_qubit_active_gef(
+                readout_pulse_name=get_pulse_name(readout_pulse),
+                pi_01_pulse_name=get_pulse_name(pi_pulse),
+                pi_12_pulse_name=get_pulse_name(pi_12_pulse),
+            )
 
-       
     @property
     def inferred_duration(self) -> float:
         """
@@ -112,12 +125,13 @@ class ResetMacro(QubitMacro):
         if self.reset_type == "active":
             pi_pulse_duration = get_pulse(self.pi_pulse, self.qubit).length
             readout_pulse_duration = get_pulse(self.readout_pulse, self.qubit).length
-            return (pi_pulse_duration + readout_pulse_duration) * self.max_attempts * 1e-9 # convert to seconds
+            return (pi_pulse_duration + readout_pulse_duration) * self.max_attempts * 1e-9  # convert to seconds
         elif self.reset_type == "thermalize":
-            return self.qubit.thermalization_time * 1e-9 # convert to seconds
-        else: # active_gef
+            return self.qubit.thermalization_time * 1e-9  # convert to seconds
+        else:  # active_gef
             raise ValueError(f"Reset type {self.reset_type} is not supported")
-    
+
+
 @quam_dataclass
 class VirtualZMacro(QubitMacro):
     """
@@ -133,7 +147,8 @@ class VirtualZMacro(QubitMacro):
 
     @property
     def inferred_duration(self) -> float:
-        return 0.0 # Virtual Z gate is assumed to be instantaneous
+        return 0.0  # Virtual Z gate is assumed to be instantaneous
+
 
 @quam_dataclass
 class DelayMacro(QubitMacro):
@@ -145,21 +160,21 @@ class DelayMacro(QubitMacro):
         qubit: AnyTransmon = self.qubit
         qubit.wait(duration)
 
+
 @quam_dataclass
 class IdMacro(QubitMacro):
     """
     Macro for applying an identity operation to a qubit.
     In QUA, we assimilate it to an align statement across all the channels of the qubit.
     """
-    
+
     def apply(self, **kwargs) -> None:
         qubit: AnyTransmon = self.qubit
         qubit.align()
-        
+
     @property
     def inferred_duration(self) -> float:
-        return 0.0 # Identity operation is assumed to be instantaneous
+        return 0.0  # Identity operation is assumed to be instantaneous
 
     def __post_init__(self) -> None:
-        self.fidelity = 1.0 # Identity operation is assumed to be perfect
-
+        self.fidelity = 1.0  # Identity operation is assumed to be perfect

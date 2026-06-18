@@ -895,10 +895,8 @@ class QMBackend(Backend):
             if isinstance(param_table, Sequence):
                 for table in param_table:
                     if not table.is_declared:
-                        if isinstance(table, ParameterTable):
-                            table.declare_variables(pause_program=False)
-                        else:
-                            table.declare_variable(pause_program=False)
+                        # Unified API: declare() works for both Parameter and ParameterTable.
+                        table.declare(pause_program=False)
                     variables = table.variables_dict if isinstance(table, ParameterTable) else {table.name: table.var}
                     inputs.update(variables)
             elif isinstance(param_table, Dict):

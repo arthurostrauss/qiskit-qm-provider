@@ -86,9 +86,13 @@ Changes on the `quarc-support` branch relative to `main` (22 commits, ~8.5k line
 ### Changed
 
 - **`QMBackend.quantum_circuit_to_qua()`** now returns `QuaCircuitCompilation` instead of a raw qm-qasm `CompilationResult`.
-- **`InputType.DGX_Q` renamed to `InputType.OPNIC`** throughout the codebase, primitives options, and documentation.
-- **`Parameter.dgx_struct` renamed to `Parameter.opnic_struct`** (and equivalent on `ParameterTable`).
+- **`InputType.DGX_Q` renamed to `InputType.OPNIC`** throughout the codebase, primitives options, and documentation. OPNIC is presented as a QUARC-backed host↔OPX transport; the legacy "DGX Quantum" naming is fully retired from code and docs.
+- **`Parameter.dgx_struct` / `opnic_struct` replaced by `Parameter.struct_type`** (and equivalent on `ParameterTable`); the `opnic_struct` name was removed outright (see Removed).
 - **`ParameterPool.prepare_dgx_quarc_hybrid_packets()` renamed to `prepare_opnic_quarc_hybrid_packets()`.**
+- **Internal callers migrated to canonical names** — library code (`qua_programs`, `qm_backend`, `pulse_support_utils`) now calls `declare()` / `rcv()` instead of the deprecated `declare_variable(s)` / `load_input_value(s)`, so building sampler/estimator programs no longer self-emits `DeprecationWarning`.
+- **`get_measurement_outcomes()`** sources every entry from `comp.outputs` and exposes `is_array` / `length` keys (`Parameter` convention). Loose clbits are returned under per-bit keys `_bit0`, `_bit1`, … (one entry each) instead of a single packed `_bit` register — loose bits are independent and are no longer packed into one integer. `state_int` is always lazily available (no construction-time gate).
+- **`MeasurementRegisterField`** now follows the `Parameter` shape convention — it carries `length` (`0` for a scalar loose clbit, the register width otherwise) and exposes `is_array` (`length > 0`) and `length` as part of the shared `TableFieldProtocol`. Dropped the bespoke `register_size` / `var_is_array` state; `pack_register_to_int` remains the single place that adapts packing to the wired QUA variable.
+- **`MeasurementRegisterField` / `MeasurementOutcomeTable.from_compilation` / `QuaCircuitCompilation`** dropped the `compute_state_int` constructor argument — `state_int` is a lazy property computed only on access.
 - **`Parameter` INPUT_STREAM declaration** uses the current qm-qua API (`declare_input_stream(type, name=..., value=...)`); output streams still use `declare_stream()`. A QUA 1.3 client/`stream_id` path is scaffolded in `parameter.py` but remains commented until qm-qua ≥ 1.3 (note: `declare_output_stream` is not exported in qm-qua 1.2.x).
 - **`ParameterTable.fetch_from_opx()`** uses bulk `recv(size, index)` instead of per-element iteration.
 - **`QMBackend.compile()` `param_table` typing** broadened from `List[...]` to `Sequence[...]`.
@@ -109,6 +113,8 @@ Changes on the `quarc-support` branch relative to `main` (22 commits, ~8.5k line
 - **`OpnicPacketBinding` protocol** and internal OPNIC orchestration modules (`quarc_naming`, `quarc_live_module`).
 - **`ParameterPool` manual stream-ID rebinding** methods (`rebind_parameter_table_id`, etc.) in favor of Quarc-managed handles.
 - **`@opnic_check` decorator** (relaxed via standalone OPNIC adapter pattern).
+- **`opnic_struct` alias** on `Parameter` / `ParameterTable` — removed outright (no deprecation cycle); OPNIC transport never shipped working, so it had no usable callers. Use `struct_type` for the Quarc struct type and `var` for the bound handle.
+- **`_LooseBitRegister`** helper class and the monotonic output-table name counter (`reset_output_table_name_registry`) — table names are now derived from currently-live tables, so they no longer grow unboundedly across a long-lived process.
 - Dependency on **`iqcc_calibration_tools`** for single-qubit macros (replaced by `quam_macros`).
 
 ### Fixed

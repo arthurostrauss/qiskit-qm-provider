@@ -70,17 +70,18 @@ def quarc_annotation_for(parameter: "Parameter") -> Any:
 def quarc_direction_for(direction: Direction) -> Any:
     """Translate a qiskit-qm-provider :class:`Direction` to its Quarc counterpart.
 
-    qiskit-qm ``Direction`` is described from the OPX's perspective:
+    qiskit-qm ``Direction`` is now aligned 1:1 with Quarc's convention — both are
+    described from the **QUA program's** perspective, so this is the identity map:
 
-    * ``OUTGOING`` (OPNIC -> OPX) maps to Quarc ``INCOMING`` (data flows into QUA).
-    * ``INCOMING`` (OPX -> OPNIC) maps to Quarc ``OUTGOING`` (data flows out of QUA).
+    * ``INCOMING`` (into the QUA program) -> Quarc ``INCOMING``.
+    * ``OUTGOING`` (out of the QUA program) -> Quarc ``OUTGOING``.
     * ``BOTH`` is bidirectional in both vocabularies.
     """
     from quarc import Direction as QuarcDirection
 
-    if direction == Direction.OUTGOING:
-        return QuarcDirection.INCOMING
     if direction == Direction.INCOMING:
+        return QuarcDirection.INCOMING
+    if direction == Direction.OUTGOING:
         return QuarcDirection.OUTGOING
     if direction == Direction.BOTH:
         return QuarcDirection.BOTH
