@@ -2,7 +2,7 @@
 
 import pytest
 import numpy as np
-from qiskit.circuit import QuantumCircuit, ClassicalRegister
+from qiskit.circuit import QuantumCircuit, ClassicalRegister, Clbit
 from qiskit.quantum_info import Pauli, PauliList
 
 from qiskit_qm_provider.backend.backend_utils import (
@@ -10,9 +10,13 @@ from qiskit_qm_provider.backend.backend_utils import (
     get_extended_gate_name_mapping,
     has_reset_at_boundary,
     validate_circuits,
+    measurement_output_bit_sizes,
     binary,
     logically_active_qubits,
     get_non_trivial_observables,
+    assign_struct_with_table,
+    pack_register_to_int,
+    _measurement_var_is_array,
 )
 
 
@@ -186,6 +190,43 @@ class TestValidateCircuits:
         with pytest.raises(ValueError, match="one register per clbit"):
             validate_circuits(qc_multi)
 
+    def test_loose_clbits_allowed(self):
+        creg = ClassicalRegister(1, "c")
+        loose0 = Clbit()
+        loose1 = Clbit()
+        qc = QuantumCircuit(2)
+        qc.add_register(creg)
+        qc.add_bits([loose0, loose1])
+        qc.reset(0)
+        qc.reset(1)
+        qc.measure(0, creg[0])
+        qc.measure(1, loose0)
+        qc.measure(1, loose1)
+        result = validate_circuits(qc)
+        assert len(result) == 1
+
+
+class TestMeasurementOutputBitSizes:
+    def test_creg_and_loose_bits(self):
+        creg = ClassicalRegister(2, "meas")
+        loose0 = Clbit()
+        loose1 = Clbit()
+        qc = QuantumCircuit(3)
+        qc.add_register(creg)
+        qc.add_bits([loose0, loose1])
+        qc.measure([0, 1], creg)
+        qc.measure(2, loose0)
+        qc.measure(2, loose1)
+
+        assert measurement_output_bit_sizes(qc) == {"meas": 2, "_bit0": 1, "_bit1": 1}
+
+    def test_loose_bits_only(self):
+        loose = Clbit()
+        qc = QuantumCircuit(1)
+        qc.add_bits([loose])
+        qc.measure(0, loose)
+        assert measurement_output_bit_sizes(qc) == {"_bit0": 1}
+
 
 class TestBinary:
     def test_basic(self):
@@ -223,6 +264,175 @@ class TestLogicallyActiveQubits:
         qc = QuantumCircuit(3)
         active = logically_active_qubits(qc)
         assert len(active) == 0
+
+
+@pytest.fixture(autouse=True)
+def _reset_parameter_pool():
+    from qiskit_qm_provider import ParameterPool
+
+    ParameterPool.reset()
+    yield
+    ParameterPool.reset()
+
+
+class TestAssignStructWithTable:
+    def test_rejects_non_handle(self):
+        pytest.importorskip("quarc")
+        from qiskit_qm_provider import Parameter, ParameterTable, Direction, InputType
+
+        table = ParameterTable(
+            [Parameter("x", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING)],
+            name="Cfg",
+        )
+        with pytest.raises(TypeError, match="QuaStructHandle"):
+            assign_struct_with_table(object(), table)
+
+    def test_rejects_field_name_mismatch(self):
+        pytest.importorskip("quarc")
+        from quarc import Array, BaseModule, Direction as QuarcDirection, Scalar, Struct
+        from qiskit_qm_provider import Parameter, ParameterTable, Direction, InputType
+
+        class Mod(BaseModule):
+            def __init__(self) -> None:
+                super().__init__()
+                st = Struct(struct_name="Cfg", theta=Scalar[float], amps=Array[float, 2])
+                self.handle = self.add_struct(st, QuarcDirection.OUTGOING)
+
+        module = Mod()
+        table = ParameterTable(
+            [
+                Parameter("phi", 0.0, input_type=InputType.OPNIC, direction=Direction.OUTGOING),
+                Parameter(
+                    "amps",
+                    [0.0, 0.0],
+                    input_type=InputType.OPNIC,
+                    direction=Direction.OUTGOING,
+                ),
+            ],
+            name="Other",
+            _register_in_pool=False,
+        )
+        for parameter in table.parameters:
+            parameter._is_declared = True
+
+        with pytest.raises(ValueError, match="exactly the same names"):
+            assign_struct_with_table(module.handle, table)
+
+    def test_rejects_length_mismatch(self):
+        pytest.importorskip("quarc")
+        from quarc import Array, BaseModule, Direction as QuarcDirection, Struct
+        from qiskit_qm_provider import Parameter, ParameterTable, Direction, InputType
+
+        class Mod(BaseModule):
+            def __init__(self) -> None:
+                super().__init__()
+                st = Struct(struct_name="Cfg", amps=Array[float, 2])
+                self.handle = self.add_struct(st, QuarcDirection.OUTGOING)
+
+        module = Mod()
+        table = ParameterTable(
+            [
+                Parameter(
+                    "amps",
+                    [0.0, 0.0, 0.0],
+                    input_type=InputType.OPNIC,
+                    direction=Direction.OUTGOING,
+                )
+            ],
+            name="Cfg",
+            _register_in_pool=False,
+        )
+        for parameter in table.parameters:
+            parameter._is_declared = True
+
+        with pytest.raises(ValueError, match="array length"):
+            assign_struct_with_table(module.handle, table)
+
+    def test_assigns_in_qua_program(self):
+        pytest.importorskip("quarc")
+        from qm.qua import program
+        from quarc import Array, Direction as QuarcDirection, Scalar, Struct
+        from qiskit_qm_provider import (
+            Parameter,
+            ParameterTable,
+            Direction,
+            InputType,
+            QiskitQMModule,
+        )
+
+        source_table = ParameterTable(
+            [
+                Parameter(
+                    "theta",
+                    0.0,
+                    input_type=InputType.OPNIC,
+                    direction=Direction.INCOMING,
+                ),
+                Parameter(
+                    "amps",
+                    [0.0, 0.0],
+                    input_type=InputType.OPNIC,
+                    direction=Direction.INCOMING,
+                ),
+            ],
+            name="Source",
+        )
+        module = QiskitQMModule()
+        dest = Struct(struct_name="Dest", theta=Scalar[float], amps=Array[float, 2])
+        dest_handle = module.add_struct(dest, QuarcDirection.OUTGOING)
+
+        with program():
+            source_table.declare()
+            dest_handle.initialize_in_qua()
+            assign_struct_with_table(dest_handle, source_table)
+
+
+class TestPackRegisterToInt:
+    def test_detects_scalar_vs_size_one_array(self):
+        from qm import qua
+
+        with qua.program():
+            scalar = qua.declare(bool, value=False)
+            array = qua.declare(bool, value=[False])
+            out_loose = qua.declare(int)
+            out_creg = qua.declare(int)
+            qua.assign(out_loose, pack_register_to_int(scalar, 1))
+            qua.assign(out_creg, pack_register_to_int(array, 1))
+
+        assert not _measurement_var_is_array(scalar)
+        assert _measurement_var_is_array(array)
+
+    def test_size_one_array_uses_indexing_even_without_loose_bit_metadata(self):
+        from qm import qua
+
+        with qua.program():
+            array = qua.declare(bool, value=[False])
+            out = qua.declare(int)
+            qua.assign(out, pack_register_to_int(array, 1))
+
+    def test_multi_bit_register_uses_array_indexing(self):
+        from qm import qua
+
+        with qua.program():
+            array = qua.declare(bool, value=[False, True])
+            out = qua.declare(int)
+            qua.assign(out, pack_register_to_int(array, 2))
+
+    def test_multi_bit_scalar_raises(self):
+        from qm import qua
+
+        with qua.program():
+            scalar = qua.declare(bool, value=False)
+        with pytest.raises(ValueError, match="Expected a QUA bool array"):
+            pack_register_to_int(scalar, 2)
+
+    def test_invalid_size_raises(self):
+        from qm import qua
+
+        with qua.program():
+            scalar = qua.declare(bool, value=False)
+        with pytest.raises(ValueError, match="size >= 1"):
+            pack_register_to_int(scalar, 0)
 
 
 class TestGetNonTrivialObservables:

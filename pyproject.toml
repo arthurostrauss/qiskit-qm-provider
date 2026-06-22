@@ -38,6 +38,7 @@ dependencies = [
 [project.optional-dependencies]
 iqcc = [
     "iqcc-cloud-client",
+    "jinja2",
 ]
 qm-saas = [
     "qm-saas"
@@ -55,6 +56,10 @@ prerelease = "allow"
 
 [tool.setuptools]
 packages = ["qiskit_qm_provider"]
+
+[tool.hatch.build.targets.wheel]
+include = ["qiskit_qm_provider"]
+artifacts = ["*.jinja"]
 
 [build-system]
 requires = ["hatchling"]

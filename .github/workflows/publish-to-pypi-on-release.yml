@@ -23,6 +23,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Stamp version from release tag
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
@@ -32,8 +37,7 @@ jobs:
         run: python -m build
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@v1.10.0
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
           verbose: true
-

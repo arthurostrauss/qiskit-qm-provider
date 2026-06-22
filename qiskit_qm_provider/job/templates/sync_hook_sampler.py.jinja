@@ -1,0 +1,17 @@
+# Auto-generated sync hook for the QM sampler. Do not edit by hand.
+from iqcc_cloud_client.runtime import get_qm_job
+
+job = get_qm_job()
+
+# One entry per pub; ``None`` when the pub has no streamed parameters.
+PUBS = {{ pubs_literal }}
+
+
+{% include "_push_helpers.py.jinja" %}
+
+for pub in PUBS:
+    if pub is None or pub["input_type"] is None:
+        continue
+    for value_set in pub["values"]:
+        for spec, raw in zip(pub["params"], value_set):
+            _push(job, pub["input_type"], spec["name"], _coerce(raw, spec["qua_type"]))

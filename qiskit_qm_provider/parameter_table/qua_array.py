@@ -51,6 +51,19 @@ class QUAArray(Parameter):
         - Element assign:    ``arr.assign((i, j), val)``  (delegates to view for partial)
     """
 
+    def __new__(cls, *args, **kwargs):
+        """Bypass ``Parameter.__new__`` constructor-argument parsing.
+
+        ``Parameter.__new__`` assumes the ``Parameter`` signature
+        ``(name, value=None, qua_type=None, ...)``. ``QUAArray`` adds ``shape`` and
+        ``value`` kwargs with different semantics, so positional calls can
+        accidentally bind ``qua_type`` twice before ``__init__`` executes.
+
+        Returning a plain instance here allows ``QUAArray.__init__`` to normalize the
+        user-provided shape/data and then call ``Parameter.__init__`` safely.
+        """
+        return object.__new__(cls)
+
     def __init__(
         self,
         name: str,
@@ -73,7 +86,7 @@ class QUAArray(Parameter):
                         used as initial values.
             qua_type:   QUA type of the elements (e.g. ``fixed``, ``int``, ``bool``).
             input_type: Input type forwarded to ``Parameter``.
-            direction:  Direction forwarded to ``Parameter`` (DGX Quantum only).
+            direction:  Direction forwarded to ``Parameter`` (OPNIC only).
             units:      Units string forwarded to ``Parameter``.
 
         Raises:
@@ -90,9 +103,7 @@ class QUAArray(Parameter):
             )
 
         if shape is not None:
-            if not (
-                isinstance(shape, tuple) and all(isinstance(d, int) for d in shape)
-            ):
+            if not (isinstance(shape, tuple) and all(isinstance(d, int) for d in shape)):
                 raise TypeError(
                     f"'shape' must be a tuple of ints, got {type(shape)}: {shape!r}. "
                     "To initialise from data use the 'value' kwarg instead."
@@ -142,20 +153,14 @@ class QUAArray(Parameter):
         """
         if len(indices) != len(self.shape):
             raise IndexError(
-                f"Expected {len(self.shape)} indices, got {len(indices)}. "
-                f"Array shape is {self.shape}."
+                f"Expected {len(self.shape)} indices, got {len(indices)}. " f"Array shape is {self.shape}."
             )
 
         flat_idx = 0
-        for i, (ind, stride, dim_size) in enumerate(
-            zip(indices, self.strides, self.shape)
-        ):
+        for i, (ind, stride, dim_size) in enumerate(zip(indices, self.strides, self.shape)):
             if isinstance(ind, int):
                 if not (0 <= ind < dim_size):
-                    raise IndexError(
-                        f"Index {ind} out of bounds for dimension {i} "
-                        f"(size {dim_size})."
-                    )
+                    raise IndexError(f"Index {ind} out of bounds for dimension {i} " f"(size {dim_size}).")
                 if ind == 0:
                     continue  # contributes nothing; skip to avoid spurious QUA ops
 
@@ -189,8 +194,7 @@ class QUAArray(Parameter):
         """
         if self.var is None:
             raise RuntimeError(
-                f"QUAArray '{self.name}' has not been declared yet. "
-                "Call declare() before accessing elements."
+                f"QUAArray '{self.name}' has not been declared yet. " "Call declare() before accessing elements."
             )
 
         if not isinstance(key, tuple):
@@ -210,9 +214,7 @@ class QUAArray(Parameter):
             # Partial rank → return a view proxy for further indexing / assignment.
             return _QUAArrayView(self, key)
         else:
-            raise IndexError(
-                f"Too many indices: got {len(key)}, array has {len(self.shape)} dimensions."
-            )
+            raise IndexError(f"Too many indices: got {len(key)}, array has {len(self.shape)} dimensions.")
 
     # ------------------------------------------------------------------
     # Assignment
@@ -263,10 +265,8 @@ class QUAArray(Parameter):
             _QUAArrayView(self, indices).assign(val)
         else:
             raise IndexError(
-                f"Too many indices in assign: got {len(indices)}, "
-                f"array has {len(self.shape)} dimensions."
+                f"Too many indices in assign: got {len(indices)}, " f"array has {len(self.shape)} dimensions."
             )
-
 
     # ------------------------------------------------------------------
     # OPX I/O
@@ -299,17 +299,13 @@ class QUAArray(Parameter):
             ValueError: ``value`` shape does not match ``self.shape``.
         """
         if not isinstance(value, (np.ndarray, list)):
-            raise TypeError(
-                f"'value' must be a numpy array or a (nested) list, "
-                f"got {type(value).__name__}."
-            )
+            raise TypeError(f"'value' must be a numpy array or a (nested) list, " f"got {type(value).__name__}.")
 
         arr = np.asarray(value)
 
         if arr.shape != self.shape:
             raise ValueError(
-                f"Shape mismatch: QUAArray '{self.name}' has shape {self.shape} "
-                f"but 'value' has shape {arr.shape}."
+                f"Shape mismatch: QUAArray '{self.name}' has shape {self.shape} " f"but 'value' has shape {arr.shape}."
             )
 
         # Flatten to 1-D in row-major (C) order — matches the flat QUA allocation.
@@ -360,9 +356,7 @@ class QUAArray(Parameter):
             TypeError:  ``buffer`` is not ``None``, an ``int``, or a ``tuple``.
         """
         if mode not in ("save", "save_all"):
-            raise ValueError(
-                f"mode must be 'save' or 'save_all', got {mode!r}."
-            )
+            raise ValueError(f"mode must be 'save' or 'save_all', got {mode!r}.")
 
         if buffer is None:
             # Default: reshape stream back to the array's own N-D shape.
@@ -374,10 +368,7 @@ class QUAArray(Parameter):
         elif isinstance(buffer, tuple):
             buffer_tuple = buffer
         else:
-            raise TypeError(
-                f"'buffer' must be None, an int, or a tuple of ints, "
-                f"got {type(buffer).__name__}."
-            )
+            raise TypeError(f"'buffer' must be None, an int, or a tuple of ints, " f"got {type(buffer).__name__}.")
 
         if self.stream is None:
             raise ValueError(
@@ -454,7 +445,7 @@ class _QUAArrayView:
             ValueError: Shape / length mismatch between view and ``val``.
             NotImplementedError: ``val`` is neither a list, ndarray, nor QUA array.
         """
-        view_shape = self._parent.shape[len(self._indices):]
+        view_shape = self._parent.shape[len(self._indices) :]
         view_size = int(np.prod(view_shape))
 
         # Compute the flat index of this view's first element.
@@ -466,8 +457,7 @@ class _QUAArrayView:
             flat_val = np.asarray(val).flatten().tolist()
             if len(flat_val) != view_size:
                 raise ValueError(
-                    f"Length mismatch: view covers {view_size} elements but "
-                    f"'val' has {len(flat_val)}."
+                    f"Length mismatch: view covers {view_size} elements but " f"'val' has {len(flat_val)}."
                 )
             # Compile-time unroll — no QUA for_ needed.
             # Each assignment emits a single QUA assign instruction.

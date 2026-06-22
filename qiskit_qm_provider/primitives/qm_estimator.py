@@ -54,14 +54,12 @@ class QMEstimatorOptions:
     Default: True.
     """
 
-    input_type: Optional[
-        Union[InputType, Literal["INPUT_STREAM", "IO1", "IO2", "DGX_Q"]]
-    ] = None
+    input_type: Optional[Union[InputType, Literal["INPUT_STREAM", "IO1", "IO2", "OPNIC"]]] = None
     """The input mechanism to load the parameter values to the OPX. Choices are:
     - :class:`~.InputType.INPUT_STREAM`: Input stream mechanism.
     - :class:`~.InputType.IO1`: IO1.
     - :class:`~.InputType.IO2`: IO2.
-    - :class:`~.InputType.DGX_Q`: Using DGX Quantum communication.
+    - :class:`~.InputType.OPNIC`: Using OPNIC communication.
     - None: Preload at compile time the parameter values to the OPX.
     Default: None."""
 
@@ -74,13 +72,9 @@ class QMEstimatorOptions:
         if isinstance(self.input_type, str):
             self.input_type = InputType(self.input_type)
         if self.input_type is not None and not isinstance(self.input_type, InputType):
-            raise TypeError(
-                f"input_type must be of type InputType, got {type(self.input_type)}"
-            )
+            raise TypeError(f"input_type must be of type InputType, got {type(self.input_type)}")
         if self.run_options is not None and not isinstance(self.run_options, dict):
-            raise TypeError(
-                f"run_options must be a dictionary, got {type(self.run_options)}"
-            )
+            raise TypeError(f"run_options must be a dictionary, got {type(self.run_options)}")
 
     def as_dict(self) -> dict:
         """Return options as a plain dictionary suitable for serialization."""
@@ -94,9 +88,7 @@ class QMEstimatorV2(BaseEstimatorV2):
     optional abelian grouping and real-time parameter streaming.
     """
 
-    def __init__(
-        self, backend: QMBackend, options: QMEstimatorOptions | dict | None = None
-    ):
+    def __init__(self, backend: QMBackend, options: QMEstimatorOptions | dict | None = None):
         """Create an estimator bound to a QM backend.
 
         Args:
@@ -104,11 +96,7 @@ class QMEstimatorV2(BaseEstimatorV2):
             options: :class:`~.QMEstimatorOptions` instance or options dict.
         """
         self._backend = backend
-        self._options = (
-            QMEstimatorOptions(**options)
-            if isinstance(options, dict)
-            else options or QMEstimatorOptions()
-        )
+        self._options = QMEstimatorOptions(**options) if isinstance(options, dict) else options or QMEstimatorOptions()
         self._job = None
 
         basis = PassManagerConfig.from_backend(backend).basis_gates
@@ -150,11 +138,11 @@ class QMEstimatorV2(BaseEstimatorV2):
         from ..job.qm_estimator_job import QMEstimatorJob, IQCCEstimatorJob
         from qm import QuantumMachinesManager
 
-        job_obj = (
-            QMEstimatorJob
-            if isinstance(self.backend.qmm, QuantumMachinesManager)
-            else IQCCEstimatorJob
-        )
+        job_obj = QMEstimatorJob if isinstance(self.backend.qmm, QuantumMachinesManager) else IQCCEstimatorJob
+        if self.options.input_type == InputType.OPNIC and issubclass(job_obj, IQCCEstimatorJob):
+            raise NotImplementedError(
+                "OPNIC input_type is not yet supported for IQCC cloud jobs; use INPUT_STREAM or IO1/IO2."
+            )
         backend_options = deepcopy(self.backend.options.__dict__)
         backend_options.update(self._options.run_options or {})
         job = job_obj(
@@ -197,9 +185,14 @@ class QMEstimatorV2(BaseEstimatorV2):
                     "Make sure you have transpiled the circuit to the backend's target as well as applied the circuit layout to the observables.",
                 )
 
-            qc = pub.circuit.copy()
-            active_qubits = logically_active_qubits(pub.circuit)
-            qubit_indices = [qc.find_bit(q).index for q in active_qubits]
+            if any(creg.name == "__c" for creg in pub.circuit.cregs):
+                raise ValueError(
+                    f"The {i}-th pub's circuit already contains a classical register named "
+                    "'__c', which is reserved for estimator Pauli readout."
+                )
+
+            qc = pub.circuit.remove_final_measurements(inplace=False)
+            active_qubits = logically_active_qubits(qc)
             num_active_qubits = len(active_qubits)
             creg = ClassicalRegister(num_active_qubits, name="__c")
             qc.add_register(creg)
@@ -213,9 +206,7 @@ class QMEstimatorV2(BaseEstimatorV2):
             qc.measure(active_qubits, creg)
             qc = validate_circuits(qc)[0]
 
-            new_pub = EstimatorPub(
-                qc, pub.observables, pub.parameter_values, pub.precision
-            )
+            new_pub = EstimatorPub(qc, pub.observables, pub.parameter_values, pub.precision)
             new_pubs.append(new_pub)
 
         return new_pubs

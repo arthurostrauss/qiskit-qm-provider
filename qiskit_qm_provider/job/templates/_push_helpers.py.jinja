@@ -1,0 +1,30 @@
+def _coerce(value, qua_type):
+    if qua_type == "int":
+        return int(value)
+    if qua_type == "bool":
+        return bool(value)
+    return float(value)
+
+
+def _wait_until_paused(job, timeout=30):
+    # Inlined equivalent of qualang_tools.results.wait_until_job_is_paused so the
+    # sync hook stays free of any third-party dependency on the cloud side.
+    import time
+
+    start = time.time()
+    while (not job.is_paused()) and (time.time() - start < timeout):
+        time.sleep(0.1)
+    if not job.is_paused():
+        raise TimeoutError(f"Timeout ({timeout}s) reached waiting for job to pause.")
+
+
+def _push(job, input_type, name, value):
+    if input_type == "INPUT_STREAM":
+        job.push_to_input_stream(name, value)
+    elif input_type in ("IO1", "IO2"):
+        io = "io1" if input_type == "IO1" else "io2"
+        _wait_until_paused(job)
+        job.set_io_values(**{io: value})
+        job.resume()
+    else:
+        raise ValueError(f"Unsupported input_type {input_type!r} in sync hook")

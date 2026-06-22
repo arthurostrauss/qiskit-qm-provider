@@ -1,7 +1,7 @@
 """Tests for QMSamplerV2, QMEstimatorV2, and their options."""
 
 import pytest
-from qiskit.circuit import QuantumCircuit
+from qiskit.circuit import ClassicalRegister, QuantumCircuit
 
 from qiskit_qm_provider.primitives.qm_sampler import QMSamplerV2, QMSamplerOptions
 from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorV2, QMEstimatorOptions
@@ -63,8 +63,8 @@ class TestQMEstimatorOptions:
         assert opts.abelian_grouping is False
 
     def test_input_type_enum(self):
-        opts = QMEstimatorOptions(input_type=InputType.DGX_Q)
-        assert opts.input_type == InputType.DGX_Q
+        opts = QMEstimatorOptions(input_type=InputType.OPNIC)
+        assert opts.input_type == InputType.OPNIC
 
     def test_input_type_string_coercion(self):
         opts = QMEstimatorOptions(input_type="IO1")
@@ -112,6 +112,14 @@ class TestQMSamplerV2Init:
         sampler = QMSamplerV2(flux_tunable_backend, options=None)
         assert sampler.options.default_shots == 1024
 
+    @pytest.mark.parametrize("meas_level", ("kerneled", "avg_kerneled"))
+    def test_run_rejects_unsupported_meas_level(self, flux_tunable_backend, meas_level):
+        qc = QuantumCircuit(1, 1)
+        qc.measure(0, 0)
+        sampler = QMSamplerV2(flux_tunable_backend, options=QMSamplerOptions(meas_level=meas_level))
+        with pytest.raises(NotImplementedError, match="CLASSIFIED"):
+            sampler.run([qc])
+
 
 class TestQMEstimatorV2Init:
     def test_init_with_defaults(self, flux_tunable_backend):
@@ -125,9 +133,7 @@ class TestQMEstimatorV2Init:
         assert estimator.options.default_precision == 0.01
 
     def test_init_with_dict_options(self, flux_tunable_backend):
-        estimator = QMEstimatorV2(
-            flux_tunable_backend, options={"default_precision": 0.005}
-        )
+        estimator = QMEstimatorV2(flux_tunable_backend, options={"default_precision": 0.005})
         assert estimator.options.default_precision == 0.005
 
     def test_init_creates_switch_obs_circuit(self, flux_tunable_backend):
@@ -153,7 +159,7 @@ class TestQMSamplerV2ValidatePubs:
         from qiskit.primitives.containers.sampler_pub import SamplerPub
 
         pub = SamplerPub.coerce(qc, 1024)
-        with pytest.warns(UserWarning, match="no output classical registers"):
+        with pytest.warns(UserWarning, match="no measurement outputs"):
             sampler._validate_pubs([pub])
 
     def test_validate_pubs_adds_reset(self, flux_tunable_backend):
@@ -197,4 +203,64 @@ class TestQMEstimatorV2ValidatePubs:
 
         pub = EstimatorPub.coerce((qc, obs), precision=0.01)
         with pytest.raises(ValueError):
+            estimator.validate_estimator_pubs([pub])
+
+    def test_validate_strips_final_measurements(self, flux_tunable_backend):
+        from qiskit.quantum_info import SparsePauliOp
+        from qiskit.primitives.containers.estimator_pub import EstimatorPub
+
+        estimator = QMEstimatorV2(flux_tunable_backend)
+        n = flux_tunable_backend.num_qubits
+        qc = QuantumCircuit(n, 1)
+        qc.reset(0)
+        qc.h(0)
+        qc.measure(0, 0)
+
+        obs = SparsePauliOp.from_list([("Z" + "I" * (n - 1), 1.0)])
+        pub = EstimatorPub.coerce((qc, obs), precision=0.01)
+        new_pubs = estimator.validate_estimator_pubs([pub])
+
+        validated = new_pubs[0].circuit
+        __c = next(creg for creg in validated.cregs if creg.name == "__c")
+        measure_ops = [inst for inst in validated.data if inst.operation.name == "measure"]
+        assert len(measure_ops) == 1
+        assert all(clbit in __c for clbit in measure_ops[0].clbits)
+
+    def test_validate_preserves_mid_circuit_measurements(self, flux_tunable_backend):
+        from qiskit.quantum_info import SparsePauliOp
+        from qiskit.primitives.containers.estimator_pub import EstimatorPub
+
+        estimator = QMEstimatorV2(flux_tunable_backend)
+        n = flux_tunable_backend.num_qubits
+        qc = QuantumCircuit(n, 1)
+        qc.reset(0)
+        qc.h(0)
+        qc.measure(0, 0)
+        qc.x(0)
+
+        obs = SparsePauliOp.from_list([("Z" + "I" * (n - 1), 1.0)])
+        pub = EstimatorPub.coerce((qc, obs), precision=0.01)
+        new_pubs = estimator.validate_estimator_pubs([pub])
+
+        validated = new_pubs[0].circuit
+        measure_ops = [inst for inst in validated.data if inst.operation.name == "measure"]
+        __c = next(creg for creg in validated.cregs if creg.name == "__c")
+        assert len(measure_ops) == 2
+        assert measure_ops[0].clbits[0] not in __c
+        assert all(clbit in __c for clbit in measure_ops[-1].clbits)
+
+    def test_validate_reserved_creg_name_raises(self, flux_tunable_backend):
+        from qiskit.quantum_info import SparsePauliOp
+        from qiskit.primitives.containers.estimator_pub import EstimatorPub
+
+        estimator = QMEstimatorV2(flux_tunable_backend)
+        n = flux_tunable_backend.num_qubits
+        qc = QuantumCircuit(n)
+        qc.add_register(ClassicalRegister(1, "__c"))
+        qc.reset(0)
+        qc.h(0)
+
+        obs = SparsePauliOp.from_list([("Z" + "I" * (n - 1), 1.0)])
+        pub = EstimatorPub.coerce((qc, obs), precision=0.01)
+        with pytest.raises(ValueError, match="register named '__c'"):
             estimator.validate_estimator_pubs([pub])

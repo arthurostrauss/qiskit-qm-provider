@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""InputType and Direction enums for parameter/stream configuration (e.g. DGX_Q, INPUT_STREAM).
+"""InputType and Direction enums for parameter/stream configuration (e.g. OPNIC, INPUT_STREAM).
 
 Author: Arthur Strauss
 Date: 2026-02-08
 """
 
 from enum import Enum
-from typing import Optional, Union, ClassVar
+from typing import Optional
 
 
 class InputType(Enum):
     """How parameter values are delivered to the OPX during program execution."""
 
-    DGX_Q = "DGX_Q"
+    OPNIC = "OPNIC"
     INPUT_STREAM = "INPUT_STREAM"
     IO1 = "IO1"
     IO2 = "IO2"
@@ -55,17 +55,19 @@ class InputType(Enum):
 
 
 class Direction(Enum):
-    """
-    The direction of the data flow.
-    INCOMING: OPX -> DGX_Q
-    OUTGOING: DGX_Q -> OPX
+    """Data-flow direction for OPNIC packet streams, expressed from the **QUA program's**
+    perspective and aligned 1:1 with Quarc's ``Direction``.
 
-    Useful for defining DGX Quantum streams.
+    INCOMING: into the QUA program (classical/OPNIC -> OPX) — the ``rcv`` / ``push_to_opx``
+        direction.
+    OUTGOING: out of the QUA program (OPX -> classical/OPNIC) — the ``stream_back`` /
+        ``fetch_from_opx`` direction.
+    BOTH: bidirectional.
     """
 
-    INCOMING = "INCOMING"  # OPX -> DGX_Q
-    OUTGOING = "OUTGOING"  # DGX_Q -> OPX
-    BOTH = "BOTH"  # DGX_Q -> OPX and OPX -> DGX_Q
+    INCOMING = "INCOMING"  # into QUA (classical/OPNIC -> OPX)
+    OUTGOING = "OUTGOING"  # out of QUA (OPX -> classical/OPNIC)
+    BOTH = "BOTH"  # bidirectional
 
     def __str__(self) -> str:
         return self.value

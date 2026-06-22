@@ -10,12 +10,15 @@ This project is a **toolbox for crossing abstraction layers** between high-level
 ```{toctree}
 :hidden:
 
+installation
 workflows
 providers
 backend
+measurement_outputs
 primitives
 parameter_table
 error_correction
+changelog
 API Reference <apidocs/qm>
 GitHub <https://github.com/arthurostrauss/qiskit-qm-provider>
 ```
@@ -44,12 +47,22 @@ Underneath both paths, the backend reads your [QuAM](https://qua-platform.github
 pip install qiskit-qm-provider
 ```
 
+[quam-builder](https://github.com/qua-platform/quam-builder) is required for the built-in `FluxTunableTransmonBackend` and related QuAM components. It is not published on PyPI and must be installed from source:
+
+```bash
+pip install git+https://github.com/qua-platform/quam-builder.git@v0.4.0
+```
+
 For IQCC cloud access and QM SaaS simulation:
 
 ```bash
 pip install qiskit-qm-provider[iqcc]
-pip install qiskit-qm-provider[qm_saas]
+pip install qiskit-qm-provider[qm-saas]
 ```
+
+### Open Acceleration Stack (OAS) and QUARC
+
+Advanced real-time parameter workflows can be accelerated through Quantum Machines' **Open Acceleration Stack (OAS)**, which features an **OPNIC** link enabling high-bandwidth classical–quantum communication via **QUARC**. QUARC is currently in a **private alpha** and is not publicly available. If you are interested in using these capabilities, please reach out to the [Quantum Machines team](https://www.quantum-machines.co/contact/).
 
 ## Using Qiskit Experiments with this provider
 
@@ -75,9 +88,11 @@ Experiments that need raw **I & Q**, kerneled shots, or other non-discriminated 
 
 Use the sidebar to browse guides, then dive into the [API Reference](apidocs/qm.rst) for signatures:
 
+- **[Installation](installation.md)** — package install, quam-builder, optional extras, and OAS/QUARC.
 - **[Workflows](workflows.md)** — routing guide for the five main paths through the toolbox.
 - **[Providers](providers.md)** — obtain a backend for local QOP, QM SaaS, or IQCC.
 - **[Backend & Utilities](backend.md)** — [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst), embedding, utilities, custom gates.
+- **[Measurement outputs](measurement_outputs.md)** — [`QuaCircuitCompilation`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation.rst), [`MeasurementOutcomeTable`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.MeasurementOutcomeTable.rst), [`MeasurementRegisterField`](apidocs/stubs/qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField.rst).
 - **[Primitives](primitives.md)** — [`QMSamplerV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerV2.rst) and [`QMEstimatorV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMEstimatorV2.rst).
 - **[Parameter Table](parameter_table.md)** — [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) and real-time data flow.
 - **[Error-Correction Workflow](error_correction.md)** — hybrid EC pattern with [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst).

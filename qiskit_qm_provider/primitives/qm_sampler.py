@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from ..job.qm_sampler_job import QMSamplerJob, IQCCSamplerJob
 
-from ..backend.backend_utils import validate_circuits
+from ..backend.backend_utils import validate_circuits, require_classified_meas_level
 from ..parameter_table import InputType
 from ..backend.qm_backend import QMBackend
 from qiskit.result.models import MeasLevel, MeasReturnType
@@ -64,7 +64,7 @@ class QMSamplerOptions:
     - :class:`~.InputType.INPUT_STREAM`: Input stream mechanism.
     - :class:`~.InputType.IO1`: IO1.
     - :class:`~.InputType.IO2`: IO2.
-    - :class:`~.InputType.DGX_Q`: Using DGX Quantum communication.
+    - :class:`~.InputType.OPNIC`: Using OPNIC communication.
     - None: Preload at compile time the parameter values to the OPX (Warning: This should be used only for small number of parameters)
     Default: None."""
 
@@ -80,13 +80,9 @@ class QMSamplerOptions:
         if isinstance(self.input_type, str):
             self.input_type = InputType(self.input_type)
         if self.input_type is not None and not isinstance(self.input_type, InputType):
-            raise TypeError(
-                f"input_type must be of type InputType, got {type(self.input_type)}"
-            )
+            raise TypeError(f"input_type must be of type InputType, got {type(self.input_type)}")
         if self.run_options is not None and not isinstance(self.run_options, dict):
-            raise TypeError(
-                f"run_options must be a dictionary, got {type(self.run_options)}"
-            )
+            raise TypeError(f"run_options must be a dictionary, got {type(self.run_options)}")
 
 
 class QMSamplerV2(BaseSamplerV2):
@@ -97,9 +93,7 @@ class QMSamplerV2(BaseSamplerV2):
     supported end-to-end today.
     """
 
-    def __init__(
-        self, backend: QMBackend, options: QMSamplerOptions | dict | None = None
-    ):
+    def __init__(self, backend: QMBackend, options: QMSamplerOptions | dict | None = None):
         """Create a sampler bound to a QM backend.
 
         Args:
@@ -107,11 +101,7 @@ class QMSamplerV2(BaseSamplerV2):
             options: :class:`~.QMSamplerOptions` instance or options dict.
         """
         self._backend = backend
-        self._options = (
-            QMSamplerOptions(**options)
-            if isinstance(options, dict)
-            else options or QMSamplerOptions()
-        )
+        self._options = QMSamplerOptions(**options) if isinstance(options, dict) else options or QMSamplerOptions()
 
     @property
     def options(self) -> QMSamplerOptions:
@@ -123,9 +113,7 @@ class QMSamplerV2(BaseSamplerV2):
         """Return the backend"""
         return self._backend
 
-    def run(
-        self, pubs: Iterable[SamplerPubLike], *, shots: int | None = None
-    ) -> QMSamplerJob:
+    def run(self, pubs: Iterable[SamplerPubLike], *, shots: int | None = None) -> QMSamplerJob:
         """Run the sampler on the given pubs.
 
         Args:
@@ -141,32 +129,36 @@ class QMSamplerV2(BaseSamplerV2):
             shots = self._options.default_shots
         coerced_pubs = [SamplerPub.coerce(pub, shots) for pub in pubs]
         coerced_pubs = self._validate_pubs(coerced_pubs)
-        job_obj = (
-            QMSamplerJob
-            if isinstance(self.backend.qmm, QuantumMachinesManager)
-            else IQCCSamplerJob
-        )
+        job_obj = QMSamplerJob if isinstance(self.backend.qmm, QuantumMachinesManager) else IQCCSamplerJob
+        if self.options.input_type == InputType.OPNIC and issubclass(job_obj, IQCCSamplerJob):
+            raise NotImplementedError(
+                "OPNIC input_type is not yet supported for IQCC cloud jobs; use INPUT_STREAM or IO1/IO2."
+            )
         backend_options = deepcopy(self.backend.options.__dict__)
 
         backend_options["meas_level"] = meas_level_dict[self._options.meas_level]
-        backend_options["meas_return_type"] = meas_return_type_dict.get(
+        backend_options["meas_return"] = meas_return_type_dict.get(
             self._options.meas_level, MeasReturnType.SINGLE
         )
         backend_options["shots"] = shots
         backend_options.update(self._options.run_options or {})
+        require_classified_meas_level(
+            backend_options["meas_level"],
+            context="QMSamplerV2.run()",
+        )
         # Update Target of backend if needed
         self.backend.update_target(self.options.input_type)
-        job = job_obj(
-            self.backend, coerced_pubs, self.options.input_type, **backend_options
-        )
+        job = job_obj(self.backend, coerced_pubs, self.options.input_type, **backend_options)
         job.submit()
         return job
 
     def _validate_pubs(self, pubs: list[SamplerPub]):
         for i, pub in enumerate(pubs):
-            if len(pub.circuit.cregs) == 0:
+            from ..backend.backend_utils import measurement_output_bit_sizes
+
+            if not measurement_output_bit_sizes(pub.circuit):
                 warnings.warn(
-                    f"The {i}-th pub's circuit has no output classical registers and so the result "
+                    f"The {i}-th pub's circuit has no measurement outputs and so the result "
                     "will be empty. Did you mean to add measurement instructions?",
                     UserWarning,
                 )

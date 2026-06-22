@@ -48,8 +48,9 @@ from qm.jobs.pending_job import QmPendingJob
 from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qiskit_qm_provider.backend.backend_utils import (
     validate_circuits,
-    _QASM3_DUMP_LOOSE_BIT_PREFIX,
+    measurement_output_bit_sizes,
 )
+from .iqcc_job_mixin import IQCCJobMixin
 
 if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import CloudJob, CloudQuantumMachine
@@ -107,6 +108,9 @@ class QMJob(JobV1):
         This function encapsulates the data plumbing that was previously
         implemented as an inner closure in ``QMBackend.run``.
         """
+        from ..backend.backend_utils import require_classified_meas_level
+
+        require_classified_meas_level(meas_level, context="QMBackend.run()")
 
         def result_function(
             qm_job: RunningQmJob | List[RunningQmJob] | CloudJob | Dict,
@@ -141,37 +145,14 @@ class QMJob(JobV1):
                 qc_meas_data = {}
                 for creg, creg_size in cregs_dicts[i].items():
                     if is_job_list:
-                        data = (
-                            np.array(results_handle[i].get(f"{creg}_{i}").fetch_all())  # type: ignore[index]
-                            .flatten()
-                            .tolist()
-                        )
+                        raw = results_handle[i].get(f"{creg}_{i}").fetch_all()  # type: ignore[index]
                     elif isinstance(results_handle, result_handle_types):
-                        data = (
-                            np.array(results_handle.get(f"{creg}_{i}").fetch_all())  # type: ignore[index]
-                            .flatten()
-                            .tolist()
-                        )
+                        raw = results_handle.get(f"{creg}_{i}").fetch_all()  # type: ignore[index]
                     else:
-                        data = (
-                            np.array(results_handle.get(f"{creg}_{i}"))  # type: ignore[index]
-                            .flatten()
-                            .tolist()
-                        )
-
-                    if meas_level == MeasLevel.CLASSIFIED:
-                        bit_array = BitArray.from_samples(data, creg_size)
-                        qc_meas_data[creg] = bit_array
-                    elif meas_level == MeasLevel.KERNELED:
-                        if meas_return == MeasReturnType.SINGLE:
-                            qc_meas_data[creg] = np.array(
-                                [d[0] + 1j * d[1] for d in data],
-                                dtype=complex,
-                            )
-                        elif meas_return == MeasReturnType.AVERAGE:
-                            qc_meas_data[creg] = np.mean(
-                                [d[0] + 1j * d[1] for d in data],
-                            )
+                        raw = results_handle.get(f"{creg}_{i}")  # type: ignore[index]
+                    data = np.asarray(raw).tolist()
+                    bit_array = BitArray.from_samples(data, creg_size)
+                    qc_meas_data[creg] = bit_array
 
                 sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
                 all_data.append(sampler_data.join_data())
@@ -245,9 +226,7 @@ class QMJob(JobV1):
         if not isinstance(run_input, list):
             run_input = [run_input]
 
-        new_circuits = validate_circuits(
-            run_input, should_reset=not skip_reset, check_for_params=True
-        )
+        new_circuits = validate_circuits(run_input, should_reset=not skip_reset, check_for_params=True)
         num_circuits = len(new_circuits)
 
         # Synchronize backend target and (optionally) pulse calibrations
@@ -261,15 +240,7 @@ class QMJob(JobV1):
         qm = backend.qm
 
         job_id = "pending"
-        cregs_dicts: List[Dict[str, int]] = [
-            {creg.name: creg.size for creg in qc.cregs} for qc in new_circuits
-        ]
-        for i, qc in enumerate(new_circuits):
-            solo_bits = [
-                bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0
-            ]
-            if len(solo_bits) > 0:
-                cregs_dicts[i][_QASM3_DUMP_LOOSE_BIT_PREFIX] = len(solo_bits)
+        cregs_dicts: List[Dict[str, int]] = [measurement_output_bit_sizes(qc) for qc in new_circuits]
 
         result_function = cls._build_result_function(
             backend=backend,
@@ -337,9 +308,7 @@ class QMJob(JobV1):
             if "timeout" in self.metadata:
                 kwargs["options"] = {"timeout": self.metadata["timeout"]}
         if isinstance(simulate, SimulationConfig):
-            self._qm_job = self.qm.simulate(
-                self.program, simulate=simulate, compiler_options=compiler_options
-            )
+            self._qm_job = self.qm.simulate(self.program, simulate=simulate, compiler_options=compiler_options)
         else:
             if isinstance(self.program, list):
                 self._job_id = ""
@@ -376,11 +345,15 @@ class QMJob(JobV1):
         return self._qm_job
 
 
-class IQCCJob(QMJob):
+class IQCCJob(IQCCJobMixin, QMJob):
     """Job handle for IQCC cloud execution via :class:`~qiskit_qm_provider.providers.IQCCProvider`.
 
     Submits programs through the IQCC cloud client. Job status is not available via
     :meth:`status`; use IQCC cloud APIs to poll execution instead.
+
+    Inspect cloud-side logs and failures via :attr:`run_data`. When the remote runtime
+    failed, :meth:`result` raises :class:`~qiskit_qm_provider.job.IQCCCloudExecutionError`
+    with the cloud ``stderr`` instead of a misleading local stream error.
     """
 
     def __init__(
@@ -396,9 +369,7 @@ class IQCCJob(QMJob):
         self._qm_job = None
 
     def status(self) -> JobStatus:
-        raise NotImplementedError(
-            "IQCCJob does not support status method. Use IQCC_Cloud methods to check job status."
-        )
+        raise NotImplementedError("IQCCJob does not support status method. Use IQCC_Cloud methods to check job status.")
 
     def submit(self):
         """Submit the job to the IQCC backend."""
@@ -407,9 +378,7 @@ class IQCCJob(QMJob):
         try:
             config = self.metadata["config"]
         except KeyError:
-            raise ValueError(
-                "Job metadata must contain 'config' key for IQCC job submission"
-            )
+            raise ValueError("Job metadata must contain 'config' key for IQCC job submission")
 
         qm: IQCC_Cloud = self.qm
         timeout = self.metadata.get("timeout", None)

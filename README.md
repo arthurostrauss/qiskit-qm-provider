@@ -10,12 +10,22 @@
 pip install qiskit-qm-provider
 ```
 
+[quam-builder](https://github.com/qua-platform/quam-builder) is required for the built-in `FluxTunableTransmonBackend` and related QuAM components. It is not published on PyPI and must be installed from source:
+
+```bash
+pip install git+https://github.com/qua-platform/quam-builder.git@v0.4.0
+```
+
 For IQCC cloud access and QM SaaS simulation (requires `iqcc-cloud-client` and `qm-saas`):
 
 ```bash
 pip install qiskit-qm-provider[iqcc]
 pip install qiskit-qm-provider[qm-saas]
 ```
+
+### Open Acceleration Stack (OAS) and QUARC
+
+Advanced real-time parameter workflows can be accelerated through Quantum Machines' **Open Acceleration Stack (OAS)**, which features an **OPNIC** link enabling high-bandwidth classical–quantum communication via **QUARC**. QUARC is currently in a **private alpha** and is not publicly available. If you are interested in using these capabilities, please reach out to the [Quantum Machines team](https://www.quantum-machines.co/contact/).
 
 ## Documentation
 
@@ -122,7 +132,7 @@ Compiles the Qiskit `QuantumCircuit` into QUA instructions and inserts them into
 `quantum_circuit_to_qua` accepts a `param_table` argument that describes how symbolic and classical inputs are mapped to QUA. This is where the provider’s design diverges from standard Qiskit: parameters are not required to be bound at compile time; they can be bound **in real time** in QUA (e.g. as phase or amplitude of a pulse, or frame rotation). The tables are expected to fall into two conceptual categories:
 
 1. **Symbolic (circuit) parameters → real-time QUA variables**
-  Use `**ParameterTable.from_qiskit(qc, input_type=..., ...)`** to build a table from a circuit’s symbolic parameters. The table describes names and types for QUA variables that will hold values at runtime (e.g. loaded from an input stream, DGX Quantum, or set elsewhere in the QUA program). Those variables are assumed to be castable to real-time adjustable quantities (phase, amplitude, etc.). For more complex or custom workflows, consider reaching out to the maintainers.
+  Use `**ParameterTable.from_qiskit(qc, input_type=..., ...)`** to build a table from a circuit’s symbolic parameters. The table describes names and types for QUA variables that will hold values at runtime (e.g. loaded from an input stream, a QUARC-backed OPNIC packet, or set elsewhere in the QUA program). Those variables are assumed to be castable to real-time adjustable quantities (phase, amplitude, etc.). For more complex or custom workflows, consider reaching out to the maintainers.
   **Warning — parameter names:** The Quantum Orchestration Platform rejects parameter names that are not valid in its compilation pipeline. Qiskit often uses Greek letters or other non-ASCII symbols for symbolic parameters (e.g. `θ`, `φ`). When defining parameters that will be passed to `quantum_circuit_to_qua` or used with `ParameterTable.from_qiskit`, use **standard ASCII names** (e.g. `theta`, `phi`, `alpha`) so that the exported OpenQASM 3 and QUA compilation succeed.
 2. **Classical input variables (Qiskit “input vars”)**
   Qiskit supports [real-time typed classical data](https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.circuit.QuantumCircuit#working-with-real-time-typed-classical-data) via `Var` and input variables. These can represent values that are supplied from elsewhere in the QUA program or from a classical server. `ParameterTable.from_qiskit` can also incorporate these (symbolic and classical together), so a single table can feed both gate parameters and classical inputs into `quantum_circuit_to_qua`. That opens the door to **hybrid programs** (real-time feedback, adaptive circuits, classical control flow) in a way the traditional Qiskit circuit model does not natively support.
@@ -145,7 +155,7 @@ So: the “simple” path is the standard translation of Qiskit workflows throug
 
 We provide custom implementations of the standard Qiskit Primitives, `QMEstimatorV2` and `QMSamplerV2`, which are straightforward adaptations of the [standard Qiskit primitives](https://quantum.cloud.ibm.com/docs/en/guides/primitives). They leverage the core capabilities of the Quantum Orchestration Platform to optimize execution through:
 
-1. **Real-time Parameter Adjustment**: The ability to adjust parameter values in real-time and load them asynchronously using **Input Streaming** or **DGX Quantum**.
+1. **Real-time Parameter Adjustment**: The ability to adjust parameter values in real-time and load them asynchronously using **Input Streaming** or **QUARC-backed OPNIC**.
 2. **Real-time Control Flow**: The ability to perform real-time control flow to estimate different expectation values seamlessly across a single compilation of a quantum circuit (specifically for the Estimator primitive).
 
 ### Generated QUA program (debugging)
@@ -188,7 +198,7 @@ Both primitives accept an options object that controls how jobs are run and how 
 | Option          | Type                                         | Default        | Description                                                                                                                                                                                                    |
 | --------------- | -------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `default_shots` | `int`                                        | `1024`         | Default number of shots per circuit when not specified in `run()`.                                                                                                                                             |
-| `input_type`    | `InputType | None`                           | `None`         | How parameter values are loaded on the OPX: `InputType.INPUT_STREAM`, `InputType.IO1`, `InputType.IO2`, `InputType.DGX_Q`, or `None` (preload at compile time; use only for a small number of parameter sets). |
+| `input_type`    | `InputType | None`                           | `None`         | How parameter values are loaded on the OPX: `InputType.INPUT_STREAM`, `InputType.IO1`, `InputType.IO2`, `InputType.OPNIC`, or `None` (preload at compile time; use only for a small number of parameter sets). |
 | `run_options`   | `dict | None`                                | `None`         | Extra options passed through to the backend’s `run()` method.                                                                                                                                                  |
 | `meas_level`    | `"classified" | "kerneled" | "avg_kerneled"` | `"classified"` | Measurement level: classified (counts), kerneled (raw IQ per shot), or avg_kerneled (averaged).                                                                                                                |
 
@@ -200,11 +210,11 @@ Both primitives accept an options object that controls how jobs are run and how 
 | ------------------- | ------------------ | ---------- | --------------------------------------------------------------------------------------------------- |
 | `default_precision` | `float`            | `0.015625` | Default precision for expectation-value estimation when not specified in `run()` (e.g. 1/√4096).    |
 | `abelian_grouping`  | `bool`             | `True`     | Whether to group observables into qubit-wise commuting sets.                                        |
-| `input_type`        | `InputType | None` | `None`     | Same as for the Sampler: `INPUT_STREAM`, `IO1`, `IO2`, `DGX_Q`, or `None` for compile-time preload. |
+| `input_type`        | `InputType | None` | `None`     | Same as for the Sampler: `INPUT_STREAM`, `IO1`, `IO2`, `OPNIC`, or `None` for compile-time preload. |
 | `run_options`       | `dict | None`      | `None`     | Extra options passed through to the backend’s `run()` method.                                       |
 
 
-**InputType** (from `qiskit_qm_provider`): `INPUT_STREAM` (real-time input stream), `IO1`, `IO2` (I/O channels), or `DGX_Q` (DGX Quantum communication). Use `None` to bind all parameter values at compile time.
+**InputType** (from `qiskit_qm_provider`): `INPUT_STREAM` (real-time input stream), `IO1`, `IO2` (I/O channels), or `OPNIC` (QUARC-backed host↔OPX packet communication). Use `None` to bind all parameter values at compile time.
 
 Standalone examples for the Sampler and Estimator are in the [examples](examples/) folder.
 
@@ -214,14 +224,12 @@ We envision this tool as more than just a Qiskit bridge; it is a new interface t
 
 ### Workflow: Embedding and Processing
 
-When embedding Qiskit circuits into QUA programs, the typical workflow involves two steps using `backend.quantum_circuit_to_qua()` and `get_measurement_outcomes()`:
+When embedding Qiskit circuits into QUA programs, compile with `backend.quantum_circuit_to_qua()` and read classical outcomes from the returned **`QuaCircuitCompilation`** wrapper:
 
-1. `**backend.quantum_circuit_to_qua(qc, ...)`**: This function compiles the Qiskit circuit into QUA instructions and inserts them into the current QUA program context. It returns a result object.
-2. `**get_measurement_outcomes(qc, result, compute_state_int=True)**`: This utility function takes the circuit and the result from the previous step. It returns a dictionary containing all the circuit classical registers names (as you would collect them from `qc` by doing `[creg.name for creg in qc.cregs]`) as keys and the following dictionaries as values:
-  - `"value"`: QUA array of boolean variables storing all the measured classical bits included in the `ClassicalRegister` object.
-  - `"size"`:  The size (Python integer) relative to the `ClassicalRegister` (i.e., its number of bits).
-  - `**state_int**`, a QUA integer variable representing the integer representation formed by all the bits measured in this register. This can be useful for bitpacking.
-  - `"stream"`: a stream object that can be retrieved to perform arbitrary saving of the variables obtained by the circuit for this register, and that can be used for buffering in the `stream_processing` segment of the QUA program
+1. **`comp = backend.quantum_circuit_to_qua(qc, ...)`** — compiles the Qiskit circuit into QUA instructions inside the current `with program():` block. Returns a `QuaCircuitCompilation` that delegates to the underlying `CompilationResult` (`.result_program`, `.name`, …) and exposes **`comp.outputs`**: a local-only `MeasurementOutcomeTable` of `MeasurementRegisterField` handles (one per classical register, plus `_bit0`, … for loose clbits).
+2. **Access measurement outputs** — `comp.outputs["c"]` returns the QUA var; use `comp.outputs.state_ints["c"]` and `comp.outputs.streams["c"]` for packed integers and streams. Field handles: `comp.outputs.get_parameter("c")`. `comp.outputs` is not registered in the runtime OPNIC registry; bridge to transport tables manually when needed.
+
+Legacy **`get_measurement_outcomes(qc, comp, compute_state_int=True)`** remains available and returns the older dict-of-dicts API (`"value"`, `"is_array"`, `"length"`, `"state_int"`, `"stream"` per register; loose clbits appear under per-bit keys `_bit0`, `_bit1`, …). Every entry is sourced from `comp.outputs`.
 
 ### Example: Embedding Qiskit Circuits in QUA
 
@@ -232,14 +240,13 @@ from qiskit_qm_provider import ParameterTable
 # ... Define Qiskit circuit 'qc' ...
 
 with program() as prog:
-    # Embed the Qiskit circuit as a QUA macro
-    # param_table allows passing real-time QUA variables to the circuit parameters
-    backend.quantum_circuit_to_qua(qc, param_table=my_param_table)
+    comp = backend.quantum_circuit_to_qua(qc, param_table=my_param_table)
+    save(comp.outputs.state_ints["c"], comp.outputs.streams["c"])
 ```
 
 ### Error Correction and Parameter Table
 
-For scalable error correction workflows, where hybrid classical-quantum computing is essential, we introduce the **Parameter Table**. This module provides a full interface to express parametric programs and seamless communication between a client (or DGX Quantum server) and the QUA program.
+For scalable error correction workflows, where hybrid classical-quantum computing is essential, we introduce the **Parameter Table**. This module provides a full interface to express parametric programs and seamless communication between a client (or classical host over QUARC-backed OPNIC) and the QUA program.
 
 Below is an example of an error correction workflow where data handling is critical. This showcases how to deal with parameter wake workflows when Qiskit cannot save data on the fly but must store it in new memory slots for each syndrome declaration. Note the use of `get_measurement_outcomes` to extract the syndrome state for feedback.
 
@@ -274,8 +281,8 @@ with program() as qec_prog:
     round = declare(int)
 
     # Declare variables for parameters
-    recovery_vars.declare_variables()
-    syndrome_data.declare_variable()
+    recovery_vars.declare()
+    syndrome_data.declare()
     syndrome_data.declare_stream()
 
     if backend.init_macro:
@@ -295,11 +302,11 @@ with program() as qec_prog:
             syndrome_data.stream_back(reset=True)
 
         # Load recovery variables (simulating feedback latency/calculation)
-        recovery_vars.load_input_values()
+        recovery_vars.rcv()
         # Execute recovery circuit with updated parameters
         recovery_circuit_result = backend.quantum_circuit_to_qua(recovery_circuit, recovery_vars)
 
-    if input_type != InputType.DGX_Q:
+    if input_type != InputType.OPNIC:
         with stream_processing():
             syndrome_data.stream_processing()
 ```
@@ -323,8 +330,8 @@ ParameterTable(parameters_dict, name=None)
 
 #### Methods
 
-- `**declare_variables(pause_program=False)**`: QUA Macro to declare all QUA variables associated with the table.
-- `**load_input_values(filter_function=None)**`: QUA Macro to load input values from the input stream/IO/DGX Quantum.
+- `**declare(pause_program=False)**`: QUA Macro to declare all QUA variables associated with the table.
+- `**rcv(filter_function=None)**`: QUA Macro to load input values from the input stream / IO / QUARC-backed OPNIC.
 - `**push_to_opx(param_dict, job, qm, verbosity)**`: Client function to push values to the OPX.
 - `**fetch_from_opx(job, fetching_index, fetching_size)**`: Client function to fetch values from the OPX.
 - `**stream_back(reset=False)**`: QUA Macro to stream values back to the client/server.
@@ -347,7 +354,7 @@ This provider is compatible with both **Qiskit 1.x** and **Qiskit 2.x**.
 
 ### Philosophy: Qiskit embedded in QUA
 
-The provider is built in two layers. The first is the **traditional** one: run Qiskit circuits via `backend.run()` or the primitives (`QMSampler`, `QMEstimator`); the backend compiles circuits to QUA and executes them, with optional real-time parameter and control-flow features. The second layer is an **extended** use of Qiskit: circuits are not only submitted as jobs but can be **embedded inside larger QUA programs** via `quantum_circuit_to_qua`. In that regime, Qiskit is used to define subroutines (circuits and, where applicable, Pulse schedules) that are inlined as QUA macros, with parameters and classical inputs supplied through **ParameterTables**—bound in real time in QUA rather than at Python compile time. That extension is what enables tight integration with real-time QUA processing and hybrid classical–quantum workloads (feedback, streaming, DGX, etc.) while still writing algorithms in familiar Qiskit terms. Custom gates and calibrations (below) are the way to teach the backend new circuit-level or pulse-level operations so that both the Qiskit Target and the OpenQASM3→QUA compiler stay in sync.
+The provider is built in two layers. The first is the **traditional** one: run Qiskit circuits via `backend.run()` or the primitives (`QMSampler`, `QMEstimator`); the backend compiles circuits to QUA and executes them, with optional real-time parameter and control-flow features. The second layer is an **extended** use of Qiskit: circuits are not only submitted as jobs but can be **embedded inside larger QUA programs** via `quantum_circuit_to_qua`. In that regime, Qiskit is used to define subroutines (circuits and, where applicable, Pulse schedules) that are inlined as QUA macros, with parameters and classical inputs supplied through **ParameterTables**—bound in real time in QUA rather than at Python compile time. That extension is what enables tight integration with real-time QUA processing and hybrid classical–quantum workloads (feedback, streaming, QUARC/OPNIC, etc.) while still writing algorithms in familiar Qiskit terms. Custom gates and calibrations (below) are the way to teach the backend new circuit-level or pulse-level operations so that both the Qiskit Target and the OpenQASM3→QUA compiler stay in sync.
 
 ### Qiskit 1.x (Pulse Support)
 

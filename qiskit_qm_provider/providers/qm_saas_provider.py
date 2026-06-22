@@ -70,16 +70,12 @@ class QmSaasProvider:
                 password = config["password"]
                 host = config["host"]
             except FileNotFoundError:
-                raise FileNotFoundError(
-                    "QM Saas config file not found. Please provide email, password, and host."
-                )
+                raise FileNotFoundError("QM Saas config file not found. Please provide email, password, and host.")
         self.email = email
         self.password = password
         self.host = host
         self._client = QmSaas(email=email, password=password, host=host)
-        self._version = (
-            QOPVersion(version) if version is not None else self.client.latest_version()
-        )
+        self._version = QOPVersion(version) if version is not None else self.client.latest_version()
         self._instance = self._client.simulator(version=self.version)
 
     def get_machine(
