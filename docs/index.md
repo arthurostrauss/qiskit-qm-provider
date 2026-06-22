@@ -17,6 +17,7 @@ measurement_outputs
 primitives
 parameter_table
 error_correction
+changelog
 API Reference <apidocs/qm>
 GitHub <https://github.com/arthurostrauss/qiskit-qm-provider>
 ```

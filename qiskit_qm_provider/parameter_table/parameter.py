@@ -105,7 +105,14 @@ def infer_type(
     if isinstance(value, int):
         return int
     if isinstance(value, float):
-        return fixed if not value.is_integer() or value <= 8 else int
+        if not value.is_integer():
+            if np.abs(value) >= 8:
+                raise ValueError(
+                    f"Float value {value} is outside the QUA fixed-point range [-8, 8). "
+                    "Pass an explicit qua_type=int if a large integer was intended."
+                )
+            return fixed
+        return int
 
     # Handle array values
     if isinstance(value, (List, np.ndarray)):
@@ -412,7 +419,7 @@ class Parameter:
                         the parameter length, or if the input is invalid.
         """
         if not self.is_declared:
-            raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
+            self.declare()
         if (condition is not None) != (value_cond is not None):
             raise ValueError("Both condition and value_cond must be provided.")
 
@@ -424,7 +431,7 @@ class Parameter:
 
         if isinstance(value, Parameter):
             if not value.is_declared:
-                raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
+                value.declare()
             if value.length != self.length:
                 raise ValueError(
                     f"Invalid input. Mismatch in length of {self.name} ({self.length}) and {value.name} ({value.length})."

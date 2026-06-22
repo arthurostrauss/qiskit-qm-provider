@@ -6,7 +6,7 @@ and runs a T1 relaxation-time experiment from the qiskit-experiments library.
 Requires: qiskit-experiments, iqcc_cloud_client, and IQCC API access.
 """
 
-from qiskit_qm_provider import IQCCProvider
+from qiskit_qm_provider import IQCCProvider, add_basic_macros
 
 # Backend name at IQCC (e.g. "qolab", "arbel")
 backend_name = "arbel"
@@ -14,7 +14,7 @@ backend_name = "arbel"
 # Get backend from IQCC (option 1: by name; option 2: get_machine then get_backend)
 iqcc_provider = IQCCProvider()  # api_token=... or set IQCC_API_TOKEN
 backend = iqcc_provider.get_backend(backend_name)
-
+add_basic_macros(backend)
 # Run T1 experiment using Qiskit Experiments
 try:
     from qiskit_experiments.library import T1

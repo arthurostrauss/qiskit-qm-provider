@@ -37,4 +37,5 @@ Open `docs/_build/html/index.html` in your browser.
 - [Primitives](primitives.md) — QOP-aware Sampler and Estimator.
 - [Parameter Table](parameter_table.md) — hybrid classical–quantum data flow.
 - [Error-Correction Workflow](error_correction.md) — EC pattern with `ParameterTable`.
+- [Changelog](changelog.md) — release notes.
 - [API Reference](apidocs/qm.rst) — autodoc module index.

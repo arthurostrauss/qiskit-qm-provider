@@ -158,29 +158,27 @@ def _process_observables_with_circuit(
     if obs_length_var is not None:
         obs_length_var.declare()
     if plan.observables_var.input_type is None:
-        obs_indices_qua_list = [
-            QUA2DArray(f"obs_indices_{j}", np.array(obs_indices, dtype=np.int32), qua_type=int)
-            for j, obs_indices in enumerate(plan.obs_indices)
-        ]
-        for obs_indices_qua_item in obs_indices_qua_list:
-            obs_indices_qua_item.declare()
+        # Flatten all parameter-group observable indices into a single (total_tasks, num_qubits) array
+        # so that ONE QUA for loop covers all tasks and all shots flow into the same stream handles.
+        all_obs_flat = np.vstack([np.array(g, dtype=np.int32) for g in plan.obs_indices])
+        obs_indices_all = QUA2DArray("obs_indices_all", all_obs_flat, qua_type=int)
+        obs_indices_all.declare()
 
-            with for_(obs_idx, 0, obs_idx < obs_indices_qua_item.n_rows, obs_idx + 1):
-                plan.observables_var.assign_parameters(
-                    {f"obs_{i}": obs_indices_qua_item[obs_idx, i] for i in range(num_qubits)}
-                )
-                # Combine param_table and observables_var if param_table is provided
-                process_param_table = (
-                    [plan.param_table, plan.observables_var] if plan.param_table is not None else plan.observables_var
-                )
-                outputs = _process_circuit(
-                    plan.pub.circuit,
-                    backend,
-                    plan.shots,
-                    param_table=process_param_table,
-                    compute_state_int=False,
-                    **kwargs,
-                )
+        process_param_table = (
+            [plan.param_table, plan.observables_var] if plan.param_table is not None else plan.observables_var
+        )
+        with for_(obs_idx, 0, obs_idx < obs_indices_all.n_rows, obs_idx + 1):
+            plan.observables_var.assign_parameters(
+                {f"obs_{i}": obs_indices_all[obs_idx, i] for i in range(num_qubits)}
+            )
+            outputs = _process_circuit(
+                plan.pub.circuit,
+                backend,
+                plan.shots,
+                param_table=process_param_table,
+                compute_state_int=False,
+                **kwargs,
+            )
     else:
         if obs_length_var is not None:
             obs_length_var.rcv()
@@ -325,9 +323,8 @@ def get_run_program(backend: QMBackend, num_shots, circuits: List[QuantumCircuit
                 )
                 outputs_tables.append(outputs)
 
-            with stream_processing():
-                for i, outputs in enumerate(outputs_tables):
-                    for creg_name, field in outputs.table.items():
+                with stream_processing():
+                    for creg_name, field in outputs_tables[-1].table.items():
                         field.stream.save_all(f"{creg_name}_{j}")
             progs.append(prog)
 

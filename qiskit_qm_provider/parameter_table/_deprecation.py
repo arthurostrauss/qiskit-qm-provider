@@ -49,11 +49,14 @@ class _DeprecatedAlias:
         self._deprecated = name
 
     def __get__(self, obj: Any, objtype: Any = None) -> Any:
+        if obj is None:
+            # Class-level access (e.g. inspect.getmembers, hasattr) — return the descriptor
+            # itself so introspection tools don't fire spurious DeprecationWarnings.
+            return self
         warnings.warn(
             f"{self._deprecated}() is deprecated and will be removed in "
             f"v{self._removal}. Use {self._canonical}() instead.",
             DeprecationWarning,
             stacklevel=2,
         )
-        target = obj if obj is not None else objtype
-        return getattr(target, self._canonical)
+        return getattr(obj, self._canonical)

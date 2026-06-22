@@ -265,7 +265,7 @@ class QMEstimatorJob(QMPrimitiveJob):
         """Submit the job to the backend after creating an efficient execution plan."""
         if self._qm_job is not None:
             raise RuntimeError("Job has already been submitted.")
-
+        estimator_prog = self._program
         compiler_options = self.metadata.get("compiler_options", None)
         simulate = self.metadata.get("simulate", None)
         # 3. EXECUTION: Start the QUA program on the OPX. It will wait for data.

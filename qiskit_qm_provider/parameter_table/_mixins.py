@@ -148,6 +148,10 @@ class QuaFieldTable:
 
     def __getattr__(self, item: str) -> Any:
         """Attribute access by field name — returns the QUA variable (not the handle)."""
+        if item == "table":
+            # Guard against infinite recursion if table hasn't been set yet
+            # (e.g. during __init__ before assignment, or during unpickling).
+            raise AttributeError("table")
         if item in self.table:
             require_qua_program(f"{type(self).__name__}.__getattr__")
             return self.table[item].var
