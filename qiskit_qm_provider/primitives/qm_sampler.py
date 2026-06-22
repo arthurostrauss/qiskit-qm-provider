@@ -136,8 +136,10 @@ class QMSamplerV2(BaseSamplerV2):
             )
         backend_options = deepcopy(self.backend.options.__dict__)
 
+        # Map QMSamplerOptions string meas_level to backend.run / job metadata enums
+        # (MeasLevel / MeasReturnType), matching QMBackend.options — not the string API.
         backend_options["meas_level"] = meas_level_dict[self._options.meas_level]
-        backend_options["meas_return_type"] = meas_return_type_dict.get(self._options.meas_level, MeasReturnType.SINGLE)
+        backend_options["meas_return"] = meas_return_type_dict.get(self._options.meas_level, MeasReturnType.SINGLE)
         backend_options["shots"] = shots
         backend_options.update(self._options.run_options or {})
         # Update Target of backend if needed

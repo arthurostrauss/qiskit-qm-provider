@@ -50,6 +50,7 @@ from qiskit_qm_provider.backend.backend_utils import (
     validate_circuits,
     measurement_output_bit_sizes,
 )
+from .iqcc_job_mixin import IQCCJobMixin
 
 if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import CloudJob, CloudQuantumMachine
@@ -141,19 +142,12 @@ class QMJob(JobV1):
                 qc_meas_data = {}
                 for creg, creg_size in cregs_dicts[i].items():
                     if is_job_list:
-                        data = (
-                            np.array(results_handle[i].get(f"{creg}_{i}").fetch_all())  # type: ignore[index]
-                            .flatten()
-                            .tolist()
-                        )
+                        raw = results_handle[i].get(f"{creg}_{i}").fetch_all()  # type: ignore[index]
                     elif isinstance(results_handle, result_handle_types):
-                        data = (
-                            np.array(results_handle.get(f"{creg}_{i}").fetch_all())  # type: ignore[index]
-                            .flatten()
-                            .tolist()
-                        )
+                        raw = results_handle.get(f"{creg}_{i}").fetch_all()  # type: ignore[index]
                     else:
-                        data = np.array(results_handle.get(f"{creg}_{i}")).flatten().tolist()  # type: ignore[index]
+                        raw = results_handle.get(f"{creg}_{i}")  # type: ignore[index]
+                    data = np.asarray(raw).tolist()
 
                     if meas_level == MeasLevel.CLASSIFIED:
                         bit_array = BitArray.from_samples(data, creg_size)
@@ -360,11 +354,15 @@ class QMJob(JobV1):
         return self._qm_job
 
 
-class IQCCJob(QMJob):
+class IQCCJob(IQCCJobMixin, QMJob):
     """Job handle for IQCC cloud execution via :class:`~qiskit_qm_provider.providers.IQCCProvider`.
 
     Submits programs through the IQCC cloud client. Job status is not available via
     :meth:`status`; use IQCC cloud APIs to poll execution instead.
+
+    Inspect cloud-side logs and failures via :attr:`run_data`. When the remote runtime
+    failed, :meth:`result` raises :class:`~qiskit_qm_provider.job.IQCCCloudExecutionError`
+    with the cloud ``stderr`` instead of a misleading local stream error.
     """
 
     def __init__(

@@ -34,6 +34,47 @@ if TYPE_CHECKING:
     from .qm_estimator_job import _ExecutionPlan
 
 
+def _estimator_process_param_table(plan: _ExecutionPlan):
+    if plan.param_table is not None:
+        return [plan.param_table, plan.observables_var]
+    return plan.observables_var
+
+
+def _obs_indices_flat(plan: _ExecutionPlan) -> np.ndarray:
+    return np.vstack([np.array(group, dtype=np.int32) for group in plan.obs_indices])
+
+
+def _declare_obs_indices_all(plan: _ExecutionPlan, name: str) -> QUA2DArray:
+    obs_indices_all = QUA2DArray(name, _obs_indices_flat(plan), qua_type=int)
+    obs_indices_all.declare()
+    return obs_indices_all
+
+
+def _declare_compile_time_obs_arrays(plan: _ExecutionPlan, name_prefix: str):
+    """Length, offset, and index tables for a compile-time parameter sweep."""
+    obs_lengths = np.array([len(group) for group in plan.obs_indices], dtype=np.int32)
+    obs_offsets = np.concatenate([[0], np.cumsum(obs_lengths[:-1])]).astype(np.int32)
+    obs_lengths_qua = QUA2DArray(
+        f"obs_lengths_{name_prefix}",
+        obs_lengths.reshape(-1, 1),
+        qua_type=int,
+    )
+    obs_offsets_qua = QUA2DArray(
+        f"obs_offsets_{name_prefix}",
+        obs_offsets.reshape(-1, 1),
+        qua_type=int,
+    )
+    obs_indices_all = QUA2DArray(
+        f"obs_indices_{name_prefix}",
+        _obs_indices_flat(plan),
+        qua_type=int,
+    )
+    obs_lengths_qua.declare()
+    obs_offsets_qua.declare()
+    obs_indices_all.declare()
+    return obs_lengths_qua, obs_offsets_qua, obs_indices_all
+
+
 def _process_circuit(
     qc: QuantumCircuit,
     backend: QMBackend,
@@ -152,50 +193,45 @@ def _process_observables_with_circuit(
         **kwargs: Additional arguments for _process_circuit
     """
     obs_length_var = kwargs.get("obs_length_var", None)
+    param_binding_var = kwargs.get("param_binding_var", None)
+    obs_lengths_qua = kwargs.get("obs_lengths_qua", None)
+    obs_offsets_qua = kwargs.get("obs_offsets_qua", None)
+    obs_indices_all = kwargs.get("obs_indices_all", None)
     obs_idx = declare(int)
     num_qubits = len(plan.active_qubit_indices)
     plan.observables_var.declare()
     if obs_length_var is not None:
         obs_length_var.declare()
-    if plan.observables_var.input_type is None:
-        # Flatten all parameter-group observable indices into a single (total_tasks, num_qubits) array
-        # so that ONE QUA for loop covers all tasks and all shots flow into the same stream handles.
-        all_obs_flat = np.vstack([np.array(g, dtype=np.int32) for g in plan.obs_indices])
-        obs_indices_all = QUA2DArray("obs_indices_all", all_obs_flat, qua_type=int)
-        obs_indices_all.declare()
 
-        process_param_table = (
-            [plan.param_table, plan.observables_var] if plan.param_table is not None else plan.observables_var
+    process_param_table = _estimator_process_param_table(plan)
+    circuit_kwargs = dict(
+        param_table=process_param_table,
+        compute_state_int=False,
+        **kwargs,
+    )
+
+    if plan.observables_var.input_type is None:
+        per_binding = param_binding_var is not None and obs_lengths_qua is not None
+        if obs_indices_all is None:
+            obs_indices_all = _declare_obs_indices_all(plan, "obs_indices_all")
+        obs_loop_count = (
+            obs_lengths_qua[param_binding_var, 0] if per_binding else obs_indices_all.n_rows
         )
-        with for_(obs_idx, 0, obs_idx < obs_indices_all.n_rows, obs_idx + 1):
+
+        with for_(obs_idx, 0, obs_idx < obs_loop_count, obs_idx + 1):
+            obs_row = (
+                obs_offsets_qua[param_binding_var, 0] + obs_idx if per_binding else obs_idx
+            )
             plan.observables_var.assign_parameters(
-                {f"obs_{i}": obs_indices_all[obs_idx, i] for i in range(num_qubits)}
+                {f"obs_{i}": obs_indices_all[obs_row, i] for i in range(num_qubits)}
             )
-            outputs = _process_circuit(
-                plan.pub.circuit,
-                backend,
-                plan.shots,
-                param_table=process_param_table,
-                compute_state_int=False,
-                **kwargs,
-            )
+            outputs = _process_circuit(plan.pub.circuit, backend, plan.shots, **circuit_kwargs)
     else:
         if obs_length_var is not None:
             obs_length_var.rcv()
         with for_(obs_idx, 0, obs_idx < obs_length_var.var, obs_idx + 1):
             plan.observables_var.rcv()
-            # Combine param_table and observables_var if param_table is provided
-            process_param_table = (
-                [plan.param_table, plan.observables_var] if plan.param_table is not None else plan.observables_var
-            )
-            outputs = _process_circuit(
-                plan.pub.circuit,
-                backend,
-                plan.shots,
-                param_table=process_param_table,
-                compute_state_int=False,
-                **kwargs,
-            )
+            outputs = _process_circuit(plan.pub.circuit, backend, plan.shots, **circuit_kwargs)
 
     return outputs
 
@@ -219,16 +255,20 @@ def _process_estimator_pub(
             **kwargs,
         )
     else:
-        # Process with both param_table and observables_var
         p = declare(int)
         plan.param_table.declare()
+        param_values_qua = None
+        obs_lengths_qua = obs_offsets_qua = obs_indices_all = None
         if plan.param_table.input_type is None:
-            # Declare the parameters at compile time
             param_values_qua = QUA2DArray(
                 f"param_values_{plan.param_table.name}",
                 plan.pub.parameter_values.ravel().as_array(),
             )
             param_values_qua.declare()
+            if plan.observables_var.input_type is None:
+                obs_lengths_qua, obs_offsets_qua, obs_indices_all = _declare_compile_time_obs_arrays(
+                    plan, plan.param_table.name
+                )
 
         with for_(p, 0, p < plan.pub.parameter_values.ravel().size, p + 1):
             if plan.param_table.input_type is None:
@@ -238,10 +278,13 @@ def _process_estimator_pub(
             else:
                 plan.param_table.rcv()
 
-            # Process observables with the additional param_table
             outputs = _process_observables_with_circuit(
                 plan,
                 backend,
+                param_binding_var=p if obs_lengths_qua is not None else None,
+                obs_lengths_qua=obs_lengths_qua,
+                obs_offsets_qua=obs_offsets_qua,
+                obs_indices_all=obs_indices_all,
                 **kwargs,
             )
     return outputs

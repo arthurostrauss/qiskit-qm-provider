@@ -101,6 +101,32 @@ QMSamplerV2(backend=backend, options=QMSamplerOptions(input_type=InputType.OPNIC
 # NotImplementedError: OPNIC input_type is not yet supported for IQCC cloud jobs; use INPUT_STREAM or IO1/IO2.
 ```
 
+### IQCC cloud failures and `run_data`
+
+Cloud-side failures (config validation, `open_qm` errors, etc.) often surface locally as a misleading `KeyError` on a measurement stream (for example `KeyError: '__c_0'`) because the QUA program never reached the streaming stage.
+
+All IQCC wrapper jobs — [`IQCCJob`](apidocs/stubs/qiskit_qm_provider.job.qm_job.IQCCJob.rst), [`IQCCSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.qm_sampler_job.IQCCSamplerJob.rst), and [`IQCCEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.qm_estimator_job.IQCCEstimatorJob.rst) — expose the raw IQCC execution record on **`job.run_data`** (backed by `job.qm_job._run_data`). Typical keys:
+
+| Key | Content |
+|-----|---------|
+| `stdout` | QM / QOP log lines from the cloud runtime |
+| `stderr` | Python traceback when the remote script failed |
+| `result` | Timing and fridge metadata when execution completed |
+
+When `job.result()` is called, the wrapper inspects `run_data["stderr"]` and, if it contains a Python traceback, raises [`IQCCCloudExecutionError`](apidocs/stubs/qiskit_qm_provider.job.iqcc_job_mixin.IQCCCloudExecutionError.rst) with the **exact cloud stderr** as the exception message — instead of a local stream `KeyError`.
+
+```python
+from qiskit_qm_provider.job import IQCCCloudExecutionError
+
+try:
+    result = job.result()
+except IQCCCloudExecutionError as exc:
+    print(exc)  # full cloud traceback
+    print(job.run_data["stdout"])  # e.g. PHYSICAL CONFIG ERROR lines
+```
+
+You can also inspect `job.run_data` after submission without calling `result()` when debugging a failed cloud run.
+
 ## Debugging generated QUA
 
 Every primitive job and `backend.run()` exposes the generated QUA `Program` on `job.program`:

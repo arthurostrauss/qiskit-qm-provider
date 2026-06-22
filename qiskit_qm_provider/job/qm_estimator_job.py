@@ -42,6 +42,7 @@ from ..parameter_table import (
     ParameterPool,
     Parameter as QuaParameter,
 )
+from .iqcc_job_mixin import IQCCJobMixin
 from .qua_programs import estimator_program
 from .qm_primitive_job import QMPrimitiveJob
 from ..primitives.qm_estimator import QMEstimatorOptions
@@ -65,6 +66,7 @@ class _ExecutionPlan:
     observables_var: ParameterTable
     param_table: Optional[ParameterTable]
     active_qubits: List[Qubit]
+    param_group_keys: List[tuple] = field(default_factory=list)
 
     @classmethod
     def from_pub(cls, pub: EstimatorPub, options: QMEstimatorOptions):
@@ -92,7 +94,9 @@ class _ExecutionPlan:
 
         metadata = []
         obs_indices_list = []
+        param_group_keys = []
         for param_index, pauli_strings in param_obs_map.items():
+            param_group_keys.append(param_index)
             meas_paulis = PauliList(sorted(pauli_strings))
             meas_paulis_active = get_non_trivial_observables(
                 meas_paulis, [circuit.find_bit(q).index for q in active_qubits]
@@ -150,11 +154,59 @@ class _ExecutionPlan:
             observables_var,
             param_table,
             active_qubits,
+            param_group_keys,
         )
 
     @property
     def total_tasks(self) -> int:
         return sum(len(obs_indices_list) for obs_indices_list in self.obs_indices)
+
+    @property
+    def uses_compile_time_param_bindings(self) -> bool:
+        """``True`` when circuit parameters are preloaded in QUA (``input_type is None``)."""
+        return (
+            self.param_table is not None
+            and bool(self.param_table.parameters)
+            and self.param_table.input_type is None
+        )
+
+    @property
+    def stream_buffer_count(self) -> int:
+        """Number of ``(shots, n_bits)`` buffers saved to the ``__c`` stream.
+
+        With a parameter sweep, each binding runs only its own observable tasks,
+        so buffers accumulate as ``sum(len(obs_indices[p]))``.
+        """
+        if self.param_table is None or not self.param_table.parameters:
+            return self.total_tasks
+        return sum(len(group) for group in self.obs_indices)
+
+    def stream_indices_for_metadata(self) -> List[int]:
+        """Map each metadata task to its row in the flattened ``__c`` stream."""
+        obs_row_starts: List[int] = []
+        offset = 0
+        for group in self.obs_indices:
+            obs_row_starts.append(offset)
+            offset += len(group)
+
+        has_param_loop = self.param_table is not None and bool(self.param_table.parameters)
+        meta_count_per_param: dict[tuple, int] = defaultdict(int)
+        stream_offsets_per_binding: List[int] = [0]
+        for group in self.obs_indices:
+            stream_offsets_per_binding.append(stream_offsets_per_binding[-1] + len(group))
+
+        indices: List[int] = []
+        for meta in self.metadata:
+            param_index = meta["param_index"]
+            local_meta = meta_count_per_param[param_index]
+            meta_count_per_param[param_index] += 1
+            if has_param_loop:
+                p = _param_binding_index(self.param_indices, param_index)
+                indices.append(stream_offsets_per_binding[p] + local_meta)
+            else:
+                group_idx = self.param_group_keys.index(param_index)
+                indices.append(obs_row_starts[group_idx] + local_meta)
+        return indices
 
     @property
     def shots(self) -> int:
@@ -167,6 +219,41 @@ class _ExecutionPlan:
     @property
     def active_qubit_indices(self) -> List[int]:
         return [self.pub.circuit.find_bit(q).index for q in self.active_qubits]
+
+
+def _param_binding_index(param_indices: np.ndarray, param_index: tuple) -> int:
+    for idx, candidate in np.ndenumerate(param_indices):
+        if candidate == param_index:
+            return int(np.ravel_multi_index(idx, param_indices.shape))
+    raise ValueError(f"param_index {param_index!r} not found in execution plan")
+
+
+def counts_from_estimator_stream(plan: _ExecutionPlan, raw) -> List[Counts]:
+    """Build per-metadata :class:`~qiskit.result.Counts` from the ``__c`` stream."""
+    data = np.asarray(raw)
+    shots = plan.shots
+    num_qubits = plan.num_qubits
+    unit = shots * num_qubits
+    if data.size % unit != 0:
+        raise ValueError(
+            f"Estimator stream size {data.size} is not a multiple of "
+            f"shots×num_qubits ({shots}×{num_qubits}={unit})."
+        )
+    stream_count = data.size // unit
+    expected = plan.stream_buffer_count
+    if stream_count != expected:
+        raise ValueError(
+            f"Estimator stream has {stream_count} buffers but expected {expected} "
+            f"(compile-time params={plan.uses_compile_time_param_bindings})."
+        )
+
+    bitstrings = data.reshape(stream_count, shots, num_qubits)
+    bitstrings_bool = np.asarray(bitstrings, dtype=bool)
+    bit_array = BitArray.from_bool_array(bitstrings_bool)
+    return [
+        Counts(bit_array.get_counts(loc=(stream_idx,)))
+        for stream_idx in plan.stream_indices_for_metadata()
+    ]
 
 
 def observables_to_indices(
@@ -429,29 +516,10 @@ class QMEstimatorJob(QMPrimitiveJob):
         pub_results = []
         for i, plan in enumerate(self._execution_plans):
             if is_job_list:
-                data = results_handle[i].get(f"__c_{i}").fetch_all()["value"]
+                raw = results_handle[i].get(f"__c_{i}").fetch_all()
             else:
-                data = results_handle.get(f"__c_{i}").fetch_all()["value"]
-
-            num_qubits = len(plan.active_qubits)
-            shots = plan.shots
-            total_tasks = plan.total_tasks
-
-            bitstrings = np.array(data).reshape(total_tasks, shots, num_qubits)
-
-            # Convert bitstrings to BitArray and then to Counts objects
-            # Convert to boolean if needed (QUA might return integers 0/1)
-            bitstrings_bool = np.asarray(bitstrings, dtype=bool)
-            # BitArray.from_bool_array expects: (pub_shape..., shots, bits)
-            # Shape: (total_tasks, shots, num_qubits) -> pub_shape=(total_tasks,), shots=shots, bits=num_qubits
-            bit_array = BitArray.from_bool_array(bitstrings_bool)
-
-            # Get Counts object for each task
-            counts_list = []
-            for task_idx in range(total_tasks):
-                # Get counts for this specific task using loc parameter
-                task_counts_dict = bit_array.get_counts(loc=(task_idx,))
-                counts_list.append(Counts(task_counts_dict))
+                raw = results_handle.get(f"__c_{i}").fetch_all()
+            counts_list = counts_from_estimator_stream(plan, raw)
 
             # Compute expectation value map
             expval_map = self._calc_expval_map(counts_list, plan.metadata)
@@ -461,7 +529,7 @@ class QMEstimatorJob(QMPrimitiveJob):
             # plan.pub.observables is an ObservablesArray, we need to broadcast it
             _, bc_obs = np.broadcast_arrays(plan.param_indices, plan.pub.observables)
 
-            pub_result = self._postprocess_pub(plan.pub, expval_map, plan.param_indices, bc_obs, shots)
+            pub_result = self._postprocess_pub(plan.pub, expval_map, plan.param_indices, bc_obs, plan.shots)
             pub_results.append(pub_result)
 
         return PrimitiveResult(pub_results, metadata={"version": 2})
@@ -473,7 +541,7 @@ class QMEstimatorJob(QMPrimitiveJob):
         pass
 
 
-class IQCCEstimatorJob(QMEstimatorJob):
+class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
     """IQCC Primitive Job class for executing QUA programs from PUBs."""
 
     def submit(self):
@@ -507,43 +575,3 @@ class IQCCEstimatorJob(QMEstimatorJob):
             options["timeout"] = timeout
         # # For IQCC, execute returns CloudJob instead of RunningQmJob
         self._qm_job = self._backend.qm.execute(estimator_prog, options=options)  # type: ignore
-
-    def _result_function(self, qm_job: "CloudJob") -> PrimitiveResult[PubResult]:  # type: ignore[override]
-        """Get the result from the IQCC QM job."""
-        results_handle = qm_job.result_handles
-        results_handle.wait_for_all_values()
-
-        pub_results = []
-        for i, plan in enumerate(self._execution_plans):
-            # For IQCC, result_handle.get() returns data directly, similar to sampler
-            data = np.array(results_handle.get(f"__c_{i}").fetch_all())
-            num_qubits = len(plan.active_qubits)
-            shots = plan.shots
-            total_tasks = plan.total_tasks
-
-            bitstrings = data.reshape((total_tasks, shots, num_qubits))
-
-            # Convert bitstrings to BitArray and then to Counts objects
-            # Convert to boolean if needed (QUA might return integers 0/1)
-            bitstrings_bool = np.asarray(bitstrings, dtype=bool)
-            # BitArray.from_bool_array expects: (pub_shape..., shots, bits)
-            # Shape: (total_tasks, shots, num_qubits) -> pub_shape=(total_tasks,), shots=shots, bits=num_qubits
-            bit_array = BitArray.from_bool_array(bitstrings_bool)
-
-            # Get Counts object for each task
-            counts_list = []
-            for task_idx in range(total_tasks):
-                # Get counts for this specific task using loc parameter
-                task_counts_dict = bit_array.get_counts(loc=(task_idx,))
-                counts_list.append(Counts(task_counts_dict))
-
-            # Compute expectation value map
-            expval_map = self._calc_expval_map(counts_list, plan.metadata)
-
-            # Postprocess to get PubResult
-            _, bc_obs = np.broadcast_arrays(plan.param_indices, plan.pub.observables)
-
-            pub_result = self._postprocess_pub(plan.pub, expval_map, plan.param_indices, bc_obs, shots)
-            pub_results.append(pub_result)
-
-        return PrimitiveResult(pub_results, metadata={"version": 2})

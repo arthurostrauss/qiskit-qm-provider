@@ -149,7 +149,7 @@ with program() as prog:
 
 **Breaking change:** ``comp.outputs.c.state_int`` is invalid — use ``comp.outputs.state_ints["c"]`` or ``comp.outputs.get_parameter("c").state_int``.
 
-See [measurement_outputs.md](measurement_outputs.md) for the full locality model and edge-case matrix.
+See [measurement_outputs.md](measurement_outputs.md) for the full locality model.
 
 Legacy [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) remains available and accepts either `QuaCircuitCompilation` or a raw `CompilationResult`.
 

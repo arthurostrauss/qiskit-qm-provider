@@ -550,7 +550,7 @@ def get_measurement_outcomes(
     def _entry(key: str) -> dict:
         field = table.get_parameter(key)
         entry = {
-            "value": table[key],
+            "value": field.var,
             "is_array": field.is_array,
             "stream": field.stream,
             "length": field.length,

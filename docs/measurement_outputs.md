@@ -128,22 +128,9 @@ Never automatic by name — always an explicit `assign`.
 
 - Each `quantum_circuit_to_qua` call creates a new `QuaCircuitCompilation` with **fresh** `MeasurementRegisterField` objects.
 - `comp.rewire_outputs(qc, new_result)` refreshes wiring on the same wrapper; size or compilation identity changes invalidate cached `state_int` / `stream` handles.
-- `ParameterPool.reset()` clears weakref measurement registries together with the runtime registry.
-- Debug introspection: `ParameterPool.iter_measurement_outcome_tables()`, `ParameterPool.iter_measurement_register_fields()`.
 
 ## Future extensibility
 
 Today, output keys mirror classical registers (and loose clbits) because that is what Qiskit's OpenQASM 3 exporter emits — it can only export classical bits as `output` declarations. qm-qasm already supports the OpenQASM 3 `output` command more broadly (including non-creg types), so the bottleneck is on the Qiskit side. Once Qiskit's exporter gains support for richer output types, `comp.outputs` will surface whatever keys qm-qasm exposes — the user will need to know the expected QUA type for each output key. No changes to the compiler or this provider will be required at that point.
-
-## Edge-case matrix (summary)
-
-| Issue | Status |
-|-------|--------|
-| `table["c"]` vs `get_parameter("c")` semantics | **Solved** — vars vs handles |
-| Global dedup / stale size across compiles | **Solved** — per-compilation fields + rewire invalidation |
-| `isinstance(x, Parameter)` for measurements | **Solved** — `MeasurementRegisterField` is not a `Parameter` |
-| Same name runtime + measurement | **Allowed** — dual namespace; use role-specific accessors |
-| OPNIC field name = creg name | **Doc only** — allowed but usually unnecessary |
-| `deepcopy` measurement field | **Raises** `TypeError` |
 
 Legacy [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) remains available; it uses `get_parameter()` internally and accepts `QuaCircuitCompilation` or raw `CompilationResult`.
