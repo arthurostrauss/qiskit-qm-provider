@@ -735,7 +735,7 @@ class ParameterTable(QuaFieldTable):
     def struct_type(self):
         """The Quarc ``Struct`` *type* (a class with ``Scalar`` / ``Array`` annotations)
         for this OPNIC table — suitable for building a matching struct elsewhere. This is
-        **not** the bound handle; reach the handle via :pyattr:`var`.
+        **not** the bound handle; reach the handle via :attr:`var`.
 
         Resolution order: the frozen ``_struct_type`` cached at emission (``declare``);
         else the type recovered from a bound Quarc handle (``handle._struct_spec.struct``,

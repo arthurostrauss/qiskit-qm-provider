@@ -84,7 +84,7 @@ class MeasurementRegisterField:
     def is_array(self) -> bool:
         """``True`` if this field holds a QUA array (``length > 0``), ``False`` for a scalar.
 
-        Same convention as :pyattr:`~qiskit_qm_provider.parameter_table.Parameter.is_array`;
+        Same convention as :attr:`~qiskit_qm_provider.parameter_table.Parameter.is_array`;
         part of the shared :class:`~qiskit_qm_provider.parameter_table._mixins.TableFieldProtocol`.
         """
         return self._length > 0
