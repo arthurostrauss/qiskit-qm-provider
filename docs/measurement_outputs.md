@@ -133,7 +133,7 @@ Never automatic by name — always an explicit `assign`.
 
 ## Future extensibility
 
-Today, output keys mirror classical registers (and loose clbits) from `result_program`. qm-qasm may later expose non-creg output vars; `comp.outputs` will wire whatever keys the compiler exposes. Keys come from the compilation result, not from user struct definitions.
+Today, output keys mirror classical registers (and loose clbits) because that is what Qiskit's OpenQASM 3 exporter emits — it can only export classical bits as `output` declarations. qm-qasm already supports the OpenQASM 3 `output` command more broadly (including non-creg types), so the bottleneck is on the Qiskit side. Once Qiskit's exporter gains support for richer output types, `comp.outputs` will surface whatever keys qm-qasm exposes — the user will need to know the expected QUA type for each output key. No changes to the compiler or this provider will be required at that point.
 
 ## Edge-case matrix (summary)
 

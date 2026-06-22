@@ -353,7 +353,7 @@ class Parameter:
             ParameterPool._register_pending_standalone_opnic(self)
 
     def is_standalone(self) -> bool:
-        """Backward-compat alias for :pyattr:`is_stand_alone`."""
+        """Backward-compat alias for :attr:`is_stand_alone`."""
         return self.is_stand_alone
 
     @property
@@ -563,7 +563,7 @@ class Parameter:
         This is the typed struct definition (a class with ``Scalar`` / ``Array``
         annotations) — suitable for building a matching struct elsewhere — **not** the
         bound handle. The handle is reachable via the owning table's ``var``. Delegates
-        to :pyattr:`ParameterTable.struct_type`.
+        to :attr:`ParameterTable.struct_type`.
 
         Raises :class:`RuntimeError` if the parameter is OPNIC but not yet bound to a
         ``ParameterTable`` (attach it to a table, or declare it in a program to promote

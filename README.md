@@ -10,12 +10,22 @@
 pip install qiskit-qm-provider
 ```
 
+[quam-builder](https://github.com/qua-platform/quam-builder) is required for the built-in `FluxTunableTransmonBackend` and related QuAM components. It is not published on PyPI and must be installed from source:
+
+```bash
+pip install git+https://github.com/qua-platform/quam-builder.git@v0.4.0
+```
+
 For IQCC cloud access and QM SaaS simulation (requires `iqcc-cloud-client` and `qm-saas`):
 
 ```bash
 pip install qiskit-qm-provider[iqcc]
 pip install qiskit-qm-provider[qm-saas]
 ```
+
+### Open Acceleration Stack (OAS) and QUARC
+
+Advanced real-time parameter workflows can be accelerated through Quantum Machines' **Open Acceleration Stack (OAS)**, which features an **OPNIC** link enabling high-bandwidth classical–quantum communication via **QUARC**. QUARC is currently in a **private alpha** and is not publicly available. If you are interested in using these capabilities, please reach out to the [Quantum Machines team](https://www.quantum-machines.co/contact/).
 
 ## Documentation
 

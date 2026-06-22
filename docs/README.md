@@ -30,6 +30,7 @@ Open `docs/_build/html/index.html` in your browser.
 
 ## Contents
 
+- [Installation](installation.md) — package install, quam-builder, optional extras, and OAS/QUARC.
 - [Workflows](workflows.md) — routing guide for main use paths.
 - [Providers](providers.md) — local, SaaS, and IQCC providers.
 - [Backend](backend.md) — `QMBackend`, embedding, utilities.
