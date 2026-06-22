@@ -151,7 +151,7 @@ class TestQMSamplerV2ValidatePubs:
         from qiskit.primitives.containers.sampler_pub import SamplerPub
 
         pub = SamplerPub.coerce(qc, 1024)
-        with pytest.warns(UserWarning, match="no output classical registers"):
+        with pytest.warns(UserWarning, match="no measurement outputs"):
             sampler._validate_pubs([pub])
 
     def test_validate_pubs_adds_reset(self, flux_tunable_backend):
@@ -196,3 +196,47 @@ class TestQMEstimatorV2ValidatePubs:
         pub = EstimatorPub.coerce((qc, obs), precision=0.01)
         with pytest.raises(ValueError):
             estimator.validate_estimator_pubs([pub])
+
+    def test_validate_strips_final_measurements(self, flux_tunable_backend):
+        from qiskit.quantum_info import SparsePauliOp
+        from qiskit.primitives.containers.estimator_pub import EstimatorPub
+
+        estimator = QMEstimatorV2(flux_tunable_backend)
+        n = flux_tunable_backend.num_qubits
+        qc = QuantumCircuit(n, 1)
+        qc.reset(0)
+        qc.h(0)
+        qc.measure(0, 0)
+
+        obs = SparsePauliOp.from_list([("Z" + "I" * (n - 1), 1.0)])
+        pub = EstimatorPub.coerce((qc, obs), precision=0.01)
+        new_pubs = estimator.validate_estimator_pubs([pub])
+
+        validated = new_pubs[0].circuit
+        __c = next(creg for creg in validated.cregs if creg.name == "__c")
+        measure_ops = [inst for inst in validated.data if inst.operation.name == "measure"]
+        assert len(measure_ops) == 1
+        assert all(clbit in __c for clbit in measure_ops[0].clbits)
+
+    def test_validate_preserves_mid_circuit_measurements(self, flux_tunable_backend):
+        from qiskit.quantum_info import SparsePauliOp
+        from qiskit.primitives.containers.estimator_pub import EstimatorPub
+
+        estimator = QMEstimatorV2(flux_tunable_backend)
+        n = flux_tunable_backend.num_qubits
+        qc = QuantumCircuit(n, 1)
+        qc.reset(0)
+        qc.h(0)
+        qc.measure(0, 0)
+        qc.x(0)
+
+        obs = SparsePauliOp.from_list([("Z" + "I" * (n - 1), 1.0)])
+        pub = EstimatorPub.coerce((qc, obs), precision=0.01)
+        new_pubs = estimator.validate_estimator_pubs([pub])
+
+        validated = new_pubs[0].circuit
+        measure_ops = [inst for inst in validated.data if inst.operation.name == "measure"]
+        __c = next(creg for creg in validated.cregs if creg.name == "__c")
+        assert len(measure_ops) == 2
+        assert measure_ops[0].clbits[0] not in __c
+        assert all(clbit in __c for clbit in measure_ops[-1].clbits)

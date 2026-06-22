@@ -128,7 +128,7 @@ def validate_circuits(
     new_circuits = []
     for qc in circuits:
         for clbit in qc.clbits:
-            if len(qc.find_bit(clbit).registers) != 1:
+            if len(qc.find_bit(clbit).registers) > 1:
                 raise ValueError("Only one register per clbit is supported.")
         if not has_reset_at_boundary(qc) and should_reset:
             qc_reset = qc.copy_empty_like(vars_mode="drop")
@@ -139,6 +139,23 @@ def validate_circuits(
             new_circuits.append(qc)
 
     return new_circuits
+
+
+def measurement_output_bit_sizes(qc: QuantumCircuit) -> dict[str, int]:
+    """Map measurement stream keys to bit width for classified result assembly.
+
+    Classical registers use their creg name and width. Loose clbits (not in any
+    register) each appear under ``_bit0``, ``_bit1``, … with width ``1``, matching
+    :func:`~qiskit_qm_provider.backend.qua_circuit_compilation._loose_bit_keys` and
+    QUA stream names in :func:`~qiskit_qm_provider.job.qua_programs.get_run_program`.
+    """
+    sizes = {creg.name: creg.size for creg in qc.cregs}
+    loose_index = 0
+    for bit in qc.clbits:
+        if len(qc.find_bit(bit).registers) == 0:
+            sizes[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{loose_index}"] = 1
+            loose_index += 1
+    return sizes
 
 
 def has_conflicting_calibrations(circuits: List[QuantumCircuit]) -> bool:

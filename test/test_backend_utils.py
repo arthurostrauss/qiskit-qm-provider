@@ -2,7 +2,7 @@
 
 import pytest
 import numpy as np
-from qiskit.circuit import QuantumCircuit, ClassicalRegister
+from qiskit.circuit import QuantumCircuit, ClassicalRegister, Clbit
 from qiskit.quantum_info import Pauli, PauliList
 
 from qiskit_qm_provider.backend.backend_utils import (
@@ -10,6 +10,7 @@ from qiskit_qm_provider.backend.backend_utils import (
     get_extended_gate_name_mapping,
     has_reset_at_boundary,
     validate_circuits,
+    measurement_output_bit_sizes,
     binary,
     logically_active_qubits,
     get_non_trivial_observables,
@@ -188,6 +189,43 @@ class TestValidateCircuits:
 
         with pytest.raises(ValueError, match="one register per clbit"):
             validate_circuits(qc_multi)
+
+    def test_loose_clbits_allowed(self):
+        creg = ClassicalRegister(1, "c")
+        loose0 = Clbit()
+        loose1 = Clbit()
+        qc = QuantumCircuit(2)
+        qc.add_register(creg)
+        qc.add_bits([loose0, loose1])
+        qc.reset(0)
+        qc.reset(1)
+        qc.measure(0, creg[0])
+        qc.measure(1, loose0)
+        qc.measure(1, loose1)
+        result = validate_circuits(qc)
+        assert len(result) == 1
+
+
+class TestMeasurementOutputBitSizes:
+    def test_creg_and_loose_bits(self):
+        creg = ClassicalRegister(2, "meas")
+        loose0 = Clbit()
+        loose1 = Clbit()
+        qc = QuantumCircuit(3)
+        qc.add_register(creg)
+        qc.add_bits([loose0, loose1])
+        qc.measure([0, 1], creg)
+        qc.measure(2, loose0)
+        qc.measure(2, loose1)
+
+        assert measurement_output_bit_sizes(qc) == {"meas": 2, "_bit0": 1, "_bit1": 1}
+
+    def test_loose_bits_only(self):
+        loose = Clbit()
+        qc = QuantumCircuit(1)
+        qc.add_bits([loose])
+        qc.measure(0, loose)
+        assert measurement_output_bit_sizes(qc) == {"_bit0": 1}
 
 
 class TestBinary:

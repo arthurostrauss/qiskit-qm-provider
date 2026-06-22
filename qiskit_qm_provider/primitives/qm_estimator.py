@@ -185,9 +185,8 @@ class QMEstimatorV2(BaseEstimatorV2):
                     "Make sure you have transpiled the circuit to the backend's target as well as applied the circuit layout to the observables.",
                 )
 
-            qc = pub.circuit.copy()
-            active_qubits = logically_active_qubits(pub.circuit)
-            qubit_indices = [qc.find_bit(q).index for q in active_qubits]
+            qc = pub.circuit.remove_final_measurements(inplace=False)
+            active_qubits = logically_active_qubits(qc)
             num_active_qubits = len(active_qubits)
             creg = ClassicalRegister(num_active_qubits, name="__c")
             qc.add_register(creg)

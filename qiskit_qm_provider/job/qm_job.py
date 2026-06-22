@@ -48,7 +48,7 @@ from qm.jobs.pending_job import QmPendingJob
 from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qiskit_qm_provider.backend.backend_utils import (
     validate_circuits,
-    _QASM3_DUMP_LOOSE_BIT_PREFIX,
+    measurement_output_bit_sizes,
 )
 
 if TYPE_CHECKING:
@@ -255,11 +255,7 @@ class QMJob(JobV1):
         qm = backend.qm
 
         job_id = "pending"
-        cregs_dicts: List[Dict[str, int]] = [{creg.name: creg.size for creg in qc.cregs} for qc in new_circuits]
-        for i, qc in enumerate(new_circuits):
-            solo_bits = [bit for bit in qc.clbits if len(qc.find_bit(bit).registers) == 0]
-            if len(solo_bits) > 0:
-                cregs_dicts[i][_QASM3_DUMP_LOOSE_BIT_PREFIX] = len(solo_bits)
+        cregs_dicts: List[Dict[str, int]] = [measurement_output_bit_sizes(qc) for qc in new_circuits]
 
         result_function = cls._build_result_function(
             backend=backend,

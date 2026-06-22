@@ -148,9 +148,11 @@ class QMSamplerV2(BaseSamplerV2):
 
     def _validate_pubs(self, pubs: list[SamplerPub]):
         for i, pub in enumerate(pubs):
-            if len(pub.circuit.cregs) == 0:
+            from ..backend.backend_utils import measurement_output_bit_sizes
+
+            if not measurement_output_bit_sizes(pub.circuit):
                 warnings.warn(
-                    f"The {i}-th pub's circuit has no output classical registers and so the result "
+                    f"The {i}-th pub's circuit has no measurement outputs and so the result "
                     "will be empty. Did you mean to add measurement instructions?",
                     UserWarning,
                 )
