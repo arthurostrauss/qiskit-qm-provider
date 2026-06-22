@@ -5,7 +5,11 @@ Run the suite with the same interpreter that has qiskit, QM, and provider deps i
 a mismatched default ``python``.
 """
 
+import os
+
 import pytest
+
+_QUAM_STATE_PATH = os.environ.get("QUAM_STATE_PATH")
 
 
 @pytest.fixture(autouse=True)
@@ -30,10 +34,12 @@ except ImportError:  # optional dev dependency
 
 @pytest.fixture(scope="session")
 def quam_machine():
-    """Load a QuAM machine directly (no state folder path)."""
+    """Load a QuAM machine from QUAM_STATE_PATH."""
     if FluxTunableQuam is None:
         pytest.skip("quam_builder is not installed")
-    return FluxTunableQuam.load()
+    if not _QUAM_STATE_PATH:
+        pytest.skip("QUAM_STATE_PATH env var not set — export it to the quam state directory")
+    return FluxTunableQuam.load(_QUAM_STATE_PATH)
 
 
 @pytest.fixture(scope="session")
@@ -48,7 +54,9 @@ def flux_tunable_backend(quam_machine):
 
 @pytest.fixture(scope="session")
 def qm_provider():
-    """Create a QMProvider without a state folder path."""
+    """Create a QMProvider from QUAM_STATE_PATH."""
+    if not _QUAM_STATE_PATH:
+        pytest.skip("QUAM_STATE_PATH env var not set — export it to the quam state directory")
     from qiskit_qm_provider.providers.qm_provider import QMProvider
 
-    return QMProvider()
+    return QMProvider(state_folder_path=_QUAM_STATE_PATH)
