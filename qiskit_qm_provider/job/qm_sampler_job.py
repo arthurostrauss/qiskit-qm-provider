@@ -30,7 +30,7 @@ from qiskit.primitives import PrimitiveResult
 from qiskit.primitives.containers import SamplerPubResult, DataBin, BitArray
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit.providers import JobStatus
-from qiskit.result.models import MeasLevel, MeasReturnType
+from qiskit.result.models import MeasLevel
 
 from qm import (
     SimulationConfig,
@@ -42,7 +42,7 @@ from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
 
 from ..backend import QMBackend
-from ..backend.backend_utils import measurement_output_bit_sizes
+from ..backend.backend_utils import measurement_output_bit_sizes, require_classified_meas_level
 from ..parameter_table import InputType, ParameterPool, ParameterTable
 from .iqcc_job_mixin import IQCCJobMixin
 from .qua_programs import sampler_program
@@ -76,6 +76,10 @@ class QMSamplerJob(QMPrimitiveJob):
                 and backend execution (e.g. ``shots``, ``meas_level``).
         """
         super().__init__(backend, pubs, input_type, **kwargs)
+        require_classified_meas_level(
+            self.metadata.get("meas_level", MeasLevel.CLASSIFIED),
+            context="QMSamplerJob",
+        )
         ParameterPool.reset()
         self._param_tables = [
             ParameterTable.from_qiskit(
@@ -107,20 +111,8 @@ class QMSamplerJob(QMPrimitiveJob):
                 else:
                     raw = results_handle.get(f"{output_key}_{i}").fetch_all()
                 data = np.asarray(raw)
-                meas_level = self.metadata.get("meas_level", MeasLevel.CLASSIFIED)
-                if meas_level == MeasLevel.CLASSIFIED:
-                    bit_array = BitArray.from_samples(data.tolist(), bit_width).reshape(pub.shape + (pub.shots,))
-                    qc_meas_data[output_key] = bit_array
-                elif meas_level == MeasLevel.KERNELED:
-                    # TODO: Assume that buffering was done like (2, bit_width)
-                    qc_meas_data[output_key] = np.array([d[0] + 1j * d[1] for d in data], dtype=complex).reshape(
-                        pub.shape + (pub.shots, bit_width)
-                    )
-                else:
-                    # TODO: Figure it out
-                    qc_meas_data[output_key] = np.array([d[0] + 1j * d[1] for d in data], dtype=complex).reshape(
-                        pub.shape + (pub.shots, bit_width)
-                    )
+                bit_array = BitArray.from_samples(data.tolist(), bit_width).reshape(pub.shape + (pub.shots,))
+                qc_meas_data[output_key] = bit_array
 
             sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
             all_data.append(sampler_data)

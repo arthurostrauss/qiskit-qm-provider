@@ -112,6 +112,14 @@ class TestQMSamplerV2Init:
         sampler = QMSamplerV2(flux_tunable_backend, options=None)
         assert sampler.options.default_shots == 1024
 
+    @pytest.mark.parametrize("meas_level", ("kerneled", "avg_kerneled"))
+    def test_run_rejects_unsupported_meas_level(self, flux_tunable_backend, meas_level):
+        qc = QuantumCircuit(1, 1)
+        qc.measure(0, 0)
+        sampler = QMSamplerV2(flux_tunable_backend, options=QMSamplerOptions(meas_level=meas_level))
+        with pytest.raises(NotImplementedError, match="CLASSIFIED"):
+            sampler.run([qc])
+
 
 class TestQMEstimatorV2Init:
     def test_init_with_defaults(self, flux_tunable_backend):

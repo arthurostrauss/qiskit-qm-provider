@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from ..job.qm_sampler_job import QMSamplerJob, IQCCSamplerJob
 
-from ..backend.backend_utils import validate_circuits
+from ..backend.backend_utils import validate_circuits, require_classified_meas_level
 from ..parameter_table import InputType
 from ..backend.qm_backend import QMBackend
 from qiskit.result.models import MeasLevel, MeasReturnType
@@ -136,12 +136,16 @@ class QMSamplerV2(BaseSamplerV2):
             )
         backend_options = deepcopy(self.backend.options.__dict__)
 
-        # Map QMSamplerOptions string meas_level to backend.run / job metadata enums
-        # (MeasLevel / MeasReturnType), matching QMBackend.options — not the string API.
         backend_options["meas_level"] = meas_level_dict[self._options.meas_level]
-        backend_options["meas_return"] = meas_return_type_dict.get(self._options.meas_level, MeasReturnType.SINGLE)
+        backend_options["meas_return"] = meas_return_type_dict.get(
+            self._options.meas_level, MeasReturnType.SINGLE
+        )
         backend_options["shots"] = shots
         backend_options.update(self._options.run_options or {})
+        require_classified_meas_level(
+            backend_options["meas_level"],
+            context="QMSamplerV2.run()",
+        )
         # Update Target of backend if needed
         self.backend.update_target(self.options.input_type)
         job = job_obj(self.backend, coerced_pubs, self.options.input_type, **backend_options)

@@ -141,6 +141,21 @@ def validate_circuits(
     return new_circuits
 
 
+def require_classified_meas_level(meas_level, *, context: str = "") -> None:
+    """Raise if ``meas_level`` is not classified 0/1 readout.
+
+    Only :data:`~qiskit.result.models.MeasLevel.CLASSIFIED` is supported end-to-end
+    for sampler and ``backend.run()`` result assembly.
+    """
+    from qiskit.result.models import MeasLevel
+
+    if meas_level != MeasLevel.CLASSIFIED:
+        suffix = f" ({context})" if context else ""
+        raise NotImplementedError(
+            f"Only MeasLevel.CLASSIFIED measurement is supported{suffix}; got {meas_level!r}."
+        )
+
+
 def measurement_output_bit_sizes(qc: QuantumCircuit) -> dict[str, int]:
     """Map measurement stream keys to bit width for classified result assembly.
 

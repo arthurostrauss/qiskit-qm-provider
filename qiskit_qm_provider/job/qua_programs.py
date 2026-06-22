@@ -192,11 +192,11 @@ def _process_observables_with_circuit(
         param_table: Optional additional ParameterTable to pass to _process_circuit
         **kwargs: Additional arguments for _process_circuit
     """
-    obs_length_var = kwargs.get("obs_length_var", None)
-    param_binding_var = kwargs.get("param_binding_var", None)
-    obs_lengths_qua = kwargs.get("obs_lengths_qua", None)
-    obs_offsets_qua = kwargs.get("obs_offsets_qua", None)
-    obs_indices_all = kwargs.get("obs_indices_all", None)
+    obs_length_var = kwargs.pop("obs_length_var", None)
+    param_binding_var = kwargs.pop("param_binding_var", None)
+    obs_lengths_qua = kwargs.pop("obs_lengths_qua", None)
+    obs_offsets_qua = kwargs.pop("obs_offsets_qua", None)
+    obs_indices_all = kwargs.pop("obs_indices_all", None)
     obs_idx = declare(int)
     num_qubits = len(plan.active_qubit_indices)
     plan.observables_var.declare()
@@ -204,11 +204,10 @@ def _process_observables_with_circuit(
         obs_length_var.declare()
 
     process_param_table = _estimator_process_param_table(plan)
-    circuit_kwargs = dict(
-        param_table=process_param_table,
-        compute_state_int=False,
-        **kwargs,
-    )
+    circuit_kwargs = {
+        "param_table": process_param_table,
+        "compute_state_int": False,
+    }
 
     if plan.observables_var.input_type is None:
         per_binding = param_binding_var is not None and obs_lengths_qua is not None

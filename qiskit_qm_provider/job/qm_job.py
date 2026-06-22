@@ -108,6 +108,9 @@ class QMJob(JobV1):
         This function encapsulates the data plumbing that was previously
         implemented as an inner closure in ``QMBackend.run``.
         """
+        from ..backend.backend_utils import require_classified_meas_level
+
+        require_classified_meas_level(meas_level, context="QMBackend.run()")
 
         def result_function(
             qm_job: RunningQmJob | List[RunningQmJob] | CloudJob | Dict,
@@ -148,20 +151,8 @@ class QMJob(JobV1):
                     else:
                         raw = results_handle.get(f"{creg}_{i}")  # type: ignore[index]
                     data = np.asarray(raw).tolist()
-
-                    if meas_level == MeasLevel.CLASSIFIED:
-                        bit_array = BitArray.from_samples(data, creg_size)
-                        qc_meas_data[creg] = bit_array
-                    elif meas_level == MeasLevel.KERNELED:
-                        if meas_return == MeasReturnType.SINGLE:
-                            qc_meas_data[creg] = np.array(
-                                [d[0] + 1j * d[1] for d in data],
-                                dtype=complex,
-                            )
-                        elif meas_return == MeasReturnType.AVERAGE:
-                            qc_meas_data[creg] = np.mean(
-                                [d[0] + 1j * d[1] for d in data],
-                            )
+                    bit_array = BitArray.from_samples(data, creg_size)
+                    qc_meas_data[creg] = bit_array
 
                 sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
                 all_data.append(sampler_data.join_data())
