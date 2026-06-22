@@ -1,7 +1,7 @@
 """Tests for QMSamplerV2, QMEstimatorV2, and their options."""
 
 import pytest
-from qiskit.circuit import QuantumCircuit
+from qiskit.circuit import ClassicalRegister, QuantumCircuit
 
 from qiskit_qm_provider.primitives.qm_sampler import QMSamplerV2, QMSamplerOptions
 from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorV2, QMEstimatorOptions
@@ -240,3 +240,19 @@ class TestQMEstimatorV2ValidatePubs:
         assert len(measure_ops) == 2
         assert measure_ops[0].clbits[0] not in __c
         assert all(clbit in __c for clbit in measure_ops[-1].clbits)
+
+    def test_validate_reserved_creg_name_raises(self, flux_tunable_backend):
+        from qiskit.quantum_info import SparsePauliOp
+        from qiskit.primitives.containers.estimator_pub import EstimatorPub
+
+        estimator = QMEstimatorV2(flux_tunable_backend)
+        n = flux_tunable_backend.num_qubits
+        qc = QuantumCircuit(n)
+        qc.add_register(ClassicalRegister(1, "__c"))
+        qc.reset(0)
+        qc.h(0)
+
+        obs = SparsePauliOp.from_list([("Z" + "I" * (n - 1), 1.0)])
+        pub = EstimatorPub.coerce((qc, obs), precision=0.01)
+        with pytest.raises(ValueError, match="register named '__c'"):
+            estimator.validate_estimator_pubs([pub])

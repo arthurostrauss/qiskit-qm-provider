@@ -101,9 +101,10 @@ class QMSamplerJob(QMPrimitiveJob):
             qc_meas_data = {}
             for output_key, bit_width in measurement_output_bit_sizes(pub.circuit).items():
                 if is_job_list:
-                    data = results_handle[i].get(f"{output_key}_{i}").fetch_all()["value"]
+                    raw = results_handle[i].get(f"{output_key}_{i}").fetch_all()
                 else:
-                    data = results_handle.get(f"{output_key}_{i}").fetch_all()["value"]
+                    raw = results_handle.get(f"{output_key}_{i}").fetch_all()
+                data = np.asarray(raw).flatten()
                 meas_level = self.metadata.get("meas_level")
                 if meas_level == "classified":
                     bit_array = BitArray.from_samples(data.tolist(), bit_width).reshape(pub.shape)

@@ -185,6 +185,12 @@ class QMEstimatorV2(BaseEstimatorV2):
                     "Make sure you have transpiled the circuit to the backend's target as well as applied the circuit layout to the observables.",
                 )
 
+            if any(creg.name == "__c" for creg in pub.circuit.cregs):
+                raise ValueError(
+                    f"The {i}-th pub's circuit already contains a classical register named "
+                    "'__c', which is reserved for estimator Pauli readout."
+                )
+
             qc = pub.circuit.remove_final_measurements(inplace=False)
             active_qubits = logically_active_qubits(qc)
             num_active_qubits = len(active_qubits)

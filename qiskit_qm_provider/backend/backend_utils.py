@@ -149,12 +149,11 @@ def measurement_output_bit_sizes(qc: QuantumCircuit) -> dict[str, int]:
     :func:`~qiskit_qm_provider.backend.qua_circuit_compilation._loose_bit_keys` and
     QUA stream names in :func:`~qiskit_qm_provider.job.qua_programs.get_run_program`.
     """
+    from .qua_circuit_compilation import _loose_bit_keys
+
     sizes = {creg.name: creg.size for creg in qc.cregs}
-    loose_index = 0
-    for bit in qc.clbits:
-        if len(qc.find_bit(bit).registers) == 0:
-            sizes[f"{_QASM3_DUMP_LOOSE_BIT_PREFIX}{loose_index}"] = 1
-            loose_index += 1
+    for key in _loose_bit_keys(qc):
+        sizes[key] = 1
     return sizes
 
 
