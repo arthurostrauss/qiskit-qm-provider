@@ -34,8 +34,10 @@ result = job.result()                      # blocks until streams are complete
 | `submit()` | Called inside `from_circuits` / manual | Called by primitive `run()` | Re-submit raises on primitives |
 | `status()` | ✓ | ✓ | Maps QM SDK status to [`JobStatus`](https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.providers.JobStatus) |
 | `done()` / `running()` / `cancelled()` | — | ✓ | Convenience wrappers around `status()` |
-| `cancel()` | ✓ | ✓ | Forwards to underlying `qm_job` |
+| `cancel()` | ✓ | ✓ | Forwards to all underlying QM SDK jobs |
 | `result()` | ✓ | ✓ | Builds Qiskit result from streamed data |
+| `get_qm_job(idx)` | ✓ | ✓ | Return the QM SDK job at *idx* (default: `0`) |
+| `get_program(idx)` | ✓ | ✓ | Return the compiled `Program` at *idx* (default: `0`) |
 
 [`IQCCJob`](apidocs/stubs/qiskit_qm_provider.job.qm_job.IQCCJob.rst) does **not** implement `status()` — poll via IQCC cloud APIs or inspect [`run_data`](apidocs/stubs/qiskit_qm_provider.job.iqcc_job_mixin.IQCCJobMixin.rst).
 
@@ -79,12 +81,14 @@ for chunk_idx, prog in enumerate(job.programs):
 
 | Name | Type | When set | Purpose |
 |------|------|----------|---------|
-| `job_id` | `str` | After `submit()` | QM SDK job id (comma-separated for multi-program `QMJob`) |
+| `job_id` | `str` | After `submit()` | QM SDK job id (comma-separated for multi-program jobs) |
 | `backend` | [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) | Construction | Backend that compiled the circuits |
 | `metadata` | `dict` | Construction | Run options forwarded from backend/primitive (`compiler_options`, `simulate`, `timeout`, …) |
 | `programs` | `list[Program]` | Construction | Compiled QUA programs — always a list; use with `generate_qua_script` |
-| `qm_job` | `RunningQmJob` / `QmPendingJob` / `list` | After `submit()` | Low-level QM SDK handle (`cancel`, `push_to_input_stream`, …) |
-| `result_handles` | QM result fetcher (or `list`) | After `submit()` | Same as `qm_job.result_handles` — stream keys for debugging |
+| `qm_jobs` | `list[RunningQmJob \| QmPendingJob]` | After `submit()` | All underlying QM SDK handles — always a list, length 1 for non-chunked execution |
+| `result_handles` | `list[QM result fetcher]` | After `submit()` | One fetcher per submitted job — use `result_handles[0]` for non-chunked execution |
+| `get_qm_job(idx=None)` | `RunningQmJob \| QmPendingJob` | After `submit()` | Return the QM SDK job at *idx* (default `0`). Shorthand for `qm_jobs[idx]` |
+| `get_program(idx=None)` | `Program` | Construction | Return the compiled program at *idx* (default `0`). Shorthand for `programs[idx]` |
 
 `QMJob` also stores **`qm`** — the [`QuantumMachine`](https://docs.quantum-machines.co/latest/docs/qm/quam/user_guide/quam/components/quam_root/qmmachine/) (or cloud equivalent) used for execution.
 
@@ -95,7 +99,8 @@ for chunk_idx, prog in enumerate(job.programs):
 | `pubs` | `list[SamplerPub \| EstimatorPub]` | PUBs passed to `run()` |
 | `inputs` | `dict` | Snapshot of pubs, `input_type`, and `metadata` |
 | `programs` | `list[Program]` | Same as above — sampler/estimator QUA programs |
-| `result_handles` | QM result fetcher | `qm_job.result_handles` after submit (via [`QMPrimitiveJob`](apidocs/stubs/qiskit_qm_provider.job.qm_primitive_job.QMPrimitiveJob.rst)) |
+| `result_handles` | `list[QM result fetcher]` | One fetcher per submitted job (via [`QMPrimitiveJob`](apidocs/stubs/qiskit_qm_provider.job.qm_primitive_job.QMPrimitiveJob.rst)) |
+| `runtime_pubs` *(estimator only)* | `list[_ExecutionPlan]` | Compiled execution plans — one per EstimatorPub; exposes observable grouping, parameter tables, and the switch-statement data streamed to the OPX |
 
 ### IQCC wrapper jobs
 
@@ -117,14 +122,14 @@ except IQCCCloudExecutionError as exc:
 
 ## Pushing data on a running job
 
-For streamed primitives, parameter values are pushed **after** submit via the parameter tables bound at compile time. Internally the job uses `qm_job`:
+For streamed primitives, parameter values are pushed **after** submit via the parameter tables bound at compile time. Use `get_qm_job()` to obtain the live QM SDK handle:
 
 ```python
 job = sampler.run([(qc, param_values)])
-# submit already ran; qm_job is live
+# submit already ran; qm_jobs[0] is live
 
-job.result_handles                 # stream handles (all job types)
-param_table.push_to_opx(..., job=job.qm_job, qm=backend.qm)
+job.result_handles[0]               # stream handle for the first (only) job
+param_table.push_to_opx(..., job=job.get_qm_job(), qm=backend.qm)
 ```
 
 On IQCC, streamed jobs auto-generate a **sync hook** script that performs this pushing on the cloud side (see [Primitives](primitives.md#running-on-iqcc-cloud)).

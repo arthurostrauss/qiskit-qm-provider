@@ -313,9 +313,20 @@ class QMEstimatorJob(QMPrimitiveJob):
             :class:`~qiskit.primitives.PrimitiveResult` with per-pub expectation
             values and standard errors.
         """
-        if self._qm_job is None:
+        if self._qm_jobs is None:
             raise RuntimeError("QM job has not submitted yet")
-        return self._result_function(self._qm_job)
+        return self._result_function(self._qm_jobs)
+
+    @property
+    def runtime_pubs(self) -> "List[_ExecutionPlan]":
+        """Compiled execution plans for this estimator job.
+
+        One :class:`_ExecutionPlan` per input PUB.  Each plan holds the grouped
+        observable metadata, parameter table, and obs-index tables that drive the
+        QUA switch statement and parameter streaming.  Inspect to understand how
+        observables were grouped or what will be streamed cycle-by-cycle.
+        """
+        return self._execution_plans
 
     def __init__(
         self,
@@ -390,7 +401,7 @@ class QMEstimatorJob(QMPrimitiveJob):
         execution), each program is queued sequentially on QOP.  Results from
         all chunks are transparently stitched back in :meth:`_result_function`.
         """
-        if self._qm_job is not None:
+        if self._qm_jobs is not None:
             raise RuntimeError("Job has already been submitted.")
         compiler_options = self.metadata.get("compiler_options", None)
         simulate = self.metadata.get("simulate", None)
@@ -398,31 +409,30 @@ class QMEstimatorJob(QMPrimitiveJob):
         programs = self._programs
 
         if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
-            # Simulation only supports a single program — use the first chunk.
-            self._qm_job = self._backend.qmm.simulate(
+            job = self._backend.qmm.simulate(
                 self._backend.qm_config,
                 programs[0],
                 simulate=simulate,
                 compiler_options=compiler_options,
             )
-            self._job_id = self._qm_job.id
+            self._qm_jobs = [job]
+            self._job_id = job.id
             for global_idx in self._chunk_layout[0]:
-                self._push_plan_data(self._qm_job, self._execution_plans[global_idx])
+                self._push_plan_data(job, self._execution_plans[global_idx])
         elif len(programs) == 1:
-            self._qm_job = self._backend.qm.execute(
-                programs[0], compiler_options=compiler_options
-            )
-            self._job_id = self._qm_job.id
+            job = self._backend.qm.execute(programs[0], compiler_options=compiler_options)
+            self._qm_jobs = [job]
+            self._job_id = job.id
             for global_idx in self._chunk_layout[0]:
-                self._push_plan_data(self._qm_job, self._execution_plans[global_idx])
+                self._push_plan_data(job, self._execution_plans[global_idx])
         else:
-            self._qm_job = []
+            self._qm_jobs = []
             for prog, chunk in zip(programs, self._chunk_layout):
                 job = self._backend.qm.queue.add(prog, compiler_options=compiler_options)
-                self._qm_job.append(job)
+                self._qm_jobs.append(job)
                 for global_idx in chunk:
                     self._push_plan_data(job, self._execution_plans[global_idx])
-            self._job_id = ",".join(j.id for j in self._qm_job)
+            self._job_id = ",".join(j.id for j in self._qm_jobs)
 
     def _calc_expval_map(
         self,
@@ -535,20 +545,15 @@ class QMEstimatorJob(QMPrimitiveJob):
             },
         )
 
-    def _result_function(self, qm_job: Union[RunningQmJob, List[QmPendingJob]]) -> PrimitiveResult[PubResult]:
-        is_job_list = isinstance(qm_job, list)
-        if is_job_list:
-            results_handles = [job.result_handles for job in qm_job]
-            for handle in results_handles:
-                handle.wait_for_all_values()
-        else:
-            results_handles = qm_job.result_handles
-            results_handles.wait_for_all_values()
+    def _result_function(self, qm_jobs: List[RunningQmJob]) -> PrimitiveResult[PubResult]:
+        results_handles = [job.result_handles for job in qm_jobs]
+        for handle in results_handles:
+            handle.wait_for_all_values()
 
         pub_results = []
         for i, plan in enumerate(self._execution_plans):
             chunk_idx, local_idx = self._locator[i]
-            handle = results_handles[chunk_idx] if is_job_list else results_handles
+            handle = results_handles[chunk_idx]
             raw = handle.get(f"__c_{local_idx}").fetch_all()
             counts_list = counts_from_estimator_stream(plan, raw)
 
@@ -586,7 +591,7 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
         """
         from .post_hook_estimator import generate_sync_hook_estimator
 
-        if self._qm_job is not None:
+        if self._qm_jobs is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
 
         programs = self._programs
@@ -615,9 +620,5 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
                 if sync_hook_path is not None:
                     os.unlink(sync_hook_path)
 
-        if len(jobs) == 1:
-            self._qm_job = jobs[0]
-            self._job_id = getattr(self._qm_job, "id", "")
-        else:
-            self._qm_job = jobs
-            self._job_id = ",".join(getattr(j, "id", "") for j in jobs)
+        self._qm_jobs = jobs
+        self._job_id = ",".join(getattr(j, "id", "") for j in jobs)

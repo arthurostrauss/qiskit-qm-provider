@@ -60,7 +60,7 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         self._backend = backend
         self._pubs = pubs
         self._input_type = input_type
-        self._qm_job: Optional[Union[RunningQmJob, QmPendingJob, List[QmPendingJob]]] = None
+        self._qm_jobs: Optional[List[Union[RunningQmJob, QmPendingJob]]] = None
         self._programs: Optional[List[Program]] = None
 
     def status(self) -> JobStatus:
@@ -70,7 +70,7 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         returns the least-advanced status across all chunk jobs.  The aggregate
         is ``DONE`` only when every chunk has completed.
         """
-        if self._qm_job is None:
+        if self._qm_jobs is None:
             raise RuntimeError("QM job has not submitted yet")
         mapping = {
             "unknown": JobStatus.ERROR,
@@ -81,13 +81,11 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
             "loading": JobStatus.VALIDATING,
             "error": JobStatus.ERROR,
         }
-        if isinstance(self._qm_job, list):
-            statuses = [mapping.get(getattr(j, "status", "unknown"), JobStatus.ERROR) for j in self._qm_job]
-            for state in (JobStatus.ERROR, JobStatus.CANCELLED, JobStatus.VALIDATING, JobStatus.QUEUED, JobStatus.RUNNING):
-                if state in statuses:
-                    return state
-            return JobStatus.DONE
-        return mapping.get(self._qm_job.status, JobStatus.ERROR)
+        statuses = [mapping.get(getattr(j, "status", "unknown"), JobStatus.ERROR) for j in self._qm_jobs]
+        for state in (JobStatus.ERROR, JobStatus.CANCELLED, JobStatus.VALIDATING, JobStatus.QUEUED, JobStatus.RUNNING):
+            if state in statuses:
+                return state
+        return JobStatus.DONE
 
     def done(self) -> bool:
         """Return whether the job has successfully run."""
@@ -107,29 +105,56 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
 
     def cancel(self):
         """Attempt to cancel the job.  Cancels all chunk jobs for chunked execution."""
-        if self._qm_job is None:
+        if self._qm_jobs is None:
             raise RuntimeError("QM job is not running")
-        if isinstance(self._qm_job, list):
-            return all(j.cancel() for j in self._qm_job)
-        return self._qm_job.cancel()
+        return all(j.cancel() for j in self._qm_jobs)
 
     @property
-    def qm_job(self) -> Optional[Union[RunningQmJob, List[QmPendingJob]]]:
-        """Underlying QM SDK job after :meth:`submit`.
+    def qm_jobs(self) -> Optional[List[Union[RunningQmJob, QmPendingJob]]]:
+        """Underlying QM SDK jobs after :meth:`submit` — always a list.
 
-        Exposes ``result_handles``, ``cancel``, ``push_to_input_stream``, and other
-        runtime APIs. Raises if the job has not been submitted yet.
+        Length 1 for single-program execution; one entry per chunk otherwise.
+        Exposes ``result_handles``, ``cancel``, ``push_to_input_stream``, and
+        other runtime APIs on each element.
         """
-        return self._qm_job
+        return self._qm_jobs
+
+    def get_qm_job(self, idx: Optional[int] = None):
+        """Return the QM SDK job at *idx* (default: first / only job).
+
+        Convenience accessor equivalent to ``job.qm_jobs[idx]``.  Defaults to
+        index 0, which is correct for non-chunked execution.
+
+        Raises:
+            RuntimeError: If the job has not been submitted yet.
+            IndexError: If *idx* is out of range.
+        """
+        if self._qm_jobs is None:
+            raise RuntimeError("QM job has not been submitted yet")
+        return self._qm_jobs[0 if idx is None else idx]
+
+    def get_program(self, idx: Optional[int] = None) -> "Program":
+        """Return the compiled QUA program at *idx* (default: first / only program).
+
+        Convenience accessor equivalent to ``job.programs[idx]``.  Defaults to
+        index 0, which is correct for non-chunked execution.
+
+        Raises:
+            RuntimeError: If programs have not been compiled yet.
+            IndexError: If *idx* is out of range.
+        """
+        if self._programs is None:
+            raise RuntimeError("Programs have not been compiled yet")
+        return self._programs[0 if idx is None else idx]
 
     @property
     def result_handles(self) -> Any:
         """QM SDK result stream handles after :meth:`submit`.
 
-        Returns ``qm_job.result_handles``. Raises if the job has not been
-        submitted yet.
+        Always a list — one ``result_handles`` object per submitted job.
+        Length 1 for non-chunked execution.  Raises if not yet submitted.
         """
-        return result_handles_from_qm_job(self._qm_job)
+        return result_handles_from_qm_job(self._qm_jobs)
 
     @property
     def inputs(self) -> Dict:

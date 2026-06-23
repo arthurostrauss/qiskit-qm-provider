@@ -121,7 +121,7 @@ QMSamplerV2(backend=backend, options=QMSamplerOptions(input_type=InputType.OPNIC
 
 Cloud-side failures (config validation, `open_qm` errors, etc.) often surface locally as a misleading `KeyError` on a measurement stream (for example `KeyError: '__c_0'`) because the QUA program never reached the streaming stage.
 
-All IQCC wrapper jobs — [`IQCCJob`](apidocs/stubs/qiskit_qm_provider.job.qm_job.IQCCJob.rst), [`IQCCSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.qm_sampler_job.IQCCSamplerJob.rst), and [`IQCCEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.qm_estimator_job.IQCCEstimatorJob.rst) — expose the raw IQCC execution record on **`job.run_data`** (backed by `job.qm_job._run_data`). Typical keys:
+All IQCC wrapper jobs — [`IQCCJob`](apidocs/stubs/qiskit_qm_provider.job.qm_job.IQCCJob.rst), [`IQCCSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.qm_sampler_job.IQCCSamplerJob.rst), and [`IQCCEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.qm_estimator_job.IQCCEstimatorJob.rst) — expose the raw IQCC execution record on **`job.run_data`** (backed by `job.get_qm_job()._run_data`). Typical keys:
 
 | Key | Content |
 |-----|---------|
@@ -145,7 +145,9 @@ You can also inspect `job.run_data` after submission without calling `result()` 
 
 ## Debugging generated QUA
 
-Every primitive job and `backend.run()` exposes the compiled QUA programs on `job.programs` — always a `list[Program]`, one entry per chunk (length 1 when no chunking occurred). See the [Jobs guide](jobs.md) for the full property table (`qm_job`, `pubs`, IQCC `run_data`, …).
+Every primitive job and `backend.run()` exposes the compiled QUA programs on `job.programs` — always a `list[Program]`, one entry per chunk (length 1 when no chunking occurred). See the [Jobs guide](jobs.md) for the full property table (`qm_jobs`, `get_qm_job()`, `get_program()`, `pubs`, IQCC `run_data`, …).
+
+For [`QMEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.QMEstimatorJob.rst), the compiled execution plans are also available on **`job.runtime_pubs`** — one [`_ExecutionPlan`](apidocs/stubs/qiskit_qm_provider.job.qm_estimator_job._ExecutionPlan.rst) per input PUB, showing how observables were grouped and what will be streamed to the OPX.
 
 ```python
 from qm import generate_qua_script

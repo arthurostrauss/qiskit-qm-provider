@@ -14,9 +14,10 @@
 
 """Job package: execution handles for ``QMBackend.run()`` and V2 primitives.
 
-Returned job objects expose the compiled QUA :attr:`~QMJob.program` for printing
-via ``qm.generate_qua_script``, bridge to the QM SDK through :attr:`~QMJob.qm_job`,
-and build Qiskit results in :meth:`~QMJob.result`.
+Returned job objects expose the compiled QUA programs on :attr:`~QMJob.programs` for
+printing via ``qm.generate_qua_script``, bridge to the QM SDK through
+:attr:`~QMJob.qm_jobs` / :meth:`~QMJob.get_qm_job`, and build Qiskit results in
+:meth:`~QMJob.result`.
 
 See the user guide: ``docs/jobs.md``.
 

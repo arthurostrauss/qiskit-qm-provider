@@ -30,13 +30,13 @@ class _FakeCloudJob:
 
 class _FakeIQCCJob(IQCCJobMixin):
     def __init__(self, qm_job):
-        self._qm_job = qm_job
+        self._qm_jobs = [qm_job] if qm_job is not None else None
 
     def _parent_result(self):
         return "ok"
 
     def result(self):
-        if self._qm_job is None:
+        if self._qm_jobs is None:
             raise RuntimeError("IQCC job has not been submitted yet")
         self._check_iqcc_cloud_execution()
         return self._parent_result()

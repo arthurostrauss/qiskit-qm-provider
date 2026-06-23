@@ -20,7 +20,7 @@ Date: 2026-02-08
 
 from __future__ import annotations
 
-from typing import Optional, List, Callable, Dict, Union, TYPE_CHECKING
+from typing import Optional, List, Callable, Dict, Union, Any, TYPE_CHECKING
 
 from copy import deepcopy
 
@@ -100,7 +100,7 @@ class QMJob(JobV1):
     ):
         JobV1.__init__(self, backend, job_id, **kwargs)
         self.qm = qm
-        self._qm_job: Optional[RunningQmJob | QmPendingJob | List[QmPendingJob]] = None
+        self._qm_jobs: Optional[List[Union[RunningQmJob, QmPendingJob]]] = None
         self._programs: List[Program] = program if isinstance(program, list) else [program]
         self._result_function = result_function
 
@@ -108,6 +108,37 @@ class QMJob(JobV1):
     def programs(self) -> List[Program]:
         """Compiled QUA program(s) for this job; always a list."""
         return self._programs
+
+    @property
+    def qm_jobs(self) -> Optional[List[Union[RunningQmJob, QmPendingJob]]]:
+        """Underlying QM SDK jobs after :meth:`submit` — always a list.
+
+        Length 1 for single-program execution; one entry per chunk otherwise.
+        """
+        return self._qm_jobs
+
+    def get_qm_job(self, idx: Optional[int] = None):
+        """Return the QM SDK job at *idx* (default: first / only job).
+
+        Convenience accessor equivalent to ``job.qm_jobs[idx]``.
+
+        Raises:
+            RuntimeError: If the job has not been submitted yet.
+            IndexError: If *idx* is out of range.
+        """
+        if self._qm_jobs is None:
+            raise RuntimeError("QM job has not been submitted yet")
+        return self._qm_jobs[0 if idx is None else idx]
+
+    def get_program(self, idx: Optional[int] = None) -> Program:
+        """Return the compiled QUA program at *idx* (default: first / only program).
+
+        Convenience accessor equivalent to ``job.programs[idx]``.
+
+        Raises:
+            IndexError: If *idx* is out of range.
+        """
+        return self._programs[0 if idx is None else idx]
 
     # ------------------------------------------------------------------
     # High-level constructors used by QMBackend.run
@@ -153,47 +184,33 @@ class QMJob(JobV1):
         }
 
         def result_function(
-            qm_job: RunningQmJob | List[RunningQmJob] | CloudJob | Dict,
+            qm_jobs: List[RunningQmJob],
         ) -> Result:
             try:
-                from iqcc_cloud_client.qmm_cloud import CloudJob, CloudResultHandles  # type: ignore[import]
+                from iqcc_cloud_client.qmm_cloud import CloudResultHandles  # type: ignore[import]
             except ImportError:
-                CloudJob = None
                 CloudResultHandles = None
 
-            is_job_list = isinstance(qm_job, list)
-            running_job_types = (RunningQmJob,)
-            if CloudJob is not None:
-                running_job_types = (RunningQmJob, CloudJob)
             result_handle_types = (StreamingResultFetcher,)
             if CloudResultHandles is not None:
                 result_handle_types = (StreamingResultFetcher, CloudResultHandles)
 
-            if is_job_list:
-                results_handle = [job.result_handles for job in qm_job]  # type: ignore[attr-defined]
-                for handle in results_handle:
+            results_handles = [job.result_handles for job in qm_jobs]
+            for handle in results_handles:
+                if isinstance(handle, result_handle_types):
                     handle.wait_for_all_values()
-            elif isinstance(qm_job, running_job_types):
-                results_handle = qm_job.result_handles
-                results_handle.wait_for_all_values()
-            else:
-                # Fallback path for IQCC-style dictionary response
-                results_handle = qm_job["result"]
 
             all_data: List[SamplerPubResult] = []
             for i in range(num_circuits):
                 qc_meas_data = {}
-                # Locate circuit i: which program (chunk) holds it and at which
-                # local index, which determines the stream key f"{creg}_{local}".
                 chunk_idx, local_idx = locator[i]
+                handle = results_handles[chunk_idx]
                 for creg, creg_size in cregs_dicts[i].items():
                     key = f"{creg}_{local_idx}"
-                    if is_job_list:
-                        raw = results_handle[chunk_idx].get(key).fetch_all()  # type: ignore[index]
-                    elif isinstance(results_handle, result_handle_types):
-                        raw = results_handle.get(key).fetch_all()  # type: ignore[index]
+                    if isinstance(handle, result_handle_types):
+                        raw = handle.get(key).fetch_all()
                     else:
-                        raw = results_handle.get(key)  # type: ignore[index]
+                        raw = handle.get(key)
                     data = np.asarray(raw).tolist()
                     bit_array = BitArray.from_samples(data, creg_size)
                     qc_meas_data[creg] = bit_array
@@ -203,11 +220,6 @@ class QMJob(JobV1):
 
             experiment_data = []
             for i, data in enumerate(all_data):
-                # Attach circuit-level metadata to the result header so that
-                # qiskit-experiments can recover `datum["metadata"]` for curve analysis.
-                # In particular, experiments such as T1 expect
-                #     circuit.metadata = {"xval": ...}
-                # and look for this via ExperimentResult.header.metadata.
                 circuit_metadata = getattr(circuits[i], "metadata", {}) or {}
                 experiment_result = ExperimentResult(
                     shots=num_shots,
@@ -219,14 +231,14 @@ class QMJob(JobV1):
                     meas_level=meas_level,
                     meas_return=meas_return,
                     header={"metadata": circuit_metadata},
-                    status=getattr(qm_job, "status", "done"),
+                    status=getattr(qm_jobs[0], "status", "done"),
                 )
                 experiment_data.append(experiment_result)
 
             result = Result(
                 results=experiment_data if num_circuits > 1 else experiment_data[0],
                 backend_name=backend.name,
-                job_id=getattr(qm_job, "id", "unknown"),
+                job_id=",".join(getattr(j, "id", "") for j in qm_jobs),
                 backend_version=2,
                 qobj_id=None,
                 success=True,
@@ -325,8 +337,11 @@ class QMJob(JobV1):
         return job
 
     def status(self) -> JobStatus:
-        """Return Qiskit job status mapped from the underlying QM job."""
-        if self._qm_job is None:
+        """Return Qiskit job status mapped from the underlying QM job(s).
+
+        Aggregates across all chunk jobs: DONE only when every program is done.
+        """
+        if self._qm_jobs is None:
             raise RuntimeError("QM job has not submitted yet")
         mapping = {
             "unknown": JobStatus.ERROR,
@@ -337,25 +352,20 @@ class QMJob(JobV1):
             "loading": JobStatus.VALIDATING,
             "error": JobStatus.ERROR,
         }
-        if isinstance(self._qm_job, list):
-            # Aggregate over queued chunk jobs: surface the least-advanced
-            # status so the batch reads as DONE only once every program is done.
-            statuses = [
-                mapping.get(getattr(job, "status", "unknown"), JobStatus.ERROR)
-                for job in self._qm_job
-            ]
-            for state in (
-                JobStatus.ERROR,
-                JobStatus.CANCELLED,
-                JobStatus.VALIDATING,
-                JobStatus.QUEUED,
-                JobStatus.RUNNING,
-            ):
-                if state in statuses:
-                    return state
-            return JobStatus.DONE
-        status = self._qm_job.status if hasattr(self._qm_job, "status") else "unknown"
-        return mapping.get(status, JobStatus.ERROR)
+        statuses = [
+            mapping.get(getattr(job, "status", "unknown"), JobStatus.ERROR)
+            for job in self._qm_jobs
+        ]
+        for state in (
+            JobStatus.ERROR,
+            JobStatus.CANCELLED,
+            JobStatus.VALIDATING,
+            JobStatus.QUEUED,
+            JobStatus.RUNNING,
+        ):
+            if state in statuses:
+                return state
+        return JobStatus.DONE
 
     def submit(self):
         """Execute or queue the QUA program on the Quantum Machine."""
@@ -374,67 +384,48 @@ class QMJob(JobV1):
                 kwargs["options"] = {"timeout": self.metadata["timeout"]}
         if isinstance(simulate, SimulationConfig):
             if len(self.programs) > 1:
-                self._qm_job = [
+                self._qm_jobs = [
                     self.qm.simulate(
                         prog, simulate=simulate, compiler_options=compiler_options
                     )
                     for prog in self.programs
                 ]
-                self._job_id = ",".join(
-                    getattr(job, "id", "") for job in self._qm_job
-                )
             else:
-                self._qm_job = self.qm.simulate(
+                self._qm_jobs = [self.qm.simulate(
                     self.programs[0], simulate=simulate, compiler_options=compiler_options
-                )
-                self._job_id = getattr(self._qm_job, "id", "")
+                )]
+            self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
         else:
             if len(self.programs) > 1:
-                self._qm_job = []
-                for prog in self.programs:
-                    self._qm_job.append(self.qm.queue.add(prog, **kwargs))
-                self._job_id = ",".join([job.id for job in self._qm_job])
+                self._qm_jobs = [self.qm.queue.add(prog, **kwargs) for prog in self.programs]
             else:
-                self._qm_job = self.qm.execute(self.programs[0], **kwargs)
-                self._job_id = self._qm_job.id if hasattr(self._qm_job, "id") else ""
+                self._qm_jobs = [self.qm.execute(self.programs[0], **kwargs)]
+            self._job_id = ",".join(
+                getattr(j, "id", "") for j in self._qm_jobs
+            ).strip(",")
 
     def cancel(self):
-        """Cancel the underlying QM job(s)."""
-        if self._qm_job is None:
+        """Cancel all underlying QM job(s)."""
+        if self._qm_jobs is None:
             raise RuntimeError("QM job is not running")
-        if isinstance(self._qm_job, list):
-            for job in self._qm_job:
-                job.cancel()
-            return
-        return self._qm_job.cancel()
+        for job in self._qm_jobs:
+            job.cancel()
 
     def result(self):
         """Build and return a Qiskit :class:`~qiskit.result.Result` from QM streaming data."""
-        if self._qm_job is None:
+        if self._qm_jobs is None:
             raise RuntimeError("QM job has not submitted yet")
 
-        return self._result_function(self._qm_job)
-
-    @property
-    def qm_job(self) -> Optional[RunningQmJob | List[QmPendingJob | RunningQmJob]]:
-        """Underlying QM SDK job after :meth:`submit`.
-
-        Exposes ``result_handles``, ``cancel``, and other runtime APIs. Raises if
-        the job has not been submitted yet.
-        """
-        if self._qm_job is None:
-            raise RuntimeError("QM job has not submitted yet")
-        return self._qm_job
+        return self._result_function(self._qm_jobs)
 
     @property
     def result_handles(self) -> Any:
         """QM SDK result stream handles after :meth:`submit`.
 
-        For a single submitted program, returns ``qm_job.result_handles``. When
-        multiple programs were queued (``len(programs) > 1``), returns a list of
-        per-job result handles. Raises if the job has not been submitted yet.
+        Always a list — one ``result_handles`` per submitted job.
+        Length 1 for non-chunked execution.  Raises if not yet submitted.
         """
-        return result_handles_from_qm_job(self._qm_job)
+        return result_handles_from_qm_job(self._qm_jobs)
 
 
 class IQCCJob(IQCCJobMixin, QMJob):
@@ -458,14 +449,13 @@ class IQCCJob(IQCCJobMixin, QMJob):
         **kwargs,
     ):
         super().__init__(backend, job_id, qm, program, result_function, **kwargs)
-        self._qm_job = None
 
     def status(self) -> JobStatus:
         raise NotImplementedError("IQCCJob does not support status method. Use IQCC_Cloud methods to check job status.")
 
     def submit(self):
         """Submit the job to the IQCC backend."""
-        if self._qm_job is not None:
+        if self._qm_jobs is not None:
             raise RuntimeError("IQCC job has already been submitted")
         try:
             config = self.metadata["config"]
@@ -475,8 +465,9 @@ class IQCCJob(IQCCJobMixin, QMJob):
         qm: IQCC_Cloud = self.qm
         timeout = self.metadata.get("timeout", None)
 
-        self._qm_job = qm.execute(
+        self._qm_jobs = [qm.execute(
             self.programs[0],
             config,
             options={"timeout": timeout} if timeout is not None else {},
-        )
+        )]
+        self._job_id = getattr(self._qm_jobs[0], "id", "")

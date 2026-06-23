@@ -105,21 +105,15 @@ class QMSamplerJob(QMPrimitiveJob):
             for l, g in enumerate(chunk)
         }
 
-    def _result_function(self, qm_job: Union[RunningQmJob, List[QmPendingJob]]) -> PrimitiveResult[SamplerPubResult]:
-        is_job_list = isinstance(qm_job, list)
-        if is_job_list:
-            results_handles = [job.result_handles for job in qm_job]
-            for handle in results_handles:
-                handle.wait_for_all_values()
-        else:
-            results_handles = qm_job.result_handles
-            results_handles.wait_for_all_values()
+    def _result_function(self, qm_jobs: List[RunningQmJob]) -> PrimitiveResult[SamplerPubResult]:
+        results_handles = [job.result_handles for job in qm_jobs]
+        for handle in results_handles:
+            handle.wait_for_all_values()
 
-        meas_level = self.metadata.get("meas_level")
         all_data = []
         for i, pub in enumerate(self._pubs):
             chunk_idx, local_idx = self._locator[i]
-            handle = results_handles[chunk_idx] if is_job_list else results_handles
+            handle = results_handles[chunk_idx]
             qc_meas_data = {}
             for output_key, bit_width in measurement_output_bit_sizes(pub.circuit).items():
                 raw = handle.get(f"{output_key}_{local_idx}").fetch_all()
@@ -139,7 +133,7 @@ class QMSamplerJob(QMPrimitiveJob):
         each program is queued sequentially on QOP.  Results from all chunks are
         transparently stitched back in :meth:`_result_function`.
         """
-        if self._qm_job is not None:
+        if self._qm_jobs is not None:
             raise RuntimeError("QM job has already been submitted")
         compiler_options: Optional[CompilerOptionArguments] = self.metadata.get("compiler_options", None)
         simulate: Optional[SimulationConfig] = self.metadata.get("simulate", None)
@@ -147,27 +141,26 @@ class QMSamplerJob(QMPrimitiveJob):
         programs = self._programs
 
         if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
-            # Simulation only supports a single program — use the first chunk.
-            self._qm_job = self._backend.qmm.simulate(
+            job = self._backend.qmm.simulate(
                 self._backend.qm_config,
                 programs[0],
                 simulate=simulate,
                 compiler_options=compiler_options,
             )
-            self._job_id = self._qm_job.id
+            self._qm_jobs = [job]
+            self._job_id = job.id
         elif len(programs) == 1:
-            self._qm_job = self._backend.qm.execute(
-                programs[0], compiler_options=compiler_options
-            )
-            self._job_id = self._qm_job.id
-            self._push_parameters(self._qm_job, self._chunk_layout[0])
+            job = self._backend.qm.execute(programs[0], compiler_options=compiler_options)
+            self._qm_jobs = [job]
+            self._job_id = job.id
+            self._push_parameters(job, self._chunk_layout[0])
         else:
-            self._qm_job = []
-            for chunk_idx, (prog, chunk) in enumerate(zip(programs, self._chunk_layout)):
+            self._qm_jobs = []
+            for prog, chunk in zip(programs, self._chunk_layout):
                 job = self._backend.qm.queue.add(prog, compiler_options=compiler_options)
-                self._qm_job.append(job)
+                self._qm_jobs.append(job)
                 self._push_parameters(job, chunk)
-            self._job_id = ",".join(j.id for j in self._qm_job)
+            self._job_id = ",".join(j.id for j in self._qm_jobs)
 
     def _push_parameters(self, qm_job, chunk: List[int]) -> None:
         """Stream circuit parameters to the OPX for the given chunk of pub indices."""
@@ -189,9 +182,9 @@ class QMSamplerJob(QMPrimitiveJob):
             :class:`~qiskit.primitives.PrimitiveResult` with
             :class:`~qiskit.primitives.SamplerPubResult` entries.
         """
-        if self._qm_job is None:
+        if self._qm_jobs is None:
             raise RuntimeError("QM job has not submitted yet")
-        return self._result_function(self._qm_job)
+        return self._result_function(self._qm_jobs)
 
 
 class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
@@ -207,7 +200,7 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
         """
         from .post_hook_sampler import generate_sync_hook_sampler
 
-        if self._qm_job is not None:
+        if self._qm_jobs is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
 
         programs = self._programs
@@ -237,33 +230,18 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
                 if sync_hook_path is not None:
                     os.unlink(sync_hook_path)
 
-        if len(jobs) == 1:
-            self._qm_job = jobs[0]
-            self._job_id = getattr(self._qm_job, "id", "")
-        else:
-            self._qm_job = jobs
-            self._job_id = ",".join(getattr(j, "id", "") for j in jobs)
+        self._qm_jobs = jobs
+        self._job_id = ",".join(getattr(j, "id", "") for j in jobs)
 
-    def _result_function(self, qm_job) -> PrimitiveResult[SamplerPubResult]:
-        """Get the result from the IQCC QM job(s).
-
-        Handles both single-job and multi-chunk (list of jobs) cases.
-        Uses ``_locator`` to fetch each PUB's measurement data from the correct
-        chunk handle under the correct local stream key.
-        """
-        is_job_list = isinstance(qm_job, list)
-        if is_job_list:
-            results_handles = [job.result_handles for job in qm_job]
-            for handle in results_handles:
-                handle.wait_for_all_values()
-        else:
-            results_handles = qm_job.result_handles
-            results_handles.wait_for_all_values()
+    def _result_function(self, qm_jobs) -> PrimitiveResult[SamplerPubResult]:
+        results_handles = [job.result_handles for job in qm_jobs]
+        for handle in results_handles:
+            handle.wait_for_all_values()
 
         all_data = []
         for i, pub in enumerate(self._pubs):
             chunk_idx, local_idx = self._locator[i]
-            handle = results_handles[chunk_idx] if is_job_list else results_handles
+            handle = results_handles[chunk_idx]
             qc_meas_data = {}
             for output_key, bit_width in measurement_output_bit_sizes(pub.circuit).items():
                 raw = handle.get(f"{output_key}_{local_idx}").fetch_all()
@@ -278,7 +256,7 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
 
     def status(self) -> JobStatus:
         """Return the job status."""
-        if self._qm_job is None:
+        if self._qm_jobs is None:
             raise RuntimeError("IQCC QM job has not submitted yet")
         status = "completed"
         mapping = {
