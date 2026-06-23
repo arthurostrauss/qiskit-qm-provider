@@ -318,7 +318,6 @@ class QMEstimatorJob(QMPrimitiveJob):
             return [j.result_handles for j in self._qm_job]
         return self._qm_job.result_handles
 
-
     def result(self) -> ResultT:
         """Build and return primitive estimator results from QM streaming data.
 
@@ -406,7 +405,6 @@ class QMEstimatorJob(QMPrimitiveJob):
         """
         if self._qm_job is not None:
             raise RuntimeError("Job has already been submitted.")
-        estimator_prog = self._program
         compiler_options = self.metadata.get("compiler_options", None)
         simulate = self.metadata.get("simulate", None)
 

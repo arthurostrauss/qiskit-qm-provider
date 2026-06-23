@@ -493,9 +493,7 @@ def plan_estimator_programs(
     return programs, chunk_layout
 
 
-def get_run_program(
-    backend: QMBackend, num_shots, circuits: List[QuantumCircuit]
-) -> Program | List[Program]:
+def get_run_program(backend: QMBackend, num_shots, circuits: List[QuantumCircuit]) -> Program | List[Program]:
     """
     Build the QUA program(s) used by :meth:`~qiskit_qm_provider.backend.qm_backend.QMBackend.run`.
 
