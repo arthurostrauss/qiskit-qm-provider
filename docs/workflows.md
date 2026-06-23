@@ -80,16 +80,12 @@ Keeps the Target and qm_qasm compiler in sync for both `backend.run()` and `quan
 
 ### 3.1 Generated QUA programs (and how to inspect them)
 
-Every primitive job and `backend.run()` exposes the generated QUA `Program` on `job.program`. For a chunked `backend.run` batch, `job.program` is a **list** of programs (one per chunk); otherwise it is a single `Program`:
+Every primitive job and `backend.run()` exposes the compiled QUA programs on `job.programs` — always a `list[Program]`, regardless of whether chunking occurred:
 
 ```python
 from qm import generate_qua_script
 
-prog = job.program
-if isinstance(prog, list):
-    for i, p in enumerate(prog):
-        print(generate_qua_script(p))
-else:
+for i, prog in enumerate(job.programs):
     print(generate_qua_script(prog))
 ```
 
@@ -117,17 +113,17 @@ qc = transpile(qc, backend)
 sampler = QMSamplerV2(backend=backend, options=QMSamplerOptions(default_shots=256))
 sampler_job = sampler.run([qc])
 print("=== Sampler ===")
-print(generate_qua_script(sampler_job.program))
+print(generate_qua_script(sampler_job.programs[0]))
 
 obs = SparsePauliOp.from_list([("Z", 1.0)])
 estimator = QMEstimatorV2(backend=backend, options=QMEstimatorOptions())
 estimator_job = estimator.run([(qc.remove_final_measurements(inplace=False), obs, [])])
 print("=== Estimator ===")
-print(generate_qua_script(estimator_job.program))
+print(generate_qua_script(estimator_job.programs[0]))
 
 backend_job = backend.run(qc, shots=256)
 print("=== backend.run() ===")
-print(generate_qua_script(backend_job.program))
+print(generate_qua_script(backend_job.programs[0]))
 ```
 
 - **Guide:** [Primitives](primitives.md)

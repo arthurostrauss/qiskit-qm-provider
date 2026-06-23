@@ -238,15 +238,16 @@ class TestPrimitivesLocator:
 
 class TestQMSamplerJobConstruction:
 
-    def test_single_program_stored_bare(self, flux_tunable_backend):
+    def test_single_program_in_list(self, flux_tunable_backend):
         from qiskit_qm_provider.job.qm_sampler_job import QMSamplerJob
 
         flux_tunable_backend.set_options(max_circuits=10)
         pubs = _sampler_pubs(flux_tunable_backend, 3)
         job = QMSamplerJob(flux_tunable_backend, pubs, InputType.INPUT_STREAM)
 
-        assert isinstance(job.program, Program)
-        assert not isinstance(job.program, list)
+        assert isinstance(job.programs, list)
+        assert len(job.programs) == 1
+        assert isinstance(job.programs[0], Program)
         assert job._chunk_layout == [[0, 1, 2]]
 
     def test_multiple_programs_stored_as_list(self, flux_tunable_backend):
@@ -256,9 +257,9 @@ class TestQMSamplerJobConstruction:
         pubs = _sampler_pubs(flux_tunable_backend, 5)
         job = QMSamplerJob(flux_tunable_backend, pubs, InputType.INPUT_STREAM)
 
-        assert isinstance(job.program, list)
-        assert len(job.program) == 3  # ceil(5/2) = 3 chunks
-        assert all(isinstance(p, Program) for p in job.program)
+        assert isinstance(job.programs, list)
+        assert len(job.programs) == 3  # ceil(5/2) = 3 chunks
+        assert all(isinstance(p, Program) for p in job.programs)
 
     def test_chunk_layout_is_correct_partition(self, flux_tunable_backend):
         from qiskit_qm_provider.job.qm_sampler_job import QMSamplerJob
@@ -301,7 +302,7 @@ class TestQMSamplerJobConstruction:
 # ---------------------------------------------------------------------------
 
 class TestQMEstimatorJobConstruction:
-    """Verify QMEstimatorJob chunking structure (chunk_layout, locator, program type).
+    """Verify QMEstimatorJob chunking structure (chunk_layout, locator, programs list).
 
     ``plan_estimator_programs`` is patched to return dummy Programs so we can
     test chunking logic without the per-plan QUA compilation, which requires
@@ -342,17 +343,18 @@ class TestQMEstimatorJobConstruction:
                 switch_obs_circuit=switch_circ
             )
 
-    def test_single_program_stored_bare(self, flux_tunable_backend):
+    def test_single_program_in_list(self, flux_tunable_backend):
         job = self._make_job(flux_tunable_backend, count=2, max_circuits=10)
-        assert isinstance(job.program, Program)
-        assert not isinstance(job.program, list)
+        assert isinstance(job.programs, list)
+        assert len(job.programs) == 1
+        assert isinstance(job.programs[0], Program)
         assert job._chunk_layout == [[0, 1]]
 
     def test_multiple_programs_stored_as_list(self, flux_tunable_backend):
         job = self._make_job(flux_tunable_backend, count=5, max_circuits=2)
-        assert isinstance(job.program, list)
-        assert len(job.program) == 3
-        assert all(isinstance(p, Program) for p in job.program)
+        assert isinstance(job.programs, list)
+        assert len(job.programs) == 3
+        assert all(isinstance(p, Program) for p in job.programs)
 
     def test_chunk_layout_is_correct_partition(self, flux_tunable_backend):
         job = self._make_job(flux_tunable_backend, count=5, max_circuits=2)

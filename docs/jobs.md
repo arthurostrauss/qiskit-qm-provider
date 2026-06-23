@@ -41,13 +41,13 @@ result = job.result()                      # blocks until streams are complete
 
 ## Inspecting the generated QUA program
 
-All job types expose the compiled QUA program on **`job.program`** (a [`qm.Program`](https://docs.quantum-machines.co/latest/docs/qm/quam/user_guide/qua/program/) object). Use the QM SDK helper to print human-readable QUA source:
+All job types expose the compiled QUA programs on **`job.programs`** — always a `list[`[`qm.Program`](https://docs.quantum-machines.co/latest/docs/qm/quam/user_guide/qua/program/)`]`, length 1 when no chunking occurred. Use the QM SDK helper to print human-readable QUA source:
 
 ```python
 from qm import generate_qua_script
 
 job = sampler.run([qc])
-print(generate_qua_script(job.program))
+print(generate_qua_script(job.programs[0]))
 ```
 
 The same works for estimator and `backend.run()` jobs:
@@ -57,15 +57,21 @@ backend_job = backend.run(qc, shots=256)
 estimator_job = estimator.run([(circuit, observables, param_values)])
 
 print("=== backend.run() ===")
-print(generate_qua_script(backend_job.program))
+print(generate_qua_script(backend_job.programs[0]))
 
 print("=== Estimator ===")
-print(generate_qua_script(estimator_job.program))
+print(generate_qua_script(estimator_job.programs[0]))
 ```
 
-`job.program` is available **immediately after** the job object is constructed (before or after `submit()`), because compilation happens at job creation time.
+`job.programs` is available **immediately after** the job object is constructed (before or after `submit()`), because compilation happens at job creation time.
 
-For `QMJob`, `program` may be a single `Program` or a `list` of programs when multiple circuits are queued separately.
+For chunked jobs (multiple programs), iterate the list:
+
+```python
+for chunk_idx, prog in enumerate(job.programs):
+    print(f"=== chunk {chunk_idx} ===")
+    print(generate_qua_script(prog))
+```
 
 ## Properties and attributes
 
@@ -76,7 +82,7 @@ For `QMJob`, `program` may be a single `Program` or a `list` of programs when mu
 | `job_id` | `str` | After `submit()` | QM SDK job id (comma-separated for multi-program `QMJob`) |
 | `backend` | [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) | Construction | Backend that compiled the circuits |
 | `metadata` | `dict` | Construction | Run options forwarded from backend/primitive (`compiler_options`, `simulate`, `timeout`, …) |
-| `program` | `Program` or `list` | Construction | Compiled QUA program — use with `generate_qua_script` |
+| `programs` | `list[Program]` | Construction | Compiled QUA programs — always a list; use with `generate_qua_script` |
 | `qm_job` | `RunningQmJob` / `QmPendingJob` / `list` | After `submit()` | Low-level QM SDK handle (`cancel`, `push_to_input_stream`, …) |
 | `result_handles` | QM result fetcher (or `list`) | After `submit()` | Same as `qm_job.result_handles` — stream keys for debugging |
 
@@ -88,7 +94,7 @@ For `QMJob`, `program` may be a single `Program` or a `list` of programs when mu
 |------|------|---------|
 | `pubs` | `list[SamplerPub \| EstimatorPub]` | PUBs passed to `run()` |
 | `inputs` | `dict` | Snapshot of pubs, `input_type`, and `metadata` |
-| `program` | `Program` | Same as above — sampler/estimator QUA program |
+| `programs` | `list[Program]` | Same as above — sampler/estimator QUA programs |
 | `result_handles` | QM result fetcher | `qm_job.result_handles` after submit (via [`QMPrimitiveJob`](apidocs/stubs/qiskit_qm_provider.job.qm_primitive_job.QMPrimitiveJob.rst)) |
 
 ### IQCC wrapper jobs
@@ -125,7 +131,7 @@ On IQCC, streamed jobs auto-generate a **sync hook** script that performs this p
 
 ## Debugging checklist
 
-1. **Print the QUA** — `print(generate_qua_script(job.program))`
+1. **Print the QUA** — `print(generate_qua_script(job.programs[0]))` (or iterate `job.programs` for chunked jobs)
 2. **Check job id** — `job.job_id` after submit
 3. **Poll status** — `job.status()` (not on `IQCCJob`)
 4. **IQCC failures** — `job.run_data` before trusting `result()`

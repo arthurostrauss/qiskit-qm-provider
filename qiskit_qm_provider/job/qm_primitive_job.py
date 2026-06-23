@@ -37,11 +37,13 @@ Pub = Union[SamplerPub, EstimatorPub]
 class QMPrimitiveJob(BasePrimitiveJob, ABC):
     """Base class for :class:`QMSamplerJob` and :class:`QMEstimatorJob`.
 
-    Primitive jobs compile PUBs into a single QUA program at construction time.
-    Inspect it with ``qm.generate_qua_script(job.program)``.
+    Primitive jobs compile PUBs into QUA program(s) at construction time.
+    Inspect them with ``qm.generate_qua_script(job.programs[0])`` or iterate
+    ``job.programs`` for chunked execution.
 
     Attributes:
-        program: Compiled :class:`qm.Program` for this job's pubs.
+        programs: List of compiled :class:`qm.Program` objects; length 1 when
+            no chunking occurred.
         pubs: PUB list passed to ``run()``.
         inputs: Dict snapshot of pubs, ``input_type``, and ``metadata``.
         backend: :class:`~qiskit_qm_provider.backend.qm_backend.QMBackend` used for
@@ -59,7 +61,7 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         self._pubs = pubs
         self._input_type = input_type
         self._qm_job: Optional[Union[RunningQmJob, QmPendingJob, List[QmPendingJob]]] = None
-        self._program = None
+        self._programs: Optional[List[Program]] = None
 
     def status(self) -> JobStatus:
         """Return the job status.
@@ -144,15 +146,17 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         }
 
     @property
-    def program(self) -> Optional[Program]:
-        """Compiled QUA program for this job.
+    def programs(self) -> Optional[List[Program]]:
+        """Compiled QUA programs for this job.
 
-        Available immediately after job construction. Print with::
+        Always a list; length 1 when no chunking occurred.  Available
+        immediately after job construction.  Print with::
 
             from qm import generate_qua_script
-            print(generate_qua_script(job.program))
+            for prog in job.programs:
+                print(generate_qua_script(prog))
         """
-        return self._program
+        return self._programs
 
     @property
     def pubs(self) -> List[Pub]:

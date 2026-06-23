@@ -302,21 +302,9 @@ class QMEstimatorJob(QMPrimitiveJob):
     """Job handle for :class:`~qiskit_qm_provider.primitives.QMEstimatorV2` execution.
 
     Builds a QUA estimator program from pubs and returns expectation values via
-    :meth:`result`. See :attr:`program` for the compiled QUA source and
+    :meth:`result`. See :attr:`programs` for the compiled QUA source and
     :attr:`result_handles` for raw QM stream access after submit.
     """
-
-    @property
-    def result_handles(self):
-        """Underlying QM result handles after job submission.
-
-        Returns a list of handles when the job was chunked into multiple programs.
-        """
-        if self._qm_job is None:
-            raise RuntimeError("QM job has not submitted yet")
-        if isinstance(self._qm_job, list):
-            return [j.result_handles for j in self._qm_job]
-        return self._qm_job.result_handles
 
     def result(self) -> ResultT:
         """Build and return primitive estimator results from QM streaming data.
@@ -360,8 +348,7 @@ class QMEstimatorJob(QMPrimitiveJob):
             self._execution_plans,
             obs_length_var=self._obs_length_vars,
         )
-        # Keep a bare Program (not a 1-element list) for the single-program fast path.
-        self._program = programs[0] if len(programs) == 1 else programs
+        self._programs = programs
         # Locator: global plan index -> (chunk_program_index, local_plan_index)
         self._locator = {
             g: (c, l)
@@ -408,7 +395,7 @@ class QMEstimatorJob(QMPrimitiveJob):
         compiler_options = self.metadata.get("compiler_options", None)
         simulate = self.metadata.get("simulate", None)
 
-        programs = self._program if isinstance(self._program, list) else [self._program]
+        programs = self._programs
 
         if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
             # Simulation only supports a single program — use the first chunk.
@@ -602,13 +589,14 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
 
-        programs = self._program if isinstance(self._program, list) else [self._program]
+        programs = self._programs
         timeout = self.metadata.get("run_options", {}).get("timeout", None)
         jobs = []
 
         for prog, chunk in zip(programs, self._chunk_layout):
             chunk_plans = [self._execution_plans[g] for g in chunk]
 
+            sync_hook_path = None
             if any(p.param_table is not None and p.param_table.input_type is not None for p in chunk_plans):
                 sync_hook_code = generate_sync_hook_estimator(chunk_plans, obs_length_var=self._obs_length_vars)
                 with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
@@ -621,7 +609,11 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
             if timeout is not None:
                 options["timeout"] = timeout
 
-            jobs.append(self._backend.qm.execute(prog, options=options))  # type: ignore
+            try:
+                jobs.append(self._backend.qm.execute(prog, options=options))  # type: ignore
+            finally:
+                if sync_hook_path is not None:
+                    os.unlink(sync_hook_path)
 
         if len(jobs) == 1:
             self._qm_job = jobs[0]

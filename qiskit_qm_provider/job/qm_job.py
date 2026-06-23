@@ -94,15 +94,20 @@ class QMJob(JobV1):
         backend: QMBackend,
         job_id: str,
         qm: QuantumMachine | CloudQuantumMachine,
-        program: Program,
+        program: Union[Program, List[Program]],
         result_function: Callable[[RunningQmJob], Result],
         **kwargs,
     ):
         JobV1.__init__(self, backend, job_id, **kwargs)
         self.qm = qm
         self._qm_job: Optional[RunningQmJob | QmPendingJob | List[QmPendingJob]] = None
-        self.program = program
+        self._programs: List[Program] = program if isinstance(program, list) else [program]
         self._result_function = result_function
+
+    @property
+    def programs(self) -> List[Program]:
+        """Compiled QUA program(s) for this job; always a list."""
+        return self._programs
 
     # ------------------------------------------------------------------
     # High-level constructors used by QMBackend.run
@@ -279,9 +284,6 @@ class QMJob(JobV1):
         # queued sequentially; ``chunk_layout`` records which global circuit
         # indices live in each program so results can be stitched back together.
         programs, chunk_layout = plan_run_programs(backend, num_shots, new_circuits)
-        # Keep a bare Program (not a 1-element list) for the single-program case
-        # to preserve the qm.execute() / qm.simulate() fast path.
-        run_program = programs[0] if len(programs) == 1 else programs
         qm = backend.qm
 
         job_id = "pending"
@@ -312,7 +314,7 @@ class QMJob(JobV1):
             backend,
             job_id,
             qm,
-            run_program,
+            programs,
             result_function=result_function,
             **options_,
         )
@@ -371,29 +373,29 @@ class QMJob(JobV1):
             if "timeout" in self.metadata:
                 kwargs["options"] = {"timeout": self.metadata["timeout"]}
         if isinstance(simulate, SimulationConfig):
-            if isinstance(self.program, list):
+            if len(self.programs) > 1:
                 self._qm_job = [
                     self.qm.simulate(
                         prog, simulate=simulate, compiler_options=compiler_options
                     )
-                    for prog in self.program
+                    for prog in self.programs
                 ]
                 self._job_id = ",".join(
                     getattr(job, "id", "") for job in self._qm_job
                 )
             else:
                 self._qm_job = self.qm.simulate(
-                    self.program, simulate=simulate, compiler_options=compiler_options
+                    self.programs[0], simulate=simulate, compiler_options=compiler_options
                 )
                 self._job_id = getattr(self._qm_job, "id", "")
         else:
-            if isinstance(self.program, list):
+            if len(self.programs) > 1:
                 self._qm_job = []
-                for prog in self.program:
+                for prog in self.programs:
                     self._qm_job.append(self.qm.queue.add(prog, **kwargs))
                 self._job_id = ",".join([job.id for job in self._qm_job])
             else:
-                self._qm_job = self.qm.execute(self.program, **kwargs)
+                self._qm_job = self.qm.execute(self.programs[0], **kwargs)
                 self._job_id = self._qm_job.id if hasattr(self._qm_job, "id") else ""
 
     def cancel(self):
@@ -429,7 +431,7 @@ class QMJob(JobV1):
         """QM SDK result stream handles after :meth:`submit`.
 
         For a single submitted program, returns ``qm_job.result_handles``. When
-        multiple programs were queued (``program`` is a list), returns a list of
+        multiple programs were queued (``len(programs) > 1``), returns a list of
         per-job result handles. Raises if the job has not been submitted yet.
         """
         return result_handles_from_qm_job(self._qm_job)
@@ -474,7 +476,7 @@ class IQCCJob(IQCCJobMixin, QMJob):
         timeout = self.metadata.get("timeout", None)
 
         self._qm_job = qm.execute(
-            self.program,
+            self.programs[0],
             config,
             options={"timeout": timeout} if timeout is not None else {},
         )

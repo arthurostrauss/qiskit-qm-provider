@@ -18,14 +18,14 @@ Although [`QMSamplerOptions.meas_level`](apidocs/stubs/qiskit_qm_provider.primit
 
 ## QMSamplerV2
 
-Shot-based measurement counts. Maps to backend `run()` under the hood. The returned [`QMSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.QMSamplerJob.rst) exposes the generated QUA program on `job.program`:
+Shot-based measurement counts. Maps to backend `run()` under the hood. The returned [`QMSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.QMSamplerJob.rst) exposes the compiled QUA programs on `job.programs`:
 
 ```python
 from qm import generate_qua_script
 
 sampler = QMSamplerV2(backend=backend, options=QMSamplerOptions(default_shots=256))
 sampler_job = sampler.run([qc])
-print(generate_qua_script(sampler_job.program))
+print(generate_qua_script(sampler_job.programs[0]))
 ```
 
 ## QMEstimatorV2
@@ -145,17 +145,13 @@ You can also inspect `job.run_data` after submission without calling `result()` 
 
 ## Debugging generated QUA
 
-Every primitive job and `backend.run()` exposes the generated QUA `Program` on `job.program`. When PUBs (or circuits) are split into multiple chunks, `job.program` is a **list** of programs — one per chunk. See the [Jobs guide](jobs.md) for the full property table (`qm_job`, `pubs`, IQCC `run_data`, …).
+Every primitive job and `backend.run()` exposes the compiled QUA programs on `job.programs` — always a `list[Program]`, one entry per chunk (length 1 when no chunking occurred). See the [Jobs guide](jobs.md) for the full property table (`qm_job`, `pubs`, IQCC `run_data`, …).
 
 ```python
 from qm import generate_qua_script
 
-prog = job.program
-if isinstance(prog, list):
-    for chunk_idx, p in enumerate(prog):
-        print(f"=== QUA program {chunk_idx} ===")
-        print(generate_qua_script(p))
-else:
+for chunk_idx, prog in enumerate(job.programs):
+    print(f"=== QUA program {chunk_idx} ===")
     print(generate_qua_script(prog))
 ```
 

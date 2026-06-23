@@ -17,13 +17,13 @@ Backends serve two roles:
 
 ### Submit-and-run
 
-Standard Qiskit backend workflow: compile, execute, return a [`QMJob`](apidocs/stubs/qiskit_qm_provider.job.QMJob.rst). The generated QUA program is on `job.program`:
+Standard Qiskit backend workflow: compile, execute, return a [`QMJob`](apidocs/stubs/qiskit_qm_provider.job.QMJob.rst). The compiled QUA programs are on `job.programs`:
 
 ```python
 from qm import generate_qua_script
 
 job = backend.run(qc, shots=256)
-print(generate_qua_script(job.program))
+print(generate_qua_script(job.programs[0]))
 result = job.result()
 ```
 
@@ -56,7 +56,7 @@ backend.set_options(max_circuits=10)
 2. **`len(circuits) > max_circuits`** — consecutive groups of `max_circuits` circuits.
 3. **Otherwise** — a single program holding all circuits.
 
-**Inspecting generated QUA** — `job.program` is a single `Program` when only one QUA program was built; otherwise a `list[Program]` (one entry per chunk):
+**Inspecting generated QUA** — `job.programs` is always a `list[Program]` (length 1 when no chunking occurred, otherwise one entry per chunk):
 
 ```python
 from qm import generate_qua_script
@@ -64,17 +64,14 @@ from qm import generate_qua_script
 circuits = [make_circuit(i) for i in range(100)]
 job = backend.run(circuits, shots=256)
 
-if isinstance(job.program, list):
-    for chunk_idx, prog in enumerate(job.program):
-        print(f"=== QUA program {chunk_idx} ===")
-        print(generate_qua_script(prog))
-else:
-    print(generate_qua_script(job.program))
+for chunk_idx, prog in enumerate(job.programs):
+    print(f"=== QUA program {chunk_idx} ===")
+    print(generate_qua_script(prog))
 
 result = job.result()  # one Result; experiment order matches `circuits`
 ```
 
-Use a smaller `max_circuits` when a single packed program grows too large for QOP compilation or device limits. Use `max_circuits=None` when you intentionally want one program for the entire batch (for example small Experiment-style batches that still fit in one compile).
+Use a smaller `max_circuits` when a single packed program grows too large for QOP compilation or device limits. Use `max_circuits=1` to force one circuit per QUA program.
 
 ### Embed-in-QUA (hybrid)
 

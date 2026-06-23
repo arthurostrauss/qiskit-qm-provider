@@ -97,8 +97,7 @@ class QMSamplerJob(QMPrimitiveJob):
             self._param_tables,
             **self.metadata,
         )
-        # Keep a bare Program (not a 1-element list) for the single-program fast path.
-        self._program = programs[0] if len(programs) == 1 else programs
+        self._programs = programs
         # Locator: global pub index -> (chunk_program_index, local_pub_index)
         self._locator = {
             g: (c, l)
@@ -145,7 +144,7 @@ class QMSamplerJob(QMPrimitiveJob):
         compiler_options: Optional[CompilerOptionArguments] = self.metadata.get("compiler_options", None)
         simulate: Optional[SimulationConfig] = self.metadata.get("simulate", None)
 
-        programs = self._program if isinstance(self._program, list) else [self._program]
+        programs = self._programs
 
         if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
             # Simulation only supports a single program — use the first chunk.
@@ -211,7 +210,7 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
 
-        programs = self._program if isinstance(self._program, list) else [self._program]
+        programs = self._programs
         timeout = self.metadata.get("timeout", None)
         jobs = []
 
@@ -219,6 +218,7 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
             chunk_pubs = [self._pubs[g] for g in chunk]
             chunk_tables = [self._param_tables[g] for g in chunk]
 
+            sync_hook_path = None
             if any(t is not None and t.input_type is not None for t in chunk_tables):
                 sync_hook_code = generate_sync_hook_sampler(chunk_pubs, chunk_tables)
                 with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
@@ -231,7 +231,11 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
             if timeout is not None:
                 options["timeout"] = timeout
 
-            jobs.append(self._backend.qm.execute(prog, options=options))
+            try:
+                jobs.append(self._backend.qm.execute(prog, options=options))
+            finally:
+                if sync_hook_path is not None:
+                    os.unlink(sync_hook_path)
 
         if len(jobs) == 1:
             self._qm_job = jobs[0]
