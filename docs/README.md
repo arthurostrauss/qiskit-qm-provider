@@ -30,10 +30,13 @@ Open `docs/_build/html/index.html` in your browser.
 
 ## Contents
 
+- [Installation](installation.md) — package install, quam-builder, optional extras, and OAS/QUARC.
 - [Workflows](workflows.md) — routing guide for main use paths.
 - [Providers](providers.md) — local, SaaS, and IQCC providers.
 - [Backend](backend.md) — `QMBackend`, embedding, utilities.
+- [Measurement outputs](measurement_outputs.md) — `comp.outputs`, compilation-local handles.
 - [Primitives](primitives.md) — QOP-aware Sampler and Estimator.
 - [Parameter Table](parameter_table.md) — hybrid classical–quantum data flow.
 - [Error-Correction Workflow](error_correction.md) — EC pattern with `ParameterTable`.
+- [Changelog](changelog.md) — release notes.
 - [API Reference](apidocs/qm.rst) — autodoc module index.

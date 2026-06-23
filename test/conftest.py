@@ -1,20 +1,44 @@
-"""Shared pytest fixtures for qiskit_qm_provider tests."""
+"""Shared pytest fixtures for qiskit_qm_provider tests.
 
-import pathlib
+Run the suite with the same interpreter that has qiskit, QM, and provider deps installed
+(e.g. ``~/Documents/.venv/bin/python -m pytest``) to avoid collection/import failures from
+a mismatched default ``python``.
+"""
+
+import os
+
 import pytest
 
-from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import (
-    FluxTunableQuam,
-)
+_QUAM_STATE_PATH = os.environ.get("QUAM_STATE_PATH")
 
-# Canonical QuAM state fixture — copied from the real QPU config.
-QUAM_STATE_DIR = pathlib.Path(__file__).parent / "fixtures" / "quam_state"
 
+@pytest.fixture(autouse=True)
+def _reset_parameter_pool():
+    """Isolate the process-global ``ParameterPool`` (registry, bound Quarc module, and
+    Quarc's stream-id counters) around every test. Without this, name/struct state and
+    monotonic stream ids leak across tests and make outcomes order-dependent."""
+    from qiskit_qm_provider.parameter_table.parameter_pool import ParameterPool
+
+    ParameterPool.reset()
+    yield
+    ParameterPool.reset()
+
+
+try:
+    from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import (
+        FluxTunableQuam,
+    )
+except ImportError:  # optional dev dependency
+    FluxTunableQuam = None  # type: ignore[misc, assignment]
 
 @pytest.fixture(scope="session")
 def quam_machine():
-    """Load the pinned QuAM machine from the in-tree fixture folder."""
-    return FluxTunableQuam.load(QUAM_STATE_DIR)
+    """Load a QuAM machine from QUAM_STATE_PATH."""
+    if FluxTunableQuam is None:
+        pytest.skip("quam_builder is not installed")
+    if not _QUAM_STATE_PATH:
+        pytest.skip("QUAM_STATE_PATH env var not set — export it to the quam state directory")
+    return FluxTunableQuam.load(_QUAM_STATE_PATH)
 
 
 @pytest.fixture(scope="session")
@@ -33,15 +57,23 @@ def flux_tunable_backend(quam_machine):
 
 
 @pytest.fixture(autouse=True)
-def _reset_max_circuits(flux_tunable_backend):
-    """Restore max_circuits=30 after every test that mutates it."""
+def _reset_max_circuits(request):
+    """Restore max_circuits=30 after every test that mutates it.
+
+    Only resets when the test already depends on flux_tunable_backend, so tests
+    that do not use the backend do not trigger a skip when QUAM_STATE_PATH is unset.
+    """
     yield
-    flux_tunable_backend.set_options(max_circuits=30)
+    if _QUAM_STATE_PATH and "flux_tunable_backend" in request.fixturenames:
+        backend = request.getfixturevalue("flux_tunable_backend")
+        backend.set_options(max_circuits=30)
 
 
 @pytest.fixture(scope="session")
 def qm_provider():
-    """Return a bare QMProvider."""
-    from qiskit_qm_provider import QMProvider
+    """Create a QMProvider from QUAM_STATE_PATH."""
+    if not _QUAM_STATE_PATH:
+        pytest.skip("QUAM_STATE_PATH env var not set — export it to the quam state directory")
+    from qiskit_qm_provider.providers.qm_provider import QMProvider
 
-    return QMProvider()
+    return QMProvider(state_folder_path=_QUAM_STATE_PATH)

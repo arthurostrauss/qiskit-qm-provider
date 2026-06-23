@@ -106,11 +106,7 @@ def determine_github_branch() -> str:
 
     ref_name = os.environ["GITHUB_REF_NAME"]
     version_without_patch = re.match(r"(\d+\.\d+)", ref_name)
-    return (
-        f"stable/{version_without_patch.group()}"
-        if version_without_patch
-        else ref_name
-    )
+    return f"stable/{version_without_patch.group()}" if version_without_patch else ref_name
 
 
 GITHUB_BRANCH = determine_github_branch()
@@ -148,9 +144,7 @@ def linkcode_resolve(domain, info):
 
     try:
         relative_file_name = Path(full_file_name).resolve().relative_to(REPO_ROOT)
-        file_name = re.sub(
-            r"\.tox/.+/site-packages/", "", relative_file_name.as_posix()
-        )
+        file_name = re.sub(r"\.tox/.+/site-packages/", "", relative_file_name.as_posix())
     except ValueError:
         return None
 
@@ -162,7 +156,4 @@ def linkcode_resolve(domain, info):
         ending_lineno = lineno + len(source) - 1
         linespec = f"#L{lineno}-L{ending_lineno}"
 
-    return (
-        f"https://github.com/arthurostrauss/qiskit-qm-provider/tree/"
-        f"{GITHUB_BRANCH}/{file_name}{linespec}"
-    )
+    return f"https://github.com/arthurostrauss/qiskit-qm-provider/tree/" f"{GITHUB_BRANCH}/{file_name}{linespec}"

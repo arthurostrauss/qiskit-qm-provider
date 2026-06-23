@@ -19,21 +19,32 @@ Date: 2026-02-08
 """
 
 from __future__ import annotations
-import numpy as np
+from typing import Optional, Union, List, TYPE_CHECKING
 import os
 import inspect
+
+import numpy as np
+
 from qiskit.circuit import Parameter
 from qiskit.primitives import PrimitiveResult
 from qiskit.primitives.containers import SamplerPubResult, DataBin, BitArray
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit.providers import JobStatus
+from qiskit.result.models import MeasLevel
 
-from qm import SimulationConfig, CompilerOptionArguments, QuantumMachinesManager
+from qm import (
+    SimulationConfig,
+    CompilerOptionArguments,
+    QuantumMachinesManager,
+    generate_qua_script,
+)
 from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
-from typing import Optional, Union, List, TYPE_CHECKING
+
 from ..backend import QMBackend
+from ..backend.backend_utils import measurement_output_bit_sizes, require_classified_meas_level
 from ..parameter_table import InputType, ParameterPool, ParameterTable
+from .iqcc_job_mixin import IQCCJobMixin
 from .qua_programs import plan_sampler_programs
 from .qm_primitive_job import QMPrimitiveJob
 
@@ -45,7 +56,7 @@ class QMSamplerJob(QMPrimitiveJob):
     """Job handle for :class:`~qiskit_qm_provider.primitives.QMSamplerV2` execution.
 
     Builds a QUA sampler program from pubs and returns classified counts via
-    :meth:`result`.
+    :meth:`result`. See :attr:`program` for the compiled QUA source.
     """
 
     def __init__(
@@ -65,6 +76,10 @@ class QMSamplerJob(QMPrimitiveJob):
                 and backend execution (e.g. ``shots``, ``meas_level``).
         """
         super().__init__(backend, pubs, input_type, **kwargs)
+        require_classified_meas_level(
+            self.metadata.get("meas_level", MeasLevel.CLASSIFIED),
+            context="QMSamplerJob",
+        )
         ParameterPool.reset()
         self._param_tables = [
             ParameterTable.from_qiskit(
@@ -90,9 +105,7 @@ class QMSamplerJob(QMPrimitiveJob):
             for l, g in enumerate(chunk)
         }
 
-    def _result_function(
-        self, qm_job: Union[RunningQmJob, List[QmPendingJob]]
-    ) -> PrimitiveResult[SamplerPubResult]:
+    def _result_function(self, qm_job: Union[RunningQmJob, List[QmPendingJob]]) -> PrimitiveResult[SamplerPubResult]:
         is_job_list = isinstance(qm_job, list)
         if is_job_list:
             results_handles = [job.result_handles for job in qm_job]
@@ -108,23 +121,11 @@ class QMSamplerJob(QMPrimitiveJob):
             chunk_idx, local_idx = self._locator[i]
             handle = results_handles[chunk_idx] if is_job_list else results_handles
             qc_meas_data = {}
-            for creg in pub.circuit.cregs:
-                data = handle.get(f"{creg.name}_{local_idx}").fetch_all()["value"]
-                if meas_level == "classified":
-                    bit_array = BitArray.from_samples(data.tolist(), creg.size).reshape(
-                        pub.shape
-                    )
-                    qc_meas_data[creg.name] = bit_array
-                elif meas_level == "kerneled":
-                    # TODO: Assume that buffering was done like (2, creg.size)
-                    qc_meas_data[creg.name] = np.array(
-                        [d[0] + 1j * d[1] for d in data], dtype=complex
-                    ).reshape(pub.shape + (pub.shots, creg.size))
-                else:
-                    # TODO: Figure it out
-                    qc_meas_data[creg.name] = np.array(
-                        [d[0] + 1j * d[1] for d in data], dtype=complex
-                    ).reshape(pub.shape + (pub.shots, creg.size))
+            for output_key, bit_width in measurement_output_bit_sizes(pub.circuit).items():
+                raw = handle.get(f"{output_key}_{local_idx}").fetch_all()
+                data = np.asarray(raw)
+                bit_array = BitArray.from_samples(data.tolist(), bit_width).reshape(pub.shape + (pub.shots,))
+                qc_meas_data[output_key] = bit_array
 
             sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
             all_data.append(sampler_data)
@@ -140,9 +141,7 @@ class QMSamplerJob(QMPrimitiveJob):
         """
         if self._qm_job is not None:
             raise RuntimeError("QM job has already been submitted")
-        compiler_options: Optional[CompilerOptionArguments] = self.metadata.get(
-            "compiler_options", None
-        )
+        compiler_options: Optional[CompilerOptionArguments] = self.metadata.get("compiler_options", None)
         simulate: Optional[SimulationConfig] = self.metadata.get("simulate", None)
 
         programs = self._program if isinstance(self._program, list) else [self._program]
@@ -195,7 +194,7 @@ class QMSamplerJob(QMPrimitiveJob):
         return self._result_function(self._qm_job)
 
 
-class IQCCSamplerJob(QMSamplerJob):
+class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
     """IQCC Primitive Job class for executing QUA programs from PUBs."""
 
     def submit(self):
@@ -207,10 +206,7 @@ class IQCCSamplerJob(QMSamplerJob):
         sampler_prog = self._program[0] if isinstance(self._program, list) else self._program
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
-        if any(
-            param_table is not None and param_table.input_type is not None
-            for param_table in param_tables
-        ):
+        if any(param_table is not None and param_table.input_type is not None for param_table in param_tables):
             sync_hook_code = generate_sync_hook_sampler(self._pubs, param_tables)
         else:
             sync_hook_code = None
@@ -233,22 +229,15 @@ class IQCCSamplerJob(QMSamplerJob):
     def _result_function(self, qm_job: CloudJob) -> PrimitiveResult[SamplerPubResult]:
         """Get the result from the IQCC QM job."""
         results_handle = qm_job.result_handles
+        results_handle.wait_for_all_values()
         all_data = []
         for i, pub in enumerate(self._pubs):
             qc_meas_data = {}
-            for creg in pub.circuit.cregs:
-                data = (
-                    np.array(results_handle.get(f"{creg.name}_{i}").fetch_all())
-                    .flatten()
-                    .tolist()
-                )
-                # BitArray.from_samples creates shape=() with num_shots=len(data)
-                # To reshape to pub.shape, we need to include shots: pub.shape + (pub.shots,)
-                # This makes the total size match self.size * self.num_shots
-                bit_array = BitArray.from_samples(data, creg.size).reshape(
-                    pub.shape + (pub.shots,)
-                )
-                qc_meas_data[creg.name] = bit_array
+            for output_key, bit_width in measurement_output_bit_sizes(pub.circuit).items():
+                raw = results_handle.get(f"{output_key}_{i}").fetch_all()
+                data = np.asarray(raw)
+                bit_array = BitArray.from_samples(data.tolist(), bit_width).reshape(pub.shape + (pub.shots,))
+                qc_meas_data[output_key] = bit_array
 
             sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
             all_data.append(sampler_data)

@@ -38,12 +38,10 @@ def get_machine_from_iqcc(
     from iqcc_cloud_client import IQCC_Cloud
 
     if quam_cls is None:
-        try:
-            from iqcc_calibration_tools.quam_config.components import Quam as IQCCQuam
-        except ImportError:
-            from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import (
-                FluxTunableQuam as IQCCQuam,
-            )
+        from quam_builder.architecture.superconducting.qpu.flux_tunable_quam import (
+            FluxTunableQuam as IQCCQuam,
+        )
+
         quam_cls = IQCCQuam
 
     iqcc = IQCC_Cloud(quantum_computer_backend=backend_name, api_token=api_token)
@@ -101,9 +99,7 @@ class IQCCProvider:
         Returns:
             The Quam machine.
         """
-        machine, cloud_client = get_machine_from_iqcc(
-            name, self.api_token, quam_state_folder_path, quam_cls
-        )
+        machine, cloud_client = get_machine_from_iqcc(name, self.api_token, quam_state_folder_path, quam_cls)
         self._cloud_client = cloud_client
         return machine
 
@@ -119,9 +115,7 @@ class IQCCProvider:
         if self._cloud_client is None or self._cloud_client.backend != name:
             from iqcc_cloud_client import IQCC_Cloud
 
-            self._cloud_client = IQCC_Cloud(
-                quantum_computer_backend=name, api_token=self.api_token
-            )
+            self._cloud_client = IQCC_Cloud(quantum_computer_backend=name, api_token=self.api_token)
         return self._cloud_client
 
     def get_backend(

@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Job package: QMJob and primitive jobs for QM backend execution.
+"""Job package: execution handles for ``QMBackend.run()`` and V2 primitives.
+
+Returned job objects expose the compiled QUA :attr:`~QMJob.program` for printing
+via ``qm.generate_qua_script``, bridge to the QM SDK through :attr:`~QMJob.qm_job`,
+and build Qiskit results in :meth:`~QMJob.result`.
+
+See the user guide: ``docs/jobs.md``.
 
 Author: Arthur Strauss
 Date: 2026-02-08
@@ -21,5 +27,13 @@ Date: 2026-02-08
 from .qm_job import QMJob, IQCCJob
 from .qm_sampler_job import QMSamplerJob
 from .qm_estimator_job import QMEstimatorJob
+from .iqcc_job_mixin import IQCCCloudExecutionError, IQCCJobMixin
 
-__all__ = ["QMJob", "IQCCJob", "QMSamplerJob", "QMEstimatorJob"]
+__all__ = [
+    "QMJob",
+    "IQCCJob",
+    "QMSamplerJob",
+    "QMEstimatorJob",
+    "IQCCCloudExecutionError",
+    "IQCCJobMixin",
+]

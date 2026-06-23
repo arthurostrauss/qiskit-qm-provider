@@ -6,8 +6,12 @@ circuit, transpile it, and run it with the Sampler primitive.
 """
 
 from qiskit.circuit import QuantumCircuit, Parameter
-from qiskit_qm_provider import IQCCProvider
-from qiskit_qm_provider import QMSamplerV2, QMSamplerOptions
+from qiskit_qm_provider import (
+    IQCCProvider,
+    add_basic_macros,
+    QMSamplerV2,
+    QMSamplerOptions,
+)
 from qiskit import transpile
 
 # Set your quantum computer backend name (e.g. "qolab", "arbel")
@@ -15,8 +19,9 @@ backend_name = "arbel"
 
 # Get provider, machine, and backend
 iqcc_provider = IQCCProvider()  # Uses API token from env or pass api_token="..."
-machine = iqcc_provider.get_machine(backend_name)
-backend = iqcc_provider.get_backend(machine)
+backend = iqcc_provider.get_backend(backend_name)
+# Add single qubit gate macros that may not yet be part of the standard Quam
+add_basic_macros(backend)
 
 # Optional: inspect qubit mapping
 print(backend.qubit_dict)

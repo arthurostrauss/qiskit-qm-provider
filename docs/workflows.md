@@ -93,6 +93,8 @@ else:
     print(generate_qua_script(prog))
 ```
 
+See [Jobs](jobs.md) for the full job interface (`qm_job`, `pubs`, IQCC `run_data`, lifecycle).
+
 End-to-end snippet:
 
 ```python
@@ -137,21 +139,31 @@ Treat Qiskit circuits as **building blocks** inside larger QUA programs:
 
 1. Transpile a `QuantumCircuit`.
 2. Inside `with program():`, call [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) with [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) when needed.
-3. **Immediately after**, call [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) in the **same program** — this wires classical results into QUA variables usable for control flow, streaming, and further embedded circuits (not Python post-processing).
+3. Use **`comp.outputs`** for classical results — a local-only [`MeasurementOutcomeTable`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.MeasurementOutcomeTable.rst) of [`MeasurementRegisterField`](apidocs/stubs/qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField.rst) handles (one per classical register, plus `_bit0`, … for loose clbits). **`comp.outputs["c"]`** returns the QUA var; use **`comp.outputs.get_parameter("c")`** for the field handle and **`comp.outputs.state_ints["c"]`** / **`comp.outputs.streams["c"]`** for bulk accessors.
 
 ```python
-from qm.qua import program
-from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes
+from qm.qua import program, save
 
 with program() as prog:
-    result = backend.quantum_circuit_to_qua(syndrome_circuit)
-    meas = get_measurement_outcomes(syndrome_circuit, result)
-    syndrome_int = meas[ancilla_creg.name]["state_int"]
+    comp = backend.quantum_circuit_to_qua(syndrome_circuit)
+    save(comp.outputs.state_ints["ancilla"], comp.outputs.streams["ancilla"])
 ```
 
-See [Backend guide](backend.md#get-measurement-outcomes-return-dictionary) for the meaning of each dictionary key (`value`, `size`, `state_int`, `stream`).
+**Scope requirement:** QUA variable accessors (`comp.outputs["c"]`, `.state_ints`, `.streams`, runtime `ParameterTable[...]`) must be used inside `with program():`.
 
-Powerful for error correction, closed-loop calibration, and DGX hybrid loops.
+**Local-only:** `comp.outputs` is tracked in private measurement registries on [`ParameterPool`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterPool.rst) (weakref `iter_measurement_outcome_tables` / `iter_measurement_register_fields`), **not** in the runtime/OPNIC registry. It does not support OPNIC `stream_back()` / `fetch_from_opx()`. Bridge to the host manually via your transport tables (e.g. histogram into `RewardParams`, then `reward.stream_back()`).
+
+**Name overlap:** Runtime input fields and measurement outputs may share the same string (e.g. both `"c"`). They are different objects — access inputs via your `ParameterTable` and measurements via `comp.outputs`. ``ParameterPool.lookup_runtime_parameter(name)`` (alias of ``_lookup_parameter_by_name``) returns runtime parameters only. Call ``ParameterPool.reset()`` to clear both runtime and measurement registries in a long-lived session.
+
+**Re-compile identity:** each `quantum_circuit_to_qua` call returns a new `QuaCircuitCompilation` with **fresh** field objects. ``comp.rewire_outputs(qc, new_result)`` refreshes wiring on the same wrapper. Measurement fields cannot be attached to runtime tables.
+
+**Breaking change:** ``comp.outputs.c.state_int`` is invalid — use ``comp.outputs.state_ints["c"]`` or ``comp.outputs.get_parameter("c").state_int``.
+
+See [measurement_outputs.md](measurement_outputs.md) for the full locality model.
+
+Legacy [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) remains available and accepts either `QuaCircuitCompilation` or a raw `CompilationResult`.
+
+Powerful for error correction, closed-loop calibration, and QUARC/OPNIC hybrid loops.
 
 - **Guides:** [Backend](backend.md), [Parameter Table](parameter_table.md)
 - **Example:** [Error-Correction Workflow](error_correction.md)

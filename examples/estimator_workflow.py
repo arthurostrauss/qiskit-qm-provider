@@ -2,20 +2,20 @@
 Example: Running expectation-value jobs with QMEstimatorV2.
 
 This script shows how to use the Estimator primitive with optional real-time
-parameter input (e.g. Input Streaming or DGX Quantum).
+parameter input (e.g. Input Streaming or QUARC-backed OPNIC).
 """
 
 from qiskit.circuit import QuantumCircuit, Parameter
 from qiskit.quantum_info import SparsePauliOp
-from qiskit_qm_provider import QMEstimatorV2, QMEstimatorOptions, InputType
 from qiskit import transpile
 import numpy as np
 
+from qiskit_qm_provider import QMEstimatorV2, QMEstimatorOptions, add_basic_macros, IQCCProvider
+
 # Get a backend (example: IQCC; or use QMProvider, QmSaasProvider)
-from qiskit_qm_provider import IQCCProvider
 
 backend = IQCCProvider().get_backend("arbel")  # Replace with your backend name
-
+add_basic_macros(backend)
 # Build a parametric circuit and observables
 theta = Parameter("theta")  # Use ASCII names
 circuit = QuantumCircuit(1)

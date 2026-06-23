@@ -1,0 +1,35 @@
+# Auto-generated sync hook for the QM estimator. Do not edit by hand.
+from iqcc_cloud_client.runtime import get_qm_job
+
+job = get_qm_job()
+
+# One entry per execution plan.
+PLANS = {{ plans_literal }}
+# Shared length variable for the observable index stream, or ``None`` if unused.
+OBS_LENGTH_VAR = {{ obs_length_var_literal }}
+
+
+{% include "_push_helpers.py.jinja" %}
+
+def _push_table(job, table, values):
+    for spec, raw in zip(table["params"], values):
+        _push(job, table["input_type"], spec["name"], _coerce(raw, spec["qua_type"]))
+
+
+for plan in PLANS:
+    pt = plan["param_table"]
+    ov = plan["observables_var"]
+    pvals = plan["parameter_values"]
+    obs_idx = plan["obs_indices"]
+
+    if pt is not None and pt["input_type"] is not None:
+        for p, value_set in enumerate(pvals):
+            _push_table(job, pt, value_set)
+            if ov is not None and ov["input_type"] is not None:
+                _push(job, OBS_LENGTH_VAR["input_type"], OBS_LENGTH_VAR["name"], len(obs_idx[p]))
+                for obs_value in obs_idx[p]:
+                    _push_table(job, ov, obs_value)
+    elif ov is not None and ov["input_type"] is not None:
+        _push(job, OBS_LENGTH_VAR["input_type"], OBS_LENGTH_VAR["name"], len(obs_idx[0]))
+        for obs_value in obs_idx[0]:
+            _push_table(job, ov, obs_value)

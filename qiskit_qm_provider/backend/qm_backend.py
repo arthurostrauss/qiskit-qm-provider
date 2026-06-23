@@ -51,17 +51,6 @@ from qm import QuantumMachinesManager, DictQuaConfig, QuantumMachine
 from quam.components import Channel as QuAMChannel, QubitPair, Qubit
 from quam.core import QuamRoot
 
-# OpenQASM3 to QUA compiler
-
-if TYPE_CHECKING:
-    from iqcc_cloud_client.qmm_cloud import (
-        CloudQuantumMachine,
-        CloudQuantumMachinesManager,
-    )
-    from qm_qasm import QubitsMapping, Compiler, CompilationResult
-    from quam.utils.qua_types import Scalar
-    from ..job.qm_job import QMJob
-
 # Helper modules
 from ..parameter_table import ParameterTable, InputType, Parameter
 from .backend_utils import (
@@ -69,11 +58,19 @@ from .backend_utils import (
     look_for_standard_op,
     get_extended_gate_name_mapping,
     control_flow_name_mapping,
-    _QASM3_DUMP_LOOSE_BIT_PREFIX,
     qasm3_keyword_instructions,
-    validate_circuits,
 )
 from .qm_instruction_properties import QMInstructionProperties
+
+if TYPE_CHECKING:
+    from iqcc_cloud_client.qmm_cloud import (
+        CloudQuantumMachine,
+        CloudQuantumMachinesManager,
+    )
+    from qm_qasm import QubitsMapping, Compiler
+    from quam.utils.qua_types import Scalar
+    from ..job.qm_job import QMJob
+    from .qua_circuit_compilation import QuaCircuitCompilation
 
 __all__ = ["QMBackend", "QISKIT_PULSE_AVAILABLE"]
 
@@ -98,9 +95,9 @@ except ImportError:
         ImportWarning,
     )
     QISKIT_PULSE_AVAILABLE = False
-    QiskitChannel = DriveChannel = MeasureChannel = AcquireChannel = ControlChannel = (
-        Schedule
-    ) = ScheduleBlock = Play = Waveform = SymbolicPulse = None
+    QiskitChannel = DriveChannel = MeasureChannel = AcquireChannel = ControlChannel = Schedule = ScheduleBlock = (
+        Play
+    ) = Waveform = SymbolicPulse = None
 
 
 def requires_qiskit_pulse(func):
@@ -110,9 +107,7 @@ def requires_qiskit_pulse(func):
 
     def wrapper(*args, **kwargs):
         if not QISKIT_PULSE_AVAILABLE:
-            raise ImportError(
-                "Current Qiskit version does not have Qiskit Pulse, lower it to 1.x to use this feature."
-            )
+            raise ImportError("Current Qiskit version does not have Qiskit Pulse, lower it to 1.x to use this feature.")
         return func(*args, **kwargs)
 
     return wrapper
@@ -176,12 +171,8 @@ class QMBackend(Backend):
         self._qmm: Optional[QuantumMachinesManager | CloudQuantumMachinesManager] = qmm
         self._qm: Optional[QuantumMachine] = None
         self.channel_mapping: Dict[QiskitChannel, QuAMChannel] = channel_mapping or {}
-        self.reverse_channel_mapping: Dict[QuAMChannel, QiskitChannel] = {
-            v: k for k, v in self.channel_mapping.items()
-        }
-        self._qubit_dict = {
-            qubit.name: i for i, qubit in enumerate(machine.active_qubits)
-        }
+        self.reverse_channel_mapping: Dict[QuAMChannel, QiskitChannel] = {v: k for k, v in self.channel_mapping.items()}
+        self._qubit_dict = {qubit.name: i for i, qubit in enumerate(machine.active_qubits)}
         self._qubit_pair_dict = {
             qubit_pair.name: (
                 self._qubit_dict.get(qubit_pair.qubit_control.name, None),
@@ -196,8 +187,7 @@ class QMBackend(Backend):
             num_qubits=len(machine.active_qubits),
             min_length=16,
             qubit_properties=[
-                QubitProperties(t1=qubit.T1, t2=qubit.T2echo, frequency=qubit.f_01)
-                for qubit in machine.active_qubits
+                QubitProperties(t1=qubit.T1, t2=qubit.T2echo, frequency=qubit.f_01) for qubit in machine.active_qubits
             ],
         )
         # Base mapping: operations from machine macros and target updates
@@ -319,9 +309,7 @@ class QMBackend(Backend):
         else:
             raise ValueError("Qubit should be an integer index or a string name")
 
-    def get_qubit_pair(
-        self, qubits: Tuple[int | str | Qubit, int | str | Qubit]
-    ) -> QubitPair:
+    def get_qubit_pair(self, qubits: Tuple[int | str | Qubit, int | str | Qubit]) -> QubitPair:
         """Get the QubitPair for two qubit indices or names.
 
         Args:
@@ -340,9 +328,7 @@ class QMBackend(Backend):
             elif isinstance(qubit1, Qubit):
                 q1 = qubit1
             else:
-                raise ValueError(
-                    "First qubit should be an integer index, a string name or a Qubit object"
-                )
+                raise ValueError("First qubit should be an integer index, a string name or a Qubit object")
 
             if isinstance(qubit2, int):
                 q2 = self.machine.active_qubits[qubit2]
@@ -351,21 +337,15 @@ class QMBackend(Backend):
             elif isinstance(qubit2, Qubit):
                 q2 = qubit2
             else:
-                raise ValueError(
-                    "Second qubit should be an integer index, a string name or a Qubit object"
-                )
+                raise ValueError("Second qubit should be an integer index, a string name or a Qubit object")
 
             try:
                 qubit_pair = q1 @ q2  # Using the @ operator to get the QubitPair
                 if qubit_pair.name not in self._qubit_pair_dict:
-                    raise ValueError(
-                        f"Qubit pair {qubits} not found in the machine's active qubit pairs"
-                    )
+                    raise ValueError(f"Qubit pair {qubits} not found in the machine's active qubit pairs")
                 return qubit_pair  # Using the @ operator to get the QubitPair
             except TypeError:
-                raise ValueError(
-                    f"Qubit pair {qubits} not found in the machine's active qubit pairs"
-                )
+                raise ValueError(f"Qubit pair {qubits} not found in the machine's active qubit pairs")
         else:
             raise ValueError("Qubit pair should be a tuple of two qubits")
 
@@ -375,10 +355,7 @@ class QMBackend(Backend):
         Build the qubit to quantum elements mapping for the backend.
         Should be of the form {qubit_index: (quantum_element1, quantum_element2, ...)}
         """
-        return {
-            i: tuple(channel for channel in qubit.channels)
-            for i, qubit in enumerate(self.machine.active_qubits)
-        }
+        return {i: tuple(channel for channel in qubit.channels) for i, qubit in enumerate(self.machine.active_qubits)}
 
     @property
     def qubit_index_dict(self):
@@ -411,6 +388,10 @@ class QMBackend(Backend):
         """
         if self._qm is None:
             self._qm = self.qmm.open_qm(self.qm_config, close_other_machines=True)
+            from ..parameter_table.parameter_pool import ParameterPool
+
+            if ParameterPool.has_quarc_module():
+                ParameterPool.quarc_module().bind_connection(self.qmm)
         return self._qm
 
     def close_all_qms(self):
@@ -468,9 +449,7 @@ class QMBackend(Backend):
                     gate_op = gate_map[op_]
                     num_params = len(gate_op.params)
                     operations_dict.setdefault(op_, {})[(q,)] = prop
-                    operations_qua_dict[OperationIdentifier(op_, num_params, (q,))] = (
-                        func.apply
-                    )
+                    operations_qua_dict[OperationIdentifier(op_, num_params, (q,))] = func.apply
                     name_to_op_dict[op_] = gate_op
                 else:
                     # Create custom gate
@@ -479,23 +458,16 @@ class QMBackend(Backend):
                     positional_params = [
                         param
                         for param in params
-                        if param.kind
-                        in (sigParam.POSITIONAL_OR_KEYWORD, sigParam.POSITIONAL_ONLY)
+                        if param.kind in (sigParam.POSITIONAL_OR_KEYWORD, sigParam.POSITIONAL_ONLY)
                     ]
 
-                    params = [
-                        QiskitParameter(param.name) for param in positional_params
-                    ]
+                    params = [QiskitParameter(param.name) for param in positional_params]
                     return_type = signature.return_annotation
                     if return_type is not None and return_type is not Signature.empty:
-                        raise ValueError(
-                            f"Return type {return_type} not yet supported for custom gate {op_}"
-                        )
+                        raise ValueError(f"Return type {return_type} not yet supported for custom gate {op_}")
                     gate_op = Instruction(op_, 1, 0, params)
                     operations_dict.setdefault(op_, {})[(q,)] = prop
-                    operations_qua_dict[OperationIdentifier(op_, len(params), (q,))] = (
-                        func.apply
-                    )
+                    operations_qua_dict[OperationIdentifier(op_, len(params), (q,))] = func.apply
                     name_to_op_dict[op_] = gate_op
                     self._custom_instructions[op_] = gate_op
 
@@ -515,9 +487,7 @@ class QMBackend(Backend):
                     gate_op = gate_map[op_]
                     num_params = len(gate_op.params)
                     operations_dict.setdefault(op_, {})[(q_ctrl, q_tgt)] = prop
-                    operations_qua_dict[
-                        OperationIdentifier(op_, num_params, (q_ctrl, q_tgt))
-                    ] = func.apply
+                    operations_qua_dict[OperationIdentifier(op_, num_params, (q_ctrl, q_tgt))] = func.apply
                     name_to_op_dict[op_] = gate_op
                 else:
                     # Create custom gate
@@ -526,23 +496,16 @@ class QMBackend(Backend):
                     positional_params = [
                         param
                         for param in params
-                        if param.kind
-                        in (sigParam.POSITIONAL_OR_KEYWORD, sigParam.POSITIONAL_ONLY)
+                        if param.kind in (sigParam.POSITIONAL_OR_KEYWORD, sigParam.POSITIONAL_ONLY)
                     ]
 
-                    params = [
-                        QiskitParameter(param.name) for param in positional_params
-                    ]
+                    params = [QiskitParameter(param.name) for param in positional_params]
                     return_type = signature.return_annotation
                     if return_type is not None and return_type is not Signature.empty:
-                        raise ValueError(
-                            f"Return type {return_type} not yet supported for custom gate {op_}"
-                        )
+                        raise ValueError(f"Return type {return_type} not yet supported for custom gate {op_}")
                     gate_op = Instruction(op_, 2, 0, params)
                     operations_dict.setdefault(op_, {})[(q_ctrl, q_tgt)] = prop
-                    operations_qua_dict[
-                        OperationIdentifier(op_, len(params), (q_ctrl, q_tgt))
-                    ] = func.apply
+                    operations_qua_dict[OperationIdentifier(op_, len(params), (q_ctrl, q_tgt))] = func.apply
                     name_to_op_dict[op_] = gate_op
                     self._custom_instructions[op_] = gate_op
 
@@ -554,9 +517,7 @@ class QMBackend(Backend):
                     if self._target.instruction_supported(op, qargs):
                         self._target.update_instruction_properties(op, qargs, prop)
                     else:
-                        raise ValueError(
-                            f"Instruction {op} with qargs {qargs} is not supported by the target"
-                        )
+                        raise ValueError(f"Instruction {op} with qargs {qargs} is not supported by the target")
             else:
                 # Add new instruction to target
                 self._target.add_instruction(name_to_op_dict[op], properties=properties)
@@ -656,9 +617,7 @@ class QMBackend(Backend):
                 if (q_ctrl_idx, q_tgt_idx) == tuple(qubits):
                     channels.append(channel)
         if len(channels) == 0:
-            raise ValueError(
-                f"Control channel not found for qubit pair {qubits} in the channel mapping"
-            )
+            raise ValueError(f"Control channel not found for qubit pair {qubits} in the channel mapping")
         return channels
 
     def run(self, run_input: QuantumCircuit | List[QuantumCircuit], **options) -> QMJob:
@@ -706,9 +665,7 @@ class QMBackend(Backend):
 
         from ..pulse import schedule_to_qua_macro
 
-        return schedule_to_qua_macro(
-            self, sched, param_table, input_type, gate_param_names=gate_param_names
-        )
+        return schedule_to_qua_macro(self, sched, param_table, input_type, gate_param_names=gate_param_names)
 
     @requires_qiskit_pulse
     def add_pulse_operations(
@@ -732,19 +689,14 @@ class QMBackend(Backend):
         pulse_input = validate_schedule(pulse_input)
 
         # Update QuAM with additional custom pulses
-        for idx, (time, instruction) in enumerate(
-            pulse_input.filter(instruction_types=[Play]).instructions
-        ):
+        for idx, (time, instruction) in enumerate(pulse_input.filter(instruction_types=[Play]).instructions):
             instruction: Play
             pulse, channel = instruction.pulse, instruction.channel
             if not isinstance(pulse, (SymbolicPulse, Waveform)):
                 raise ValueError("Only SymbolicPulse and Waveform pulses are supported")
 
             pulse_name = pulse.name
-            if (
-                not channel.is_parameterized()
-                and pulse_name in self.get_quam_channel(channel).operations
-            ):
+            if not channel.is_parameterized() and pulse_name in self.get_quam_channel(channel).operations:
                 pulse_name += str(pulse.id)
                 pulse.name = pulse_name
 
@@ -760,22 +712,16 @@ class QMBackend(Backend):
                     pulse.name = f"qiskit_pulse_{id(pulse)}"
             quam_pulse = QuAMQiskitPulse(pulse)
             if quam_pulse.is_compile_time_parameterized():
-                raise ValueError(
-                    "Pulse contains unassigned parameters that cannot be adjusted in real-time"
-                )
+                raise ValueError("Pulse contains unassigned parameters that cannot be adjusted in real-time")
 
             if channel.is_parameterized():  # Add pulse to each channel of same type
                 for ch in filter(
                     lambda x: isinstance(x, type(channel)),
                     self.channel_mapping.keys(),
                 ):
-                    self.get_quam_channel(ch).operations[pulse.name] = QuAMQiskitPulse(
-                        pulse
-                    )
+                    self.get_quam_channel(ch).operations[pulse.name] = QuAMQiskitPulse(pulse)
             else:
-                self.get_quam_channel(channel).operations[pulse.name] = QuAMQiskitPulse(
-                    pulse
-                )
+                self.get_quam_channel(channel).operations[pulse.name] = QuAMQiskitPulse(pulse)
 
     def update_target(self, input_type: Optional[InputType] = None):
         """Synchronize Target object with ``_operation_mapping_QUA``.
@@ -825,17 +771,14 @@ class QMBackend(Backend):
                     positional_params = [
                         param
                         for param in sig.parameters.values()
-                        if param.kind
-                        in (sigParam.POSITIONAL_OR_KEYWORD, sigParam.POSITIONAL_ONLY)
+                        if param.kind in (sigParam.POSITIONAL_OR_KEYWORD, sigParam.POSITIONAL_ONLY)
                     ]
                     num_params = len(positional_params)
                     op_id = OperationIdentifier(op_name, num_params, qubits)
                     # Overwrite existing entry if present (Target takes precedence over machine macros)
                     self._operation_mapping_QUA[op_id] = sched
 
-                elif isinstance(properties, InstructionProperties) and hasattr(
-                    properties, "calibration"
-                ):
+                elif isinstance(properties, InstructionProperties) and hasattr(properties, "calibration"):
                     from ..pulse.pulse_support_utils import validate_schedule
 
                     sched = validate_schedule(properties.calibration)
@@ -846,10 +789,7 @@ class QMBackend(Backend):
                         gate = gate_map.get(op_name)
                         if gate is not None and getattr(gate, "params", None):
                             num_params = len(gate.params)
-                            gate_param_names = [
-                                getattr(p, "name", f"param_{i}")
-                                for i, p in enumerate(gate.params)
-                            ]
+                            gate_param_names = [getattr(p, "name", f"param_{i}") for i, p in enumerate(gate.params)]
                     op_id = OperationIdentifier(op_name, num_params, qubits)
 
                     if num_params > 0 and sched.is_parameterized():
@@ -869,9 +809,7 @@ class QMBackend(Backend):
         self._calibration_operation_mapping_QUA = self._operation_mapping_QUA.copy()
 
     @requires_qiskit_pulse
-    def update_calibrations(
-        self, qc: QuantumCircuit, input_type: Optional[InputType] = None
-    ):
+    def update_calibrations(self, qc: QuantumCircuit, input_type: Optional[InputType] = None):
         """Update the QUA operations mapping from circuit calibrations.
 
         Requires Qiskit < 2.0 (Qiskit Pulse).
@@ -884,9 +822,7 @@ class QMBackend(Backend):
         """
         from qm_qasm import OperationIdentifier
 
-        if (
-            hasattr(qc, "calibrations") and qc.calibrations
-        ):  # Check for custom calibrations
+        if hasattr(qc, "calibrations") and qc.calibrations:  # Check for custom calibrations
             from ..pulse.pulse_support_utils import (
                 validate_schedule,
                 handle_parameterized_channel,
@@ -895,50 +831,35 @@ class QMBackend(Backend):
             if qc.parameters or qc.iter_vars():
                 param_table = qc.metadata.get(
                     "qua",
-                    ParameterTable.from_qiskit(
-                        qc, input_type=input_type, name=qc.name + "_param_table"
-                    ),
+                    ParameterTable.from_qiskit(qc, input_type=input_type, name=qc.name + "_param_table"),
                 )
                 if isinstance(param_table, Dict):
                     if len(param_table) == 1:
                         param_table = list(param_table.values())[0]
                     else:
-                        param_table = ParameterTable.from_other_tables(
-                            list(param_table.values())
-                        )
+                        param_table = ParameterTable.from_other_tables(list(param_table.values()))
 
             else:
                 param_table = None
 
             for gate_name, cal_info in qc.calibrations.items():
-                if (
-                    gate_name not in self._qasm3_custom_gates
-                ):  # Make it a basis gate for OQ compiler
+                if gate_name not in self._qasm3_custom_gates:  # Make it a basis gate for OQ compiler
                     self._qasm3_custom_gates.append(gate_name)
                 for (qubits, parameters), schedule in cal_info.items():
-                    schedule = validate_schedule(
-                        schedule
-                    )  # Check that schedule has fixed duration
+                    schedule = validate_schedule(schedule)  # Check that schedule has fixed duration
 
                     # Convert type of parameters to int if required (for switch case over channels)
                     if param_table is not None:
-                        param_table = handle_parameterized_channel(
-                            schedule, param_table
-                        )
+                        param_table = handle_parameterized_channel(schedule, param_table)
 
-                    gate_param_names = [
-                        getattr(p, "name", f"param_{i}")
-                        for i, p in enumerate(parameters)
-                    ]
+                    gate_param_names = [getattr(p, "name", f"param_{i}") for i, p in enumerate(parameters)]
                     self._calibration_operation_mapping_QUA[
                         OperationIdentifier(
                             gate_name,
                             len(parameters),
                             qubits,
                         )
-                    ] = self.schedule_to_qua_macro(
-                        schedule, param_table, gate_param_names=gate_param_names
-                    )
+                    ] = self.schedule_to_qua_macro(schedule, param_table, gate_param_names=gate_param_names)
 
                     self.add_pulse_operations(schedule, name=schedule.name)
 
@@ -946,16 +867,14 @@ class QMBackend(Backend):
         self,
         qc: QuantumCircuit,
         param_table: Optional[
-            ParameterTable
-            | List[ParameterTable | Parameter]
-            | Dict[str | QiskitParameter | Var, Scalar]
+            ParameterTable | Sequence[ParameterTable | Parameter] | Dict[str | QiskitParameter | Var, Scalar]
         ] = None,
-    ) -> CompilationResult:
+    ) -> QuaCircuitCompilation:
         """Convert a :class:`~qiskit.circuit.QuantumCircuit` to a QUA program fragment.
 
         Can be called inside an existing ``with program():`` block or standalone.
         When called standalone, access the generated program via
-        ``result.result_program.dsl_program``.
+        ``result.qua_program`` or ``result.result_program.dsl_program``.
 
         Args:
             qc: The circuit to compile.
@@ -964,8 +883,11 @@ class QMBackend(Backend):
                 that must be streamed during execution.
 
         Returns:
-            Compilation result containing the generated QUA program fragment.
+            :class:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation`
+            wrapping the compilation result and
+            wired measurement outputs.
         """
+        from .qua_circuit_compilation import QuaCircuitCompilation
 
         basis_gates = self.qm_qasm_basis_gates
         # Check if all custom calibrations are in the qasm3 basis gates
@@ -976,14 +898,10 @@ class QMBackend(Backend):
                         f"Custom calibration {gate_name} not in basis gates {basis_gates}",
                         f"Run update_calibrations() before compiling the circuit",
                     )
-        exporter = Exporter(
-            includes=(), basis_gates=basis_gates, disable_constants=True
-        )
+        exporter = Exporter(includes=(), basis_gates=basis_gates, disable_constants=True)
         open_qasm_code = exporter.dumps(qc)
         open_qasm_code = "\n".join(
-            line
-            for line in open_qasm_code.splitlines()
-            if not line.strip().startswith(("barrier",))
+            line for line in open_qasm_code.splitlines() if not line.strip().startswith(("barrier",))
         )
         inputs = None
         if param_table is not None:
@@ -993,15 +911,9 @@ class QMBackend(Backend):
             if isinstance(param_table, Sequence):
                 for table in param_table:
                     if not table.is_declared:
-                        if isinstance(table, ParameterTable):
-                            table.declare_variables(pause_program=False)
-                        else:
-                            table.declare_variable(pause_program=False)
-                    variables = (
-                        table.variables_dict
-                        if isinstance(table, ParameterTable)
-                        else {table.name: table.var}
-                    )
+                        # Unified API: declare() works for both Parameter and ParameterTable.
+                        table.declare(pause_program=False)
+                    variables = table.variables_dict if isinstance(table, ParameterTable) else {table.name: table.var}
                     inputs.update(variables)
             elif isinstance(param_table, Dict):
                 for key, value in param_table.items():
@@ -1015,7 +927,7 @@ class QMBackend(Backend):
             compilation_name=f"{qc.name}_qua",
             inputs=inputs,
         )
-        return result
+        return QuaCircuitCompilation(result, qc)
 
     @property
     def compiler(self) -> Compiler:
@@ -1079,8 +991,7 @@ class QMBackend(Backend):
         Retrieve the list of OpenQASM 3 basis gates supported by the backend
         """
         basis_gates = list(
-            set(self._qasm3_custom_gates + list(self.target.operation_names))
-            - set(qasm3_keyword_instructions)
+            set(self._qasm3_custom_gates + list(self.target.operation_names)) - set(qasm3_keyword_instructions)
         )
         return basis_gates
 

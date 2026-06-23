@@ -22,16 +22,19 @@ from __future__ import annotations
 
 import copy
 import warnings
-from itertools import chain
-import sys
+from typing import (
+    Optional,
+    List,
+    Union,
+    Tuple,
+    Literal,
+    Sequence,
+    TYPE_CHECKING,
+    Dict,
+    Any,
+    Type,
+)
 
-from qm import QuantumMachine
-from qm.api.v2.job_api import JobApi
-from qm.qua._dsl import _ResultSource
-
-from .parameter_pool import ParameterPool
-from .input_type import Direction, InputType
-from typing import Optional, List, Union, Tuple, Literal, Sequence, TYPE_CHECKING, Dict
 import numpy as np
 from qm.qua import (
     fixed,
@@ -50,7 +53,14 @@ from qm.qua import (
 )
 from qm.qua._expressions import QuaArrayVariable
 from qm.jobs.running_qm_job import RunningQmJob
+from qm import QuantumMachine
+from qm.api.v2.job_api import JobApi
 from qualang_tools.results import wait_until_job_is_paused
+
+from .parameter_pool import ParameterPool
+from .input_type import Direction, InputType
+from ._scope import require_qua_program, requires_qua_program, current_scope_token
+from ._deprecation import _DeprecatedAlias
 
 if TYPE_CHECKING:
     from .parameter_table import ParameterTable
@@ -60,10 +70,11 @@ if TYPE_CHECKING:
         VectorOfAnyType,
         ScalarOfAnyType,
         QuaScalar,
+        ResultStreamSource,
     )
 
 
-def set_type(qua_type: Union[str, type]):
+def set_type(qua_type: str | Type[int | float | bool]) -> Type[int | float | bool]:
     """
     Set the type of the QUA variable to be declared.
     Args: qua_type: Type of the QUA variable to be declared (int, fixed, bool).
@@ -79,7 +90,9 @@ def set_type(qua_type: Union[str, type]):
         raise ValueError("Invalid QUA type. Please use 'fixed', 'int' or 'bool'.")
 
 
-def infer_type(value: Optional[Union[int, float, List, np.ndarray]] = None):
+def infer_type(
+    value: Optional[Union[int, float, bool, List, np.ndarray]] = None,
+) -> Type[int | float | bool]:
     """
     Infer automatically the type of the QUA variable to be declared from the type of the initial parameter value.
     """
@@ -92,7 +105,14 @@ def infer_type(value: Optional[Union[int, float, List, np.ndarray]] = None):
     if isinstance(value, int):
         return int
     if isinstance(value, float):
-        return fixed if not value.is_integer() or value <= 8 else int
+        if not value.is_integer():
+            if np.abs(value) >= 8:
+                raise ValueError(
+                    f"Float value {value} is outside the QUA fixed-point range [-8, 8). "
+                    "Pass an explicit qua_type=int if a large integer was intended."
+                )
+            return fixed
+        return int
 
     # Handle array values
     if isinstance(value, (List, np.ndarray)):
@@ -120,7 +140,7 @@ def infer_type(value: Optional[Union[int, float, List, np.ndarray]] = None):
     raise ValueError("Value must be bool, int, float or array")
 
 
-def reset_var(var: QuaScalar, type: Union[str, type]):
+def _assign_zero(var: QuaScalar, type: Type[int | float | bool]):
     """
     Reset the QUA variable to a 0 value (in the appropriate QUA type).
     """
@@ -134,45 +154,37 @@ def reset_var(var: QuaScalar, type: Union[str, type]):
         raise ValueError("Invalid QUA type. Please use 'int', 'fixed' or 'bool'.")
 
 
+#: Mapping from a Parameter-level method name (the ``context`` string passed into
+#: :meth:`Parameter._require_standalone_opnic_table`) to the equivalent ParameterTable
+#: method that callers should use when the parameter is field-managed.
+_OPNIC_OWNER_METHOD_MAP: Dict[str, str] = {
+    "declare_variable": "declare",
+    "declare": "declare",
+    "push_to_opx": "push_to_opx",
+    "fetch_from_opx": "fetch_from_opx",
+    "load_input_value": "rcv",
+    "rcv": "rcv",
+    "stream_back": "stream_back",
+}
+
+#: Sentinel used by :meth:`Parameter.push_to_opx` to detect a missing ``value`` argument
+#: so that zero-argument calls read from ``self.value`` (the stored Python-side float).
+_PUSH_SENTINEL = object()
+
+
 class Parameter:
     """
     Class enabling the mapping of a parameter to a QUA variable to be updated. The type of the QUA variable to be
     adjusted can be declared explicitly or either be automatically inferred from the type of provided initial value.
     """
 
-    def __new__(cls, name, *args, **kwargs):
-        """
-        Create a new instance of the Parameter class.
-        """
-        for obj in ParameterPool.get_all_objs():
-            if hasattr(obj, "parameters"):
-                for param in obj.parameters:
-                    if param.name == name:
-                        warnings.warn(
-                            f"Parameter with name {name} already exists in parameter table {obj.name}."
-                        )
-                        return param
-            else:
-                if obj.name == name:
-                    warnings.warn(
-                        f"Parameter with name {name} already exists in the parameter pool."
-                    )
-                    return obj
-        # TODO: Handle the case where the parameter is part of a parameter table with indexing
-        obj = super().__new__(cls)
-        return obj
-
     def __init__(
         self,
         name: str,
         value: Optional[Union[int, float, List, np.ndarray]] = None,
         qua_type: Optional[Union[str, type]] = None,
-        input_type: Optional[
-            Union[Literal["DGX_Q", "INPUT_STREAM", "IO1", "IO2"], InputType]
-        ] = None,
-        direction: Optional[
-            Union[Literal["INCOMING", "OUTGOING", "BOTH"], Direction]
-        ] = None,
+        input_type: Optional[Union[Literal["OPNIC", "INPUT_STREAM", "IO1", "IO2"], InputType]] = None,
+        direction: Optional[Union[Literal["INCOMING", "OUTGOING", "BOTH"], Direction]] = None,
         units: str = "",
     ):
         """Initialize a streamed or compile-time QUA parameter.
@@ -182,12 +194,13 @@ class Parameter:
             value: Initial value of the parameter.
             qua_type: Type of the QUA variable to be declared (int, fixed, bool).
                 If none is provided, the type is inferred from initial value.
-            input_type: Input type of the parameter (DGX_Q, INPUT_STREAM, IO1, IO2).
+            input_type: Input type of the parameter (OPNIC, INPUT_STREAM, IO1, IO2).
                 Default is None.
             direction: Direction of the parameter stream (INCOMING, OUTGOING, BOTH).
-                The direction describes the relationship between DGX_Q and OPX:
-                DGX_Q -> OPX: OUTGOING; OPX -> DGX_Q: INCOMING; DGX_Q <-> OPX: BOTH.
-                Default is None. Relevant only when ``input_type`` is DGX_Q.
+                Direction is from the QUA program's perspective (aligned with Quarc):
+                into QUA (classical/OPNIC -> OPX): INCOMING; out of QUA (OPX -> OPNIC):
+                OUTGOING; bidirectional: BOTH.
+                Default is None. Relevant only when ``input_type`` is OPNIC.
             units: Units of the parameter. Default is "".
 
         """
@@ -199,8 +212,11 @@ class Parameter:
         self._index = -1  # Default value for parameters not part of a parameter table
         self._var = None
         self._is_declared = False
+        #: Program-scope token (``_scope.current_scope_token()``) under which the QUA
+        #: variable was declared. ``is_declared`` is only True while this matches the
+        #: active program scope, so a fresh ``with program():`` auto-invalidates it.
+        self._declared_scope = None
         self._stream = None
-        self._stream_id = None
         self._type = set_type(qua_type) if qua_type is not None else infer_type(value)
         self._length = 0 if not isinstance(value, (List, np.ndarray)) else len(value)
         self._ctr: Optional[QuaScalar[int]] = None  # Counter for QUA array variables
@@ -209,26 +225,30 @@ class Parameter:
         self._qua_external_stream_out = None
 
         if input_type is not None:
-            input_type = (
-                InputType(input_type) if isinstance(input_type, str) else input_type
-            )
+            input_type = InputType(input_type) if isinstance(input_type, str) else input_type
         self._input_type: Optional[InputType] = input_type
-        self._dgx_struct = None
         if direction is not None:
-            direction = (
-                Direction(direction) if isinstance(direction, str) else direction
-            )
+            direction = Direction(direction) if isinstance(direction, str) else direction
         self._direction = direction
         self._table_indices: Dict[str, int] = {}
-        self._main_table = None
+        #: The owning :class:`ParameterTable`, or ``None`` while still pending. For a
+        #: promoted standalone OPNIC parameter, this points to the synthetic
+        #: single-field ``ParameterTable`` (which has ``_is_synthetic_standalone=True``).
+        self._main_table: Optional["ParameterTable"] = None
 
-        if self._input_type == InputType.DGX_Q and self.direction is None:
-            raise ValueError("Direction must be provided for DGX input type.")
+        if self._input_type == InputType.OPNIC and self.direction is None:
+            raise ValueError("Direction must be provided for OPNIC input type.")
 
         self._initialized = True
-
-    def get_name(self):
-        return f"{self.name} [{self.units}]"
+        # OPNIC parameters are tracked in :data:`ParameterPool._pending_standalone_opnic`
+        # at construction so that (a) :meth:`Parameter.__new__` can de-dup by name across
+        # the whole pool, and (b) the user can still attach the parameter to a regular
+        # ``ParameterTable`` later. If the parameter is *not* attached to a table by the
+        # time the user calls :meth:`declare_variable` (or any other transport method),
+        # it is promoted into a synthetic single-field ``ParameterTable`` and this entry
+        # is removed from the pending list.
+        if self._input_type == InputType.OPNIC:
+            ParameterPool._register_pending_standalone_opnic(self)
 
     def __repr__(self):
         """
@@ -251,54 +271,138 @@ class Parameter:
                 "Please use this method through the parameter table instead."
             )
         if param_table.name not in self._table_indices:
-            raise ValueError(
-                f"Parameter {self.name} is not part of the parameter table {param_table.name}."
-            )
+            raise ValueError(f"Parameter {self.name} is not part of the parameter table {param_table.name}.")
         return self._table_indices[param_table.name]
 
     def set_index(self, param_table: ParameterTable, index: int):
         """
         Set the index of the parameter in the parameter table.
+
         Args:
-            param_table: ParameterTable object to set the index for.
+            param_table: ``ParameterTable`` object to attach to.
             index: Index of the parameter in the parameter table.
+
+        For OPNIC parameters, attaching to a regular (non-synthetic) ``ParameterTable``
+        also clears the parameter from :data:`ParameterPool._pending_standalone_opnic`,
+        so the parameter is no longer a standalone candidate. Attempting to attach an
+        already-promoted standalone parameter (whose ``main_table`` is a synthetic
+        single-field table) to a *different* ``ParameterTable`` raises.
         """
+        # If the parameter was already promoted to a synthetic standalone table, reject
+        # any attempt to attach it elsewhere — the locking semantics require single
+        # ownership for OPNIC fields.
+        if (
+            self._main_table is not None
+            and getattr(self._main_table, "_is_synthetic_standalone", False)
+            and self._main_table is not param_table
+        ):
+            raise ValueError(
+                f"Parameter {self.name!r} is already finalized as a standalone OPNIC "
+                f"field (synthetic table "
+                f"{getattr(self._main_table, 'name', '<unnamed>')!r}); cannot attach to "
+                f"another ParameterTable {param_table.name!r}."
+            )
         if self._index == -1:
             self._index = -2
 
         if param_table.name not in self._table_indices:
             self._table_indices[param_table.name] = index
         else:
-            raise ValueError(
-                f"Parameter {self.name} is already part of the parameter table {param_table.name}."
-            )
+            raise ValueError(f"Parameter {self.name} is already part of the parameter table {param_table.name}.")
+        if self._main_table is None:
+            self._main_table = param_table
+
+        # Remove from the pending standalone list when attached to a non-synthetic
+        # multi-or-single-field table. Synthetic standalone tables also call set_index,
+        # but they remove the entry themselves to keep this branch simple.
+        if self._input_type == InputType.OPNIC and not getattr(param_table, "_is_synthetic_standalone", False):
+            ParameterPool._unregister_pending_standalone_opnic(self)
+
+    def _unset_index(self, param_table: ParameterTable) -> None:
+        """Inverse of :meth:`set_index`. Detach this parameter from ``param_table``.
+
+        - Removes ``param_table.name`` from :attr:`_table_indices`. Silently no-op if
+          this parameter was never attached to ``param_table``.
+        - If ``_main_table`` was ``param_table``, repoints it at any remaining attached
+          table (or ``None`` if none remain).
+        - If no tables remain, resets :attr:`_index` to ``-1`` so the parameter is
+          treated as fresh again.
+        - For OPNIC parameters that lose their last attachment to a non-synthetic
+          table, re-registers in :data:`ParameterPool._pending_standalone_opnic` so
+          the parameter becomes a standalone candidate again.
+
+        Used by :meth:`ParameterTable.remove_parameter` to keep the back-references
+        coherent.
+        """
+        if param_table.name not in self._table_indices:
+            return
+        del self._table_indices[param_table.name]
+
+        if self._main_table is param_table:
+            remaining_tables = self.tables
+            self._main_table = remaining_tables[0] if remaining_tables else None
+
+        if not self._table_indices:
+            self._index = -1
+
+        if (
+            self._input_type == InputType.OPNIC
+            and self._main_table is None
+            and not getattr(param_table, "_is_synthetic_standalone", False)
+        ):
+            ParameterPool._register_pending_standalone_opnic(self)
 
     def is_standalone(self) -> bool:
+        """Backward-compat alias for :attr:`is_stand_alone`."""
+        return self.is_stand_alone
+
+    @property
+    def is_stand_alone(self) -> bool:
+        """Whether this parameter is treated as a standalone OPNIC field.
+
+        A parameter is "standalone" if any of:
+
+        - it has no owning ``ParameterTable`` (still pending — has not been attached
+          and has not been promoted yet); or
+        - it has been promoted into a synthetic single-field ``ParameterTable``
+          (``_is_synthetic_standalone == True``).
+
+        Once attached to a regular multi-or-single-field ``ParameterTable``, the
+        parameter is *not* standalone anymore.
         """
-        Check if the parameter is standalone (not part of a parameter table).
-        Returns:
-            bool: True if the parameter is standalone, False otherwise.
+        if self._main_table is None:
+            return True
+        if getattr(self._main_table, "_is_synthetic_standalone", False):
+            return True
+        return False
+
+    @property
+    def opnic_table(self):
+        """The synthetic single-field ``ParameterTable`` wrapping this parameter, or
+        ``None`` if the parameter has not been promoted yet (still pending) or is part
+        of a regular multi-field table.
         """
-        return self.main_table is None
+        if self._main_table is not None and getattr(self._main_table, "_is_synthetic_standalone", False):
+            return self._main_table
+        return None
 
     @property
     def main_table(self) -> Optional[ParameterTable]:
         """
         Returns:
             The ParameterTable object used to declare the parameter.
-            Specifically, the one that should be used for communication if InputType is DGX_Q.
+            Specifically, the one that should be used for communication if InputType is OPNIC.
         :returns: ParameterTable object or None if not found.
 
         """
         return self._main_table
 
+    @requires_qua_program
     def assign(
         self,
         value: Union["Parameter", ScalarOfAnyType, VectorOfAnyType],
         condition=None,
-        value_cond: Optional[
-            Union["Parameter", ScalarOfAnyType, VectorOfAnyType]
-        ] = None,
+        value_cond: Optional[Union["Parameter", ScalarOfAnyType, VectorOfAnyType]] = None,
     ):
         """
         Assign value to the QUA variable corresponding to the parameter.
@@ -315,9 +419,7 @@ class Parameter:
                         the parameter length, or if the input is invalid.
         """
         if not self.is_declared:
-            raise ValueError(
-                "Variable not declared. Declare the variable first through declare_variable method."
-            )
+            self.declare()
         if (condition is not None) != (value_cond is not None):
             raise ValueError("Both condition and value_cond must be provided.")
 
@@ -329,17 +431,13 @@ class Parameter:
 
         if isinstance(value, Parameter):
             if not value.is_declared:
-                raise ValueError(
-                    "Variable not declared. Declare the variable first through declare_variable method."
-                )
+                value.declare()
             if value.length != self.length:
                 raise ValueError(
                     f"Invalid input. Mismatch in length of {self.name} ({self.length}) and {value.name} ({value.length})."
                 )
             if value_cond is not None and not isinstance(value_cond, Parameter):
-                raise ValueError(
-                    "Invalid input. value_cond should be of same type as value."
-                )
+                raise ValueError("Invalid input. value_cond should be of same type as value.")
             if self.is_array:
                 with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
                     assign_with_condition(
@@ -348,9 +446,7 @@ class Parameter:
                         value_cond.var[self._ctr] if value_cond else None,
                     )
             else:
-                assign_with_condition(
-                    self.var, value.var, value_cond.var if value_cond else None
-                )
+                assign_with_condition(self.var, value.var, value_cond.var if value_cond else None)
         else:
             if self.is_array:
                 if isinstance(value, QuaArrayVariable):
@@ -362,27 +458,27 @@ class Parameter:
                         )
                 else:
                     if len(value) != self.length:
-                        raise ValueError(
-                            f"Invalid input. {self.name} should be a list of length {self.length}."
-                        )
+                        raise ValueError(f"Invalid input. {self.name} should be a list of length {self.length}.")
                     for i in range(self.length):
-                        assign_with_condition(
-                            self.var[i], value[i], value_cond[i] if value_cond else None
-                        )
+                        assign_with_condition(self.var[i], value[i], value_cond[i] if value_cond else None)
             else:
                 if isinstance(value, List):
-                    raise ValueError(
-                        f"Invalid input. {self.name} should be a single value, not a list."
-                    )
+                    raise ValueError(f"Invalid input. {self.name} should be a single value, not a list.")
                 assign_with_condition(self.var, value, value_cond)
 
-    def declare_variable(self, pause_program=False, declare_stream=True):
+    def declare(self, pause_program=False, declare_stream=True):
         """Declare the QUA variable associated with the parameter.
 
         Args:
             pause_program: If ``True``, pause the program after declaring the variable.
             declare_stream: If ``True``, declare an output stream for the QUA variable.
         """
+        if self.input_type == InputType.OPNIC:
+            opnic_table = self._require_standalone_opnic_table(context="declare")
+            require_qua_program("Parameter.declare")
+            return opnic_table.declare(pause_program=pause_program, declare_stream=declare_stream)
+        require_qua_program("Parameter.declare")
+        self._reset_if_stale_scope()
         if self.is_declared:
             if self._input_type not in (InputType.DGX_Q, None):
                 # For streaming modes (INPUT_STREAM, IO1, IO2) the same Parameter
@@ -399,61 +495,36 @@ class Parameter:
                 )
                 return
             raise ValueError("Variable already declared. Cannot declare again.")
-        if self.input_type == InputType.DGX_Q:
-            if self.is_standalone():
-                from qm.qua import (
-                    declare_struct,
-                    declare_external_stream,
-                    QuaStreamDirection,
-                )
-
-                # Parameter not part of a parameter table
-                self.stream_id = ParameterPool.get_id(self)
-                dgx_struct = self.dgx_struct
-                self._var = declare_struct(dgx_struct)
-
-                if self.direction == Direction.INCOMING:
-                    self._qua_external_stream_out = declare_external_stream(
-                        dgx_struct, self.stream_id, QuaStreamDirection.OUTGOING
-                    )
-                elif self.direction == Direction.OUTGOING:
-                    self._qua_external_stream_in = declare_external_stream(
-                        dgx_struct, self.stream_id, QuaStreamDirection.INCOMING
-                    )
-                else:
-                    self._qua_external_stream_in = declare_external_stream(
-                        dgx_struct, self.stream_id, QuaStreamDirection.INCOMING
-                    )
-                    self._qua_external_stream_out = declare_external_stream(
-                        dgx_struct, self.stream_id, QuaStreamDirection.OUTGOING
-                    )
-
-            else:
-                raise ValueError(
-                    f"This parameter is part of a parameter table. "
-                    f"Please use the parameter table {ParameterPool.get_obj(self.stream_id).name} "
-                    f"forming the Struct to declare it."
-                )
         else:
-            args_declare = {"t": self.type}
-            if self.value is not None:
-                args_declare["value"] = self.value
-            elif self.length > 1:
-                args_declare["size"] = self.length
             if self.input_type == InputType.INPUT_STREAM:
-                args_declare["name"] = self.name
-                declare_statement = declare_input_stream
+                # if self.is_array:
+                # self._var = declare_input_stream('client', self.name, self.type, size=self.length)
+                # else:
+                #     self._var = declare_input_stream('client', self.name, self.type)
+                self._var = declare_input_stream(self.type, name=self.name, value=self.value)
             else:
-                declare_statement = declare
-            self._var = declare_statement(**args_declare)
-
+                if self.value is not None:
+                    self._var = declare(self.type, value=self.value)
+                else:
+                    self._var = declare(self.type, size=self.length if self.is_array else None)
         if self.is_array and self.length > 1:
             self._ctr = declare(int)
         if pause_program:
             pause()
         self._is_declared = True
+        self._declared_scope = current_scope_token()
         if declare_stream:
             self.declare_stream()
+        # Auto-register non-OPNIC standalone parameters on the pool's bound module
+        # (if any). Table-managed parameters are registered via their owning
+        # ParameterTable.declare() instead — guarded here by ``not self.tables``.
+        # Duck-typed via ``hasattr(..., "parameter_specs")`` to avoid any circular
+        # import with QiskitQMModule. Idempotent by parameter name.
+        if self.input_type != InputType.OPNIC and not self.tables:
+            _mod = ParameterPool._quarc_module
+            if _mod is not None and hasattr(_mod, "parameter_specs"):
+                if not any(s.get("name") == self.name for s in _mod.parameter_specs):
+                    _mod.parameter_specs.append(self.to_spec())
         return self._var
 
     def declare_stream(self):
@@ -461,6 +532,7 @@ class Parameter:
         Declare the output stream associated with the parameter.
         """
         if self._stream is None:
+            # self._stream = declare_output_stream(target='client', stream_id=self.name, dtype=self.type)
             self._stream = qua_declare_stream()
         else:
             warnings.warn(f"Stream {self.name} already declared, skipping declaration.")
@@ -468,8 +540,16 @@ class Parameter:
 
     @property
     def is_declared(self):
-        """Boolean indicating if the QUA variable has been declared."""
-        return self._is_declared
+        """Whether the QUA variable is declared **and** still valid in the active scope.
+
+        Declaration is bound to the program scope it was made in: a fresh
+        ``with program():`` (a different scope token) auto-invalidates a prior
+        declaration, so the same ``Parameter`` object can be re-declared across programs
+        without a manual reset. Outside any program scope this is ``False`` (the token is
+        ``None``) — note this is a transient QUA-side concept; client-side methods
+        (``push_to_opx`` / ``fetch_from_opx``) do not gate on it.
+        """
+        return self._is_declared and self._declared_scope is current_scope_token()
 
     @property
     def name(self):
@@ -478,67 +558,70 @@ class Parameter:
 
     @property
     def direction(self):
-        if self.input_type != InputType.DGX_Q:
-            warnings.warn("This parameter is not associated with a DGX stream.")
-            raise ValueError("This parameter is not associated with a DGX stream.")
+        """
+        Direction of the parameter stream (INCOMING, OUTGOING, BOTH), from the QUA
+        program's perspective (aligned with Quarc):
+        into QUA (classical/OPNIC -> OPX): INCOMING
+        out of QUA (OPX -> classical/OPNIC): OUTGOING
+        bidirectional: BOTH
+        Default is None. Relevant only if input_type is OPNIC.
+        """
+        if self.input_type != InputType.OPNIC:
+            raise ValueError("This parameter is not associated with an OPNIC stream.")
         return self._direction
 
     @property
-    def dgx_struct(self):
+    def struct_type(self):
+        """The Quarc ``Struct`` *type* of the OPNIC table that owns this parameter.
+
+        This is the typed struct definition (a class with ``Scalar`` / ``Array``
+        annotations) — suitable for building a matching struct elsewhere — **not** the
+        bound handle. The handle is reachable via the owning table's ``var``. Delegates
+        to :attr:`ParameterTable.struct_type`.
+
+        Raises :class:`RuntimeError` if the parameter is OPNIC but not yet bound to a
+        ``ParameterTable`` (attach it to a table, or declare it in a program to promote
+        it as a standalone).
         """
-        DGX struct associated with the parameter.
-        Can be a reference to a bigger struct describing a ParameterTable (automatically set by the
-        ParameterTable class) or a standalone struct created on the fly.
-        Returns:
-
-        """
-        if self.input_type != InputType.DGX_Q:
-            raise ValueError(
-                "Invalid input type for calling dgx_struct property. Must be set to InputType.DGX."
+        if self.input_type != InputType.OPNIC:
+            raise ValueError("Invalid input type for struct_type property. Must be InputType.OPNIC.")
+        if self._main_table is None:
+            raise RuntimeError(
+                f"Parameter {self.name!r} is OPNIC but has not been bound to a "
+                f"ParameterTable yet. Either attach it to a ParameterTable or declare it "
+                f"in a program to promote it as a standalone."
             )
-        if self.is_standalone():
-            try:
-                from qm.qua import qua_struct, QuaArray
-            except ImportError:
-                raise ImportError("Need to install QUA version compatible with DGX")
-            length = 1 if not self.is_array else self.length
-            cls_name = f"{self.name}_struct_{self.stream_id}"
-            dgxStruct = qua_struct(
-                type(
-                    cls_name,
-                    (object,),
-                    {"__annotations__": {self.name: QuaArray[self.type, length]}},
-                )
-            )
-            self._dgx_struct = dgxStruct
-
-        return self._dgx_struct
-
-    @dgx_struct.setter
-    def dgx_struct(self, value):
-        if self._dgx_struct is None:
-            self._dgx_struct = value
-        else:
-            raise ValueError("DGX struct already set. Cannot change it.")
+        return self._main_table.struct_type
 
     @property
-    def stream_id(self) -> int:
+    def var_is_quarc_handle(self) -> bool:
+        """Whether the owning OPNIC table's transport ``_var`` is a ``QuaStructHandle``.
+
+        ``True`` for in-process generation / Mode 1 reconstruction (QUA ``declare`` binds
+        against ``initialize_in_qua``). ``False`` for Mode 2 classical runtime endpoints
+        (field accessors + ``send`` / ``recv`` only) and for non-OPNIC input types.
         """
-        ID of the external stream associated with the parameter (Relevant only for DGX).
-        If the Parameter is part of a ParameterTable, returns the stream_id of the table.
-        Returns:
-            Unique ID integer of the external stream.
+        if self._input_type != InputType.OPNIC or self._main_table is None:
+            return False
+        return getattr(self._main_table, "_var_is_quarc_handle", False)
 
-        """
+    @property
+    def incoming_stream_id(self) -> int:
+        """Incoming Quarc stream id exposed by the owning OPNIC table."""
+        if self._input_type != InputType.OPNIC:
+            raise ValueError("Incoming stream ID is only defined for OPNIC parameters.")
+        if self._main_table is None:
+            raise RuntimeError(f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable.")
+        return self._main_table.incoming_stream_id
 
-        return self._stream_id
-
-    @stream_id.setter
-    def stream_id(self, value: int):
-        if self._stream_id is None:
-            self._stream_id = value
-        else:
-            raise ValueError("Stream ID already set. Cannot change it.")
+    @property
+    def outgoing_stream_id(self) -> int:
+        """Outgoing Quarc stream id exposed by the owning OPNIC table."""
+        if self._input_type != InputType.OPNIC:
+            raise ValueError("Outgoing stream ID is only defined for OPNIC parameters.")
+        if self._main_table is None:
+            raise RuntimeError(f"Parameter {self.name!r} is OPNIC and not bound to a ParameterTable.")
+        return self._main_table.outgoing_stream_id
 
     @property
     def var(self) -> QuaArrayVariable | QuaScalar:
@@ -546,16 +629,102 @@ class Parameter:
         Returns:
             QUA variable associated with the parameter.
         """
+        require_qua_program("Parameter.var")
         if not self.is_declared:
-            raise ValueError(
-                "Variable not declared. Declare the variable first through declare_variable method."
-            )
-        if self.input_type == InputType.DGX_Q:
-            var = getattr(self._var, self.name)
-            return var if self.is_array else var[0]
+            raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
+        return self._var
 
-        else:
-            return self._var
+    def _require_standalone_opnic_table(self, *, context: str) -> "ParameterTable":
+        """Return the synthetic single-field ``ParameterTable`` that owns this parameter.
+
+        Promotes the parameter on first access (P2 model — promote on use): if the
+        parameter is still pending (no owning table), construct a synthetic single-field
+        :class:`ParameterTable` named after the parameter, which will eagerly emit its
+        struct via the pool's Quarc module (lazily creating a default
+        :class:`quarc.BaseModule` if none is bound yet).
+
+        If the parameter is attached to a regular multi-or-single-field
+        ``ParameterTable``, OPNIC transport is *table-managed* and this method raises
+        :class:`RuntimeError` directing the caller to use the owning table's API.
+
+        ``context`` names the calling Parameter-level method (``"declare_variable"``,
+        ``"push_to_opx"``, …) and is used to suggest the equivalent table-level method
+        in the error message.
+        """
+        if not self.is_stand_alone:
+            owning_table_name = self.main_table.name if self.main_table is not None else "<unknown>"
+            owner_method = _OPNIC_OWNER_METHOD_MAP.get(context, context)
+            raise RuntimeError(
+                f"Parameter.{context}() is table-managed for OPNIC fields "
+                f"(parameter={self.name!r}, table={owning_table_name!r}). "
+                f"Use ParameterTable.{owner_method}() on the owning table instead."
+            )
+
+        # Promote on use if still pending.
+        if self.opnic_table is None:
+            self._promote_to_synthetic_standalone_table()
+
+        synthetic = self.opnic_table
+        if synthetic is None:
+            raise RuntimeError(
+                f"Standalone OPNIC parameter {self.name!r} could not be promoted to a "
+                f"synthetic ParameterTable during {context}."
+            )
+        return synthetic
+
+    def _promote_to_synthetic_standalone_table(self) -> "ParameterTable":
+        """Build the synthetic single-field ``ParameterTable`` that wraps this parameter.
+
+        The synthetic table is constructed with ``_is_synthetic_standalone=True``. Like
+        any OPNIC table it emits its Quarc struct lazily at :meth:`ParameterTable.declare`
+        inside the QUA program (the single commit point) — not at construction. After
+        construction this parameter's :attr:`main_table` points at the synthetic table,
+        and the entry is removed from :data:`ParameterPool._pending_standalone_opnic`.
+
+        We remove the parameter from the pending list *before* constructing the
+        synthetic table: pool-level name-uniqueness consults both the registry and the
+        pending list, so leaving the parameter pending while registering a synthetic
+        table named after it would (rightly) trigger a duplicate-name guard.
+        """
+        if self.input_type != InputType.OPNIC:
+            raise RuntimeError(
+                f"Cannot promote non-OPNIC parameter {self.name!r} to a synthetic " f"standalone ParameterTable."
+            )
+        from .parameter_table import ParameterTable
+
+        ParameterPool._unregister_pending_standalone_opnic(self)
+        synthetic = ParameterTable(
+            [self],
+            name=self._synthetic_standalone_table_name(),
+            _is_synthetic_standalone=True,
+        )
+        return synthetic
+
+    def _synthetic_standalone_table_name(self) -> str:
+        """Return a Quarc-safe unique struct/table name for standalone OPNIC promotion.
+
+        We intentionally do *not* use ``self.name`` directly: generated C++ packets can
+        fail to compile when the struct name and single field name are identical
+        (e.g. ``struct n_reps { ... QM_DECLARE_PACKET(n_reps, n_reps); }``).
+
+        This method keeps field access stable (field remains ``self.name``) while giving
+        the synthetic struct a distinct identifier.
+        """
+        base = f"{self.name}_packet"
+        used = {
+            getattr(obj, "name", None)
+            for obj in ParameterPool.get_all_objs()
+            if isinstance(getattr(obj, "name", None), str)
+        }
+        used.update(p.name for p in ParameterPool._pending_standalone_opnic if p is not self)
+
+        if base not in used:
+            return base
+
+        idx = 2
+        while f"{base}_{idx}" in used:
+            idx += 1
+        return f"{base}_{idx}"
 
     @property
     def tables(self) -> List[ParameterTable]:
@@ -601,7 +770,7 @@ class Parameter:
         return self.length > 0
 
     @property
-    def stream(self) -> _ResultSource:
+    def stream(self) -> ResultStreamSource:
         """Output stream associated with the parameter."""
         return self._stream
 
@@ -619,11 +788,11 @@ class Parameter:
                 with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
                     save(self.var[self._ctr], self.stream)
                     if reset:
-                        reset_var(self.var[self._ctr], self.type)
+                        _assign_zero(self.var[self._ctr], self.type)
             else:
                 save(self.var, self.stream)
                 if reset:
-                    reset_var(self.var, self.type)
+                    _assign_zero(self.var, self.type)
         else:
             raise ValueError("Output stream or variable itself not declared.")
 
@@ -660,12 +829,8 @@ class Parameter:
 
     def clip(
         self,
-        min_val: Optional[
-            Scalar[int], Scalar[float], Vector[int], Vector[float]
-        ] = None,
-        max_val: Optional[
-            Scalar[int], Scalar[float], Vector[int], Vector[float]
-        ] = None,
+        min_val: Optional[Scalar[int], Scalar[float], Vector[int], Vector[float]] = None,
+        max_val: Optional[Scalar[int], Scalar[float], Vector[int], Vector[float]] = None,
         is_qua_array: bool = False,
     ):
         """Clip the QUA variable to a given range.
@@ -676,21 +841,11 @@ class Parameter:
             is_qua_array: If ``True``, treat bounds as QUA arrays.
         """
         if not self.is_declared:
-            raise ValueError(
-                "Variable not declared. Declare the variable first through declare_variable method."
-            )
+            raise ValueError("Variable not declared. Declare the variable first through declare_variable method.")
         if not self.is_array and is_qua_array:
-            raise ValueError(
-                "Invalid input. Single value cannot be clipped with array bounds."
-            )
-        elif (
-            isinstance(min_val, (int, float))
-            and isinstance(max_val, (int, float))
-            and min_val > max_val
-        ):
-            raise ValueError(
-                "Invalid range. Minimum value must be less than maximum value."
-            )
+            raise ValueError("Invalid input. Single value cannot be clipped with array bounds.")
+        elif isinstance(min_val, (int, float)) and isinstance(max_val, (int, float)) and min_val > max_val:
+            raise ValueError("Invalid range. Minimum value must be less than maximum value.")
 
         elif min_val is None and max_val is None:
             warnings.warn("No range specified. No clipping performed.")
@@ -721,29 +876,21 @@ class Parameter:
                 with if_(self.var > max_val):
                     assign(self.var, max_val)
 
-    def load_input_value(self):
+    def rcv(self):
         """
         QUA Macro: Load a value from the input mechanism associated with the parameter.
         This should be corresponding to one call of the `fetch_from_opx` method on the client side.
         For input streams, the stream is advanced.
         For IO1 and IO2, the value is assigned to the QUA variable.
-        For DGX Quantum, the value is polled.
+        For OPNIC, the value is polled.
         """
         if self.input_type is None:
             raise ValueError("No input type specified")
         elif self.input_type == InputType.INPUT_STREAM:
             qua_advance_input_stream(self.var)
 
-        elif self.input_type == InputType.DGX_Q:
-            from qm.qua import receive_from_external_stream
-
-            if self.is_standalone():
-                receive_from_external_stream(self._qua_external_stream_in, self._var)
-            else:
-                raise RuntimeError(
-                    f"This method should be called from the ParameterTable {ParameterPool.get_obj(self.stream_id).name}"
-                    f" as this parameter was associated with a bigger packet."
-                )
+        elif self.input_type == InputType.OPNIC:
+            self._require_standalone_opnic_table(context="rcv").rcv()
 
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io = IO1 if self.input_type == InputType.IO1 else IO2
@@ -762,9 +909,38 @@ class Parameter:
         else:
             raise ValueError("Invalid input stream type.")
 
+    def assign_from_io(self, io_index: Literal[1, 2]):
+        """
+        QUA Macro: eagerly assign the value of a global IO register into this parameter's
+        QUA variable, **without** any ``pause()``.
+
+        Unlike :meth:`rcv` for ``IO1``/``IO2`` (which pauses the program so a client-side
+        ``push_to_opx`` can synchronize), this is a non-blocking, fire-and-forget read of
+        the global IO register: the OPX keeps running. It is the correct primitive for
+        program-level control flags whose value the server writes on the *running* job via
+        ``qm.set_io_values(...)`` (a global operation that is intentionally not tied to any
+        single parameter).
+
+        Because IO registers are scalar and global, this is only valid for a single
+        declared scalar variable (it raises for array-backed parameters).
+
+        Args:
+            io_index: Which global IO register to read — ``1`` for ``IO1``, ``2`` for ``IO2``.
+        """
+        if io_index not in (1, 2):
+            raise ValueError(f"io_index must be 1 or 2, got {io_index!r}.")
+        if not self.is_declared:
+            raise ValueError(f"Parameter {self.name!r} must be declared before assign_from_io().")
+        if self.is_array:
+            raise ValueError(
+                f"Parameter {self.name!r}: assign_from_io is only valid for a single "
+                "scalar variable (IO registers are scalar and global)."
+            )
+        assign(self.var, IO1 if io_index == 1 else IO2)
+
     def push_to_opx(
         self,
-        value: Union[int, float, bool, Sequence[Union[int, float, bool]]],
+        value: Union[int, float, bool, Sequence[Union[int, float, bool]]] = _PUSH_SENTINEL,
         job: Optional[RunningQmJob | JobApi] = None,
         qm: Optional[QuantumMachine] = None,
         verbosity: int = 1,
@@ -772,39 +948,43 @@ class Parameter:
     ):
         """
         Client function: pass an input value to the OPX from client/server side.
-        This should be corresponding to one call of the `load_input_value` method on the QUA side.
+        This should be corresponding to one call of the `rcv` / `load_input_value` method on the QUA side.
+
+        When called with no positional ``value`` argument, the stored ``self.value``
+        (Python-side float) is used — so you can set ``param.value = x`` once and then
+        call ``param.push_to_opx()`` without repeating the value.
+
         Args:
-            value: Value to be passed to the OPX.
+            value: Value to be passed to the OPX. Defaults to ``self.value`` when omitted.
             job: RunningQmJob object (required if input_type is IO1 or IO2 or input_stream).
             qm: QuantumMachine object (required if input_type is IO1 or IO2).
             verbosity: Verbosity level. Default is 1.
             time_out: Time out for waiting for the job to be paused. Default is 90 seconds.
         """
+        if value is _PUSH_SENTINEL:
+            if self.value is None:
+                raise ValueError(
+                    f"Parameter {self.name!r}: no value provided and self.value is None. "
+                    "Pass an explicit value or set self.value before calling push_to_opx()."
+                )
+            value = self.value
 
         if self.is_array:
             if not isinstance(value, (List, np.ndarray)):
-                raise ValueError(
-                    f"Invalid input. {self.name} should be a list of {self.type}."
-                )
+                raise ValueError(f"Invalid input. {self.name} should be a list of {self.type}.")
             if len(value) != self.length:
-                raise ValueError(
-                    f"Invalid input. {self.name} should be a list of length {self.length}."
-                )
+                raise ValueError(f"Invalid input. {self.name} should be a list of length {self.length}.")
         param_type = self.type if self.type != fixed else float
         if self.is_array and not all(isinstance(x, param_type) for x in value):
             try:
                 value = [param_type(x) for x in value]
             except ValueError:
-                raise ValueError(
-                    f"Invalid input. {self.name} should be a list of {param_type}."
-                )
+                raise ValueError(f"Invalid input. {self.name} should be a list of {param_type}.")
         elif not self.is_array and not isinstance(value, param_type):
             try:
                 value = param_type(value)
             except ValueError:
-                raise ValueError(
-                    f"Invalid input. {self.name} should be a single value of type {param_type}."
-                )
+                raise ValueError(f"Invalid input. {self.name} should be a single value of type {param_type}.")
 
         if self.input_type in [InputType.IO1, InputType.IO2]:
             if job is None:
@@ -819,9 +999,7 @@ class Parameter:
                         job.set_io_values(**{io: value[i]})
                     else:
                         if qm is None:
-                            raise ValueError(
-                                "QuantumMachine object is required to set IO values."
-                            )
+                            raise ValueError("QuantumMachine object is required to set IO values.")
                         qm.set_io_values(**{io: value[i]})
                     job.resume()
             else:
@@ -833,9 +1011,7 @@ class Parameter:
                     job.set_io_values(**{io: value})
                 else:
                     if qm is None:
-                        raise ValueError(
-                            "QuantumMachine object is required to set IO values."
-                        )
+                        raise ValueError("QuantumMachine object is required to set IO values.")
                     qm.set_io_values(**{io: value})
                 job.resume()
 
@@ -843,70 +1019,27 @@ class Parameter:
             if verbosity > 1:
                 print(f"Pushing value {value} to {self.name} through input stream.")
             if job is None:
-                raise ValueError(
-                    "Job object is required to push values to the input stream."
-                )
+                raise ValueError("Job object is required to push values to the input stream.")
             job.push_to_input_stream(self.name, value)
 
-        elif self.input_type == InputType.DGX_Q:
-            if self.is_standalone():
-                if self.direction == Direction.INCOMING:
-                    raise ValueError("Cannot push value to Incoming stream.")
-                if not ParameterPool.configured() or not ParameterPool.patched():
-                    raise ValueError("OPNIC not configured or patched.")
-                # Prepare the packet to be sent
-                param_dict = {self.name: [value] if not self.is_array else value}
-                param_dict = {
-                    k: v.tolist() if isinstance(v, np.ndarray) else v
-                    for k, v in param_dict.items()
-                }
-
-                from opnic_wrapper import OutgoingPacket, send_packet
-
-                flattened_values = list(chain(*param_dict.values()))
-                packet = OutgoingPacket(*flattened_values)
-                for k, v in param_dict.items():
-                    setattr(packet, k, v)
-                send_packet(self.stream_id, packet)
-
-                if verbosity > 1:
-                    print(f"Sent packet: {packet}")
-            else:
-                raise RuntimeError(
-                    f"This method should be called from the ParameterTable object"
-                    f" {ParameterPool.get_obj(self.stream_id).name} as this parameter "
-                    f"was associated with a bigger packet."
-                )
+        elif self.input_type == InputType.OPNIC:
+            self._require_standalone_opnic_table(context="push_to_opx").push_to_opx(
+                {self.name: value}, job=job, qm=qm, verbosity=verbosity
+            )
 
     def stream_back(self, reset: bool = False):
         """
         QUA Macro: Save/stream the value of the parameter to the client/server side.
-        This method uses stream_processing method to save the value to the stream if input_type is different from DGX Quantum.
-        If input_type is DGX Quantum, the value is sent to the external stream.
+        This method uses stream_processing to save the value to the stream if input_type is not OPNIC.
+        If input_type is OPNIC, the value is sent to the external stream.
 
         Args:
             reset: Whether to reset the parameter to a 0 value (in the appropriate QUA type) after sending it to the client/server side.
         """
-        if (
-            self.input_type in [InputType.INPUT_STREAM, None]
-            and self.stream is not None
-        ):
+        if self.input_type in [InputType.INPUT_STREAM, None] and self.stream is not None:
             self.save_to_stream(reset)
-        elif self.input_type == InputType.DGX_Q:
-            from qm.qua import send_to_external_stream
-
-            if not self.is_standalone():  # Part of a parameter table
-                raise RuntimeError(
-                    f"This method should be called from the"
-                    f" ParameterTable object {ParameterPool.get_obj(self.stream_id).name} "
-                    f"as this parameter was associated with a bigger packet."
-                )
-
-            if self.direction == Direction.OUTGOING:
-                raise ValueError("Cannot send value to outgoing stream.")
-
-            send_to_external_stream(self._qua_external_stream_out, self._var)
-            self.reset_var()
+        elif self.input_type == InputType.OPNIC:
+            self._require_standalone_opnic_table(context="stream_back").stream_back(reset=reset)
         elif self.input_type in [InputType.IO1, InputType.IO2]:
             io = IO1 if self.input_type == InputType.IO1 else IO2
             if self.is_array:
@@ -914,13 +1047,13 @@ class Parameter:
                 with for_(i, 0, i < self.length, i + 1):
                     assign(io, self.var[i])
                     if reset:
-                        reset_var(self.var[i], self.type)
+                        _assign_zero(self.var[i], self.type)
                     pause()
 
             else:
                 assign(io, self.var)
                 if reset:
-                    reset_var(self.var, self.type)
+                    _assign_zero(self.var, self.type)
                 pause()
 
     def fetch_from_opx(
@@ -933,8 +1066,11 @@ class Parameter:
     ):
         """Fetch a parameter value from the OPX after execution.
 
-        Handles ``InputType`` variants (IO1, IO2, INPUT_STREAM, DGX), including
-        waiting for paused jobs and reading result streams.
+        This method handles various input types defined by the `InputType` enumeration
+        (IO1, IO2, INPUT_STREAM, OPNIC). It manages the fetching logic, including waiting
+        for paused jobs, accessing specified result streams, and interacting with
+        external modules when necessary. For OPNIC it also checks configurations
+        and fetches data based on parameters related to outgoing or incoming streams.
 
         Args:
             job: Running job whose result handles expose the parameter stream.
@@ -948,13 +1084,9 @@ class Parameter:
         """
         if self.input_type == InputType.INPUT_STREAM or self.input_type is None:
             if job is None:
-                raise ValueError(
-                    "Job object is required to fetch values from the result handles."
-                )
+                raise ValueError("Job object is required to fetch values from the result handles.")
             if verbosity > 1:
-                print(
-                    f"Fetching value from {self.name} with input type {self.input_type}"
-                )
+                print(f"Fetching value from {self.name} with input type {self.input_type}")
             result_handle = job.result_handles
             if self.name not in result_handle:
                 raise ValueError(
@@ -963,35 +1095,19 @@ class Parameter:
                 )
             result = result_handle.get(self.name)
             result.wait_for_values(fetching_index + fetching_size, time_out)
-            value = result.fetch(slice(fetching_index, fetching_index + fetching_size))[
-                "value"
-            ]
+            value = result.fetch(slice(fetching_index, fetching_index + fetching_size))["value"]
 
-        elif self.input_type == InputType.DGX_Q:
-            if not self.is_standalone():  # Part of a parameter table
-                raise RuntimeError(
-                    f"This method should be called from the"
-                    f" ParameterTable object {ParameterPool.get_obj(self.stream_id).name} "
-                    f"as this parameter was associated with a bigger packet."
-                )
-
-            if self.direction == Direction.OUTGOING:
-                raise ValueError("Cannot fetch value from outgoing stream.")
-            elif not ParameterPool.configured() or not ParameterPool.patched():
-                raise ValueError("OPNIC not configured or patched.")
-
-            from opnic_wrapper import wait_for_packets, read_packet
-
-            wait_for_packets(self.stream_id, fetching_index + fetching_size)
-            packets = []
-            for i in range(fetching_size):
-                packet = read_packet(self.stream_id, fetching_index + i)
-                packets.append(packet)
-            value = np.array([getattr(packet, self.name) for packet in packets])
-        elif self.input_type in [InputType.IO1, InputType.IO2]:
-            io_method = (
-                "get_io1_value" if self.input_type == InputType.IO1 else "get_io2_value"
+        elif self.input_type == InputType.OPNIC:
+            res = self._require_standalone_opnic_table(context="fetch_from_opx").fetch_from_opx(
+                job=job,
+                fetching_index=fetching_index,
+                fetching_size=fetching_size,
+                verbosity=verbosity,
+                time_out=time_out,
             )
+            return res[self.name]
+        elif self.input_type in [InputType.IO1, InputType.IO2]:
+            io_method = "get_io1_value" if self.input_type == InputType.IO1 else "get_io2_value"
             if self.is_array:
                 value = []
                 for i in range(self.length):
@@ -1008,31 +1124,94 @@ class Parameter:
             print(f"Fetched value: {value}")
         return value
 
-    def reset(self):
+    def _reset_if_stale_scope(self) -> None:
+        """Clear transient QUA state left over from a *different* program scope.
+
+        ``is_declared`` is scope-bound, so a parameter declared in a previous
+        ``with program():`` reads as not-declared in a new one — but its ``_var`` /
+        ``_stream`` / ``_ctr`` still point at the old program's objects. Calling this
+        before re-declaring drops that stale state so the new declaration is clean (and
+        ``declare_stream`` does not warn about an already-declared stream).
         """
-        Client function: Reset the parameter to its initial state.
+        if self._declared_scope is not None and self._declared_scope is not current_scope_token():
+            self._var = None
+            self._stream = None
+            self._ctr = None
+            self._is_declared = False
+            self._declared_scope = None
+
+    def reset(self):
+        """Client function: reset transient QUA-side declaration state.
+
+        Clears ``_is_declared``, ``_var``, ``_stream``, ``_ctr``. For OPNIC parameters,
+        deliberately preserves ``_main_table`` (the owning ``ParameterTable``, real or
+        synthetic) so the binding to module/runtime transport survives across resets.
         """
         self._is_declared = False
+        self._declared_scope = None
         self._var = None
         self._stream = None
-        self._stream_id = None
         self._ctr = None
-        self._dgx_struct = None
-        self._qua_external_stream_in = None
-        self._qua_external_stream_out = None
-        # self._index = -1
-        # self._main_table = None
-        # self._table_indices = {}
 
-    def reset_var(self):
+    def reset_qua(self):
         """
         QUA Macro: Assign the QUA variable to 0 (in the appropriate QUA type).
         """
         if self.is_array:
             with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
-                reset_var(self.var[self._ctr], self.type)
+                _assign_zero(self.var[self._ctr], self.type)
         else:
-            reset_var(self.var, self.type)
+            _assign_zero(self.var, self.type)
+
+    # ------------------------------------------------------------------
+    # Deprecated aliases — removed in v1.2. Use the canonical names instead.
+    # ------------------------------------------------------------------
+    declare_variable = _DeprecatedAlias("declare", removal="1.2")
+    load_input_value = _DeprecatedAlias("rcv", removal="1.2")
+    reset_var = _DeprecatedAlias("reset_qua", removal="1.2")
+    # declare_stream is already the canonical name — no alias needed
+    # Note: the former ``opnic_struct`` alias was removed outright (no deprecation
+    # cycle) — OPNIC transport never shipped working, so it had no usable callers.
+    # Use ``struct_type`` for the Quarc struct type and ``var`` for the bound handle.
+
+    def to_spec(self) -> Dict[str, Any]:
+        """Serialize this parameter to a plain dict suitable for JSON persistence."""
+        _qua_type_str = {fixed: "fixed", int: "int", bool: "bool"}
+        spec: Dict[str, Any] = {
+            "name": self.name,
+            "qua_type": _qua_type_str.get(self._type, "fixed"),
+            "is_array": self.is_array,
+            "length": self._length,
+            "input_type": (self._input_type.value if self._input_type is not None else None),
+        }
+        if self._input_type == InputType.OPNIC:
+            spec["direction"] = self._direction.value if self._direction is not None else None
+        return spec
+
+    @classmethod
+    def from_spec(cls, spec: Dict[str, Any]) -> "Parameter":
+        """Reconstruct a Parameter from a spec dict produced by to_spec().
+
+        Uses pool deduplication: if a Parameter with the same name already exists
+        in the pool (e.g. shared across multiple tables), the existing instance is
+        returned automatically via __new__.
+        """
+        length = spec.get("length", 0)
+        qua_type_str = spec.get("qua_type", "fixed")
+        if length > 0:
+            _zero: Dict[str, Any] = {"fixed": 0.0, "int": 0, "bool": False}
+            value: Any = [_zero.get(qua_type_str, 0.0)] * length
+            qua_type_arg = None  # infer from value
+        else:
+            value = None
+            qua_type_arg = qua_type_str
+        return cls(
+            name=spec["name"],
+            value=value,
+            qua_type=qua_type_arg,
+            input_type=spec.get("input_type"),
+            direction=spec.get("direction"),
+        )
 
     def __deepcopy__(self, memodict=None):
         if memodict is None:
@@ -1055,16 +1234,15 @@ class Parameter:
         # Reset QUA-specific and context-dependent state
         new_param._var = None
         new_param._is_declared = False
+        new_param._declared_scope = None
         new_param._stream = None
         new_param._ctr = None
         new_param._qua_external_stream_in = None
         new_param._qua_external_stream_out = None
 
-        # Reset table/DGX specific attributes that will be set by the new table or properties
+        # Reset table/OPNIC-specific attributes that will be set by the new table or properties
         new_param._index = -1  # Default for a parameter not (yet) in a table
         new_param._table_indices = {}  # New dictionary for table associations
-        new_param._dgx_struct = None
-        new_param._stream_id = None  # Will be re-evaluated by property or new table
         new_param._main_table = None
 
         # If your __init__ sets an _initialized flag, set it here too

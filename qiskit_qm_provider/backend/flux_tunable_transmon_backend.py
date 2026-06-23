@@ -64,23 +64,14 @@ class FluxTunableTransmonBackend(QMBackend):
                 :attr:`~.QMBackend.max_circuits`).
         """
         if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
-            raise ValueError(
-                "Invalid QuAM instance provided, should have qubits and qubit_pairs attributes"
-            )
+            raise ValueError("Invalid QuAM instance provided, should have qubits and qubit_pairs attributes")
         try:
             from qiskit.pulse import DriveChannel, MeasureChannel, ControlChannel
 
-            drive_channel_mapping = {
-                DriveChannel(i): qubit.xy
-                for i, qubit in enumerate(machine.active_qubits)
-            }
-            flux_channel_mapping = {
-                ControlChannel(i): qubit.z
-                for i, qubit in enumerate(machine.active_qubits)
-            }
+            drive_channel_mapping = {DriveChannel(i): qubit.xy for i, qubit in enumerate(machine.active_qubits)}
+            flux_channel_mapping = {ControlChannel(i): qubit.z for i, qubit in enumerate(machine.active_qubits)}
             readout_channel_mapping = {
-                MeasureChannel(i): qubit.resonator
-                for i, qubit in enumerate(machine.active_qubits)
+                MeasureChannel(i): qubit.resonator for i, qubit in enumerate(machine.active_qubits)
             }
             control_channel_mapping = {
                 ControlChannel(i + len(machine.active_qubits)): qubit_pair.coupler
@@ -97,9 +88,7 @@ class FluxTunableTransmonBackend(QMBackend):
         except ImportError:
             import logging
 
-            logging.info(
-                "qiskit.pulse is not available, channel mapping will not be set."
-            )
+            logging.info("qiskit.pulse is not available, channel mapping will not be set.")
             channel_mapping = {}
         super().__init__(
             machine,
@@ -115,10 +104,21 @@ class FluxTunableTransmonBackend(QMBackend):
         """
         Retrieve the qubit to quantum elements mapping for the backend.
         """
-        return {
-            i: (qubit.xy.name, qubit.z.name, qubit.resonator.name)
-            for i, qubit in enumerate(self.machine.active_qubits)
-        }
+        mapping = {}
+
+        for i, qubit in enumerate(self.machine.active_qubits):
+            channels = [ch.name for ch in qubit.channels.values()]
+            name = qubit.name
+            line_number = name[1]
+
+            if hasattr(self.machine, "twpas"):
+                for twpa in self.machine.twpas.values():
+                    if hasattr(twpa, "pump") and twpa.name[-1] == line_number:
+                        channels.append(twpa.pump.name)
+
+            mapping[i] = tuple(channels)
+
+        return mapping
 
     @property
     def meas_map(self) -> List[List[int]]:
@@ -148,9 +148,7 @@ class FluxTunableTransmonBackend(QMBackend):
         """
         qubits = tuple(qubits)
         if len(qubits) > 2 or len(qubits) < 1:
-            raise ValueError(
-                "Control channel should be defined for a qubit pair or a single qubit."
-            )
+            raise ValueError("Control channel should be defined for a qubit pair or a single qubit.")
         if len(qubits) == 2:
             qubit_pair = self.get_qubit_pair(qubits)
             if qubit_pair.coupler is not None:
@@ -182,9 +180,7 @@ class FluxTunableTransmonBackend(QMBackend):
         """
         return super().get_qubit(qubit)
 
-    def get_qubit_pair(
-        self, qubits: Tuple[int | str | Transmon, int | str | Transmon]
-    ) -> TransmonPair:
+    def get_qubit_pair(self, qubits: Tuple[int | str | Transmon, int | str | Transmon]) -> TransmonPair:
         """
         Retrieve a Transmon pair by its indices or names.
 
