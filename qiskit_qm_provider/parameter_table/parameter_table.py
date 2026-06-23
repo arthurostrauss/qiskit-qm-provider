@@ -125,13 +125,24 @@ class ParameterTable(QuaFieldTable):
     ):
         """Create a parameter table from a dictionary or list of parameters.
 
-        When initialized from a dictionary, each value may be a bare initial
-        value or a tuple ``(initial_value, qua_type, input_stream_flag)`` where
-        ``qua_type`` is ``int``, ``fixed``, or ``bool`` and the optional third
-        field selects an input stream instead of a standard QUA variable. A list
-        of pre-built :class:`~.Parameter` objects is also accepted; in that
-        case all parameters must share the same input type and direction (inferred
-        from the first entry).
+        **Recommended:** pass a list of pre-built :class:`~.Parameter` objects::
+
+            ParameterTable([mu, sigma], name="PolicyParams")
+
+        **Dictionary shorthand:** each key is a parameter name; the value is either a
+        bare initial value (type inferred) or a tuple with up to four fields::
+
+            # (initial_value, qua_type?, input_type?, direction?)
+            ParameterTable({
+                "theta": 0.5,                              # scalar, type inferred
+                "amps": ([0.1, 0.2], "fixed"),             # explicit qua_type
+                "idx": (0, int, InputType.INPUT_STREAM),   # streamed from host
+                "mu": ([0.0]*2, fixed, OPNIC, INCOMING),   # OPNIC needs direction
+            }, name="my_table")
+
+        All parameters in one table must share the same ``input_type`` (and the same
+        ``direction`` when ``input_type`` is OPNIC). Use :meth:`add_parameters` to attach
+        more :class:`~.Parameter` objects before emission (:meth:`declare` for OPNIC).
 
         Args:
             parameters_dict: Mapping from parameter name to initial value or

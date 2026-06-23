@@ -301,15 +301,9 @@ class QMEstimatorJob(QMPrimitiveJob):
     """Job handle for :class:`~qiskit_qm_provider.primitives.QMEstimatorV2` execution.
 
     Builds a QUA estimator program from pubs and returns expectation values via
-    :meth:`result`.
+    :meth:`result`. See :attr:`program` for the compiled QUA source and
+    :attr:`result_handles` for raw QM stream access after submit.
     """
-
-    @property
-    def result_handles(self):
-        """Underlying QM result handles after job submission."""
-        if self._qm_job is None:
-            raise RuntimeError("QM job has not submitted yet")
-        return self._qm_job.result_handles
 
     def result(self) -> ResultT:
         """Build and return primitive estimator results from QM streaming data.

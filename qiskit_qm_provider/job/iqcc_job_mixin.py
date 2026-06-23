@@ -19,6 +19,19 @@ from __future__ import annotations
 from typing import Any
 
 
+def result_handles_from_qm_job(qm_job: Any) -> Any:
+    """Return ``qm_job.result_handles``, or a per-job list for multi-program execution.
+
+    Raises:
+        RuntimeError: If ``qm_job`` is ``None`` (job not submitted yet).
+    """
+    if qm_job is None:
+        raise RuntimeError("QM job has not submitted yet")
+    if isinstance(qm_job, list):
+        return [job.result_handles for job in qm_job]
+    return qm_job.result_handles
+
+
 class IQCCCloudExecutionError(RuntimeError):
     """IQCC cloud execution failed before measurement streams were produced.
 

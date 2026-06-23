@@ -31,9 +31,12 @@ from .parameter import Parameter
 
 
 class QUA2DArray(Parameter):
-    """
-    A 2D view over one big 1D QUA array.
-    QUA array of length n_rows * n_cols and gives 2D indexing.
+    """Two-dimensional view over a single flattened 1D QUA array.
+
+    QUA only supports 1D arrays at declaration time. This class packs
+    ``n_rows * n_cols`` elements into one backing :class:`Parameter` and
+    exposes 2D indexing, row-wise :meth:`assign`, and the usual
+    :class:`Parameter` streaming and host I/O helpers.
     """
 
     def __new__(cls, *args, **kwargs):
@@ -60,21 +63,58 @@ class QUA2DArray(Parameter):
         direction=None,
         units: str = "",
     ):
-        """
-        Class to create a 2D array of QUA variables.
+        """Create a 2D logical view over one flattened 1D QUA array.
+
+        Internally this is a :class:`Parameter` of length ``n_rows * n_cols``.
+        After :meth:`declare`, use 2D indexing (``arr[i, j]``), row proxies
+        (``arr[i][j]``), and slices (``arr[i, :]``, ``arr[:, j]``).
+
+        Two construction patterns are supported:
+
+        * **Shape only** -- pass row and column counts; elements initialize to zero.
+        * **From initial data** -- pass a 2D nested ``list`` or ``numpy.ndarray``
+          with ``ndim == 2`` and omit ``n_cols``; shape is inferred from the value.
+
         Args:
-            name: Name of the parameter.
-            n_rows_or_value: Number of rows or a 2D array of values.
-            n_cols: Number of columns.
-            qua_type: QUA type of the elements.
-            input_type: Input type of the parameter.
-            direction: Direction of the parameter (only for OPNIC).
-            units: Units of the parameter.
-        Example:
-            >>> fake_data = QUA2DArray("fake_data", 50, 2, 8)
-            >>> fake_data[0, 0]
-            >>> fake_data[0]
-            >>> fake_data.assign(0, [1, 0, 1, 0, 1, 0, 1, 0])
+            name: Parameter name (also used as the stream / OPNIC field name).
+            n_rows_or_value: Row count (``int``), or a 2D initial value as a nested
+                ``list`` or ``numpy.ndarray``.
+            n_cols: Number of columns. Required when ``n_rows_or_value`` is an ``int``.
+                Omit when a 2D value array is supplied.
+            qua_type: Element QUA type: ``int``, ``fixed``, ``bool``, or the strings
+                ``"int"``, ``"fixed"``, ``"bool"``. Inferred when a 2D value array
+                is passed.
+            input_type: Optional streaming mode (:class:`InputType`):
+                ``INPUT_STREAM``, ``IO1``, ``IO2``, or ``OPNIC``. Same semantics as
+                :class:`Parameter`.
+            direction: Required when ``input_type`` is ``OPNIC`` (:class:`Direction`).
+                Ignored otherwise.
+            units: Units label (default: empty string).
+
+        Raises:
+            ValueError: If ``n_cols`` is missing for an integer row count, dimensions
+                are not positive, or a 2D value array is ragged or not rank-2.
+            TypeError: If ``n_rows_or_value`` is not an ``int``, 2D list, or 2D array.
+
+        Examples:
+            Shape-only construction::
+
+                QUA2DArray("weights", 32, 8, qua_type=fixed)
+
+            From a 2D NumPy array::
+
+                QUA2DArray("bias_grid", np.zeros((4, 16)))
+
+            Inside a QUA program::
+
+                from qm.qua import program
+
+                with program():
+                    grid = QUA2DArray("fake_data", 50, 8, qua_type=fixed)
+                    grid.declare()
+                    grid.assign(0, [1, 0, 1, 0, 1, 0, 1, 0])
+                    cell = grid[0, 0]
+                    row = grid[0]
         """
         # prepare an "initial" 1D list of zeros so that Parameter can infer length/type
         if isinstance(n_rows_or_value, int):

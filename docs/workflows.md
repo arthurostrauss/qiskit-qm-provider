@@ -85,6 +85,8 @@ from qm import generate_qua_script
 print(generate_qua_script(job.program))
 ```
 
+See [Jobs](jobs.md) for the full job interface (`qm_job`, `pubs`, IQCC `run_data`, lifecycle).
+
 End-to-end snippet:
 
 ```python

@@ -129,14 +129,14 @@ You can also inspect `job.run_data` after submission without calling `result()` 
 
 ## Debugging generated QUA
 
-Every primitive job and `backend.run()` exposes the generated QUA `Program` on `job.program`:
+Every primitive job and `backend.run()` exposes the generated QUA `Program` on `job.program`. See the [Jobs guide](jobs.md) for the full property table (`qm_job`, `pubs`, IQCC `run_data`, …).
 
 ```python
 from qm import generate_qua_script
 print(generate_qua_script(job.program))
 ```
 
-- **Guide:** [Workflows — Generated QUA programs](workflows.md#generated-qua-programs-and-how-to-inspect-them)
+- **Guide:** [Jobs](jobs.md), [Workflows — Generated QUA programs](workflows.md#generated-qua-programs-and-how-to-inspect-them)
 
 ## Related
 

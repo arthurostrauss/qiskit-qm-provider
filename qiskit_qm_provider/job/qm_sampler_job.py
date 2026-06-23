@@ -56,7 +56,7 @@ class QMSamplerJob(QMPrimitiveJob):
     """Job handle for :class:`~qiskit_qm_provider.primitives.QMSamplerV2` execution.
 
     Builds a QUA sampler program from pubs and returns classified counts via
-    :meth:`result`.
+    :meth:`result`. See :attr:`program` for the compiled QUA source.
     """
 
     def __init__(

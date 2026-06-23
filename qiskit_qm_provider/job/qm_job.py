@@ -50,7 +50,7 @@ from qiskit_qm_provider.backend.backend_utils import (
     validate_circuits,
     measurement_output_bit_sizes,
 )
-from .iqcc_job_mixin import IQCCJobMixin
+from .iqcc_job_mixin import IQCCJobMixin, result_handles_from_qm_job
 
 if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import CloudJob, CloudQuantumMachine
@@ -70,7 +70,22 @@ class QMJob(JobV1):
     """Qiskit job handle for QUA program execution on a QM backend.
 
     Returned by :meth:`~qiskit_qm_provider.backend.qm_backend.QMBackend.run`.
-    Exposes the generated QUA :attr:`program` for inspection via ``qm.generate_qua_script``.
+    Compile the generated QUA source with::
+
+        from qm import generate_qua_script
+        print(generate_qua_script(job.program))
+
+    Attributes:
+        program: Compiled :class:`qm.Program` (or ``list[Program]`` for multi-circuit
+            queueing). Set at construction; safe to inspect before ``submit()``.
+        qm: :class:`qm.QuantumMachine` or cloud QM used for execution.
+        backend: :class:`~qiskit_qm_provider.backend.qm_backend.QMBackend` that built
+            the program.
+        job_id: QM SDK job identifier (updated on ``submit()``).
+        metadata: Run options dict (`compiler_options`, `simulate`, `timeout`, …).
+
+    Use :attr:`qm_job` and :attr:`result_handles` for the live QM SDK object and
+    measurement streams after submission.
     """
 
     def __init__(
@@ -339,10 +354,24 @@ class QMJob(JobV1):
 
     @property
     def qm_job(self) -> Optional[RunningQmJob | List[QmPendingJob | RunningQmJob]]:
-        """Underlying QM SDK job object after submission."""
+        """Underlying QM SDK job after :meth:`submit`.
+
+        Exposes ``result_handles``, ``cancel``, and other runtime APIs. Raises if
+        the job has not been submitted yet.
+        """
         if self._qm_job is None:
             raise RuntimeError("QM job has not submitted yet")
         return self._qm_job
+
+    @property
+    def result_handles(self) -> Any:
+        """QM SDK result stream handles after :meth:`submit`.
+
+        For a single submitted program, returns ``qm_job.result_handles``. When
+        multiple programs were queued (``program`` is a list), returns a list of
+        per-job result handles. Raises if the job has not been submitted yet.
+        """
+        return result_handles_from_qm_job(self._qm_job)
 
 
 class IQCCJob(IQCCJobMixin, QMJob):

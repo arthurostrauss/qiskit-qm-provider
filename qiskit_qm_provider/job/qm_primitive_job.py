@@ -19,7 +19,7 @@ Date: 2026-02-08
 """
 
 from abc import ABC
-from typing import Optional, Union, List, Dict
+from typing import Optional, Union, List, Dict, Any
 from qiskit.primitives.base.base_primitive_job import BasePrimitiveJob
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
@@ -29,12 +29,29 @@ from qm.jobs.running_qm_job import RunningQmJob
 from qm import Program
 from ..backend import QMBackend
 from ..parameter_table import InputType
+from .iqcc_job_mixin import result_handles_from_qm_job
 
 Pub = Union[SamplerPub, EstimatorPub]
 
 
 class QMPrimitiveJob(BasePrimitiveJob, ABC):
-    """QM Primitive Job class for executing QUA programs from PUBs."""
+    """Base class for :class:`QMSamplerJob` and :class:`QMEstimatorJob`.
+
+    Primitive jobs compile PUBs into a single QUA program at construction time.
+    Inspect it with ``qm.generate_qua_script(job.program)``.
+
+    Attributes:
+        program: Compiled :class:`qm.Program` for this job's pubs.
+        pubs: PUB list passed to ``run()``.
+        inputs: Dict snapshot of pubs, ``input_type``, and ``metadata``.
+        backend: :class:`~qiskit_qm_provider.backend.qm_backend.QMBackend` used for
+            compilation and execution.
+        job_id: QM SDK job id (set on ``submit()``).
+        metadata: Options forwarded from the primitive / ``run()`` call.
+
+    Use :attr:`qm_job` and :attr:`result_handles` for the live QM SDK handle and
+    measurement streams after submission.
+    """
 
     def __init__(self, backend: QMBackend, pubs: List[Pub], input_type: InputType, **kwargs):
         super().__init__(job_id="pending", **kwargs)
@@ -84,8 +101,21 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
 
     @property
     def qm_job(self) -> Optional[Union[RunningQmJob, List[QmPendingJob]]]:
-        """Return the QM job."""
+        """Underlying QM SDK job after :meth:`submit`.
+
+        Exposes ``result_handles``, ``cancel``, ``push_to_input_stream``, and other
+        runtime APIs. Raises if the job has not been submitted yet.
+        """
         return self._qm_job
+
+    @property
+    def result_handles(self) -> Any:
+        """QM SDK result stream handles after :meth:`submit`.
+
+        Returns ``qm_job.result_handles``. Raises if the job has not been
+        submitted yet.
+        """
+        return result_handles_from_qm_job(self._qm_job)
 
     @property
     def inputs(self) -> Dict:
@@ -103,7 +133,13 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
 
     @property
     def program(self) -> Optional[Program]:
-        """Return the QUA program."""
+        """Compiled QUA program for this job.
+
+        Available immediately after job construction. Print with::
+
+            from qm import generate_qua_script
+            print(generate_qua_script(job.program))
+        """
         return self._program
 
     @property

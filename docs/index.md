@@ -17,6 +17,7 @@ backend
 measurement_outputs
 primitives
 parameter_table
+jobs
 error_correction
 changelog
 API Reference <apidocs/qm>
@@ -95,6 +96,7 @@ Use the sidebar to browse guides, then dive into the [API Reference](apidocs/qm.
 - **[Measurement outputs](measurement_outputs.md)** — [`QuaCircuitCompilation`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation.rst), [`MeasurementOutcomeTable`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.MeasurementOutcomeTable.rst), [`MeasurementRegisterField`](apidocs/stubs/qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField.rst).
 - **[Primitives](primitives.md)** — [`QMSamplerV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerV2.rst) and [`QMEstimatorV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMEstimatorV2.rst).
 - **[Parameter Table](parameter_table.md)** — [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) and real-time data flow.
+- **[Jobs](jobs.md)** — job handles, `program`, `qm_job`, IQCC `run_data`, and printing QUA with `generate_qua_script`.
 - **[Error-Correction Workflow](error_correction.md)** — hybrid EC pattern with [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst).
 - **[API Reference](apidocs/qm.rst)** — autodoc pages for all public classes and functions.
 
