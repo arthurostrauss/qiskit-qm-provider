@@ -17,13 +17,13 @@ Backends serve two roles:
 
 ### Submit-and-run
 
-Standard Qiskit backend workflow: compile, execute, return a [`QMJob`](apidocs/stubs/qiskit_qm_provider.job.QMJob.rst). The compiled QUA programs are on `job.programs`:
+Standard Qiskit backend workflow: compile, execute, return a [`QMJob`](apidocs/stubs/qiskit_qm_provider.job.QMJob.rst). Use `get_program()` to access the compiled QUA:
 
 ```python
 from qm import generate_qua_script
 
 job = backend.run(qc, shots=256)
-print(generate_qua_script(job.programs[0]))
+print(generate_qua_script(job.get_program()))
 result = job.result()
 ```
 

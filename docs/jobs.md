@@ -38,18 +38,19 @@ result = job.result()                      # blocks until streams are complete
 | `result()` | ✓ | ✓ | Builds Qiskit result from streamed data |
 | `get_qm_job(idx)` | ✓ | ✓ | Return the QM SDK job at *idx* (default: `0`) |
 | `get_program(idx)` | ✓ | ✓ | Return the compiled `Program` at *idx* (default: `0`) |
+| `get_result_handles(idx)` | ✓ | ✓ | Return the result-handles fetcher at *idx* (default: `0`) |
 
 [`IQCCJob`](apidocs/stubs/qiskit_qm_provider.job.qm_job.IQCCJob.rst) does **not** implement `status()` — poll via IQCC cloud APIs or inspect [`run_data`](apidocs/stubs/qiskit_qm_provider.job.iqcc_job_mixin.IQCCJobMixin.rst).
 
 ## Inspecting the generated QUA program
 
-All job types expose the compiled QUA programs on **`job.programs`** — always a `list[`[`qm.Program`](https://docs.quantum-machines.co/latest/docs/qm/quam/user_guide/qua/program/)`]`, length 1 when no chunking occurred. Use the QM SDK helper to print human-readable QUA source:
+All job types expose the compiled QUA programs on **`job.programs`** — always a `list[`[`qm.Program`](https://docs.quantum-machines.co/latest/docs/qm/quam/user_guide/qua/program/)`]`, length 1 when no chunking occurred. Use `get_program()` to fetch the single program (index 0) without worrying about list indexing:
 
 ```python
 from qm import generate_qua_script
 
 job = sampler.run([qc])
-print(generate_qua_script(job.programs[0]))
+print(generate_qua_script(job.get_program()))
 ```
 
 The same works for estimator and `backend.run()` jobs:
@@ -59,20 +60,24 @@ backend_job = backend.run(qc, shots=256)
 estimator_job = estimator.run([(circuit, observables, param_values)])
 
 print("=== backend.run() ===")
-print(generate_qua_script(backend_job.programs[0]))
+print(generate_qua_script(backend_job.get_program()))
 
 print("=== Estimator ===")
-print(generate_qua_script(estimator_job.programs[0]))
+print(generate_qua_script(estimator_job.get_program()))
 ```
 
 `job.programs` is available **immediately after** the job object is constructed (before or after `submit()`), because compilation happens at job creation time.
 
-For chunked jobs (multiple programs), iterate the list:
+For chunked jobs (multiple programs), iterate the list or fetch a specific chunk by index:
 
 ```python
+# Iterate all chunks:
 for chunk_idx, prog in enumerate(job.programs):
     print(f"=== chunk {chunk_idx} ===")
     print(generate_qua_script(prog))
+
+# Or fetch a specific chunk:
+print(generate_qua_script(job.get_program(2)))  # third chunk
 ```
 
 ## Properties and attributes
@@ -86,9 +91,10 @@ for chunk_idx, prog in enumerate(job.programs):
 | `metadata` | `dict` | Construction | Run options forwarded from backend/primitive (`compiler_options`, `simulate`, `timeout`, …) |
 | `programs` | `list[Program]` | Construction | Compiled QUA programs — always a list; use with `generate_qua_script` |
 | `qm_jobs` | `list[RunningQmJob \| QmPendingJob]` | After `submit()` | All underlying QM SDK handles — always a list, length 1 for non-chunked execution |
-| `result_handles` | `list[QM result fetcher]` | After `submit()` | One fetcher per submitted job — use `result_handles[0]` for non-chunked execution |
+| `result_handles` | `list[QM result fetcher]` | After `submit()` | One fetcher per submitted job |
 | `get_qm_job(idx=None)` | `RunningQmJob \| QmPendingJob` | After `submit()` | Return the QM SDK job at *idx* (default `0`). Shorthand for `qm_jobs[idx]` |
 | `get_program(idx=None)` | `Program` | Construction | Return the compiled program at *idx* (default `0`). Shorthand for `programs[idx]` |
+| `get_result_handles(idx=None)` | QM result fetcher | After `submit()` | Return the fetcher at *idx* (default `0`). Shorthand for `result_handles[idx]` |
 
 `QMJob` also stores **`qm`** — the [`QuantumMachine`](https://docs.quantum-machines.co/latest/docs/qm/quam/user_guide/quam/components/quam_root/qmmachine/) (or cloud equivalent) used for execution.
 
@@ -99,7 +105,7 @@ for chunk_idx, prog in enumerate(job.programs):
 | `pubs` | `list[SamplerPub \| EstimatorPub]` | PUBs passed to `run()` |
 | `inputs` | `dict` | Snapshot of pubs, `input_type`, and `metadata` |
 | `programs` | `list[Program]` | Same as above — sampler/estimator QUA programs |
-| `result_handles` | `list[QM result fetcher]` | One fetcher per submitted job (via [`QMPrimitiveJob`](apidocs/stubs/qiskit_qm_provider.job.qm_primitive_job.QMPrimitiveJob.rst)) |
+| `result_handles` | `list[QM result fetcher]` | One fetcher per submitted job (via [`QMPrimitiveJob`](apidocs/stubs/qiskit_qm_provider.job.qm_primitive_job.QMPrimitiveJob.rst)); use `get_result_handles()` for single-job access |
 | `runtime_pubs` *(estimator only)* | `list[_ExecutionPlan]` | Compiled execution plans — one per EstimatorPub; exposes observable grouping, parameter tables, and the switch-statement data streamed to the OPX |
 
 ### IQCC wrapper jobs
@@ -122,13 +128,13 @@ except IQCCCloudExecutionError as exc:
 
 ## Pushing data on a running job
 
-For streamed primitives, parameter values are pushed **after** submit via the parameter tables bound at compile time. Use `get_qm_job()` to obtain the live QM SDK handle:
+For streamed primitives, parameter values are pushed **after** submit via the parameter tables bound at compile time. Use the getter methods to access the live handles:
 
 ```python
 job = sampler.run([(qc, param_values)])
-# submit already ran; qm_jobs[0] is live
+# submit already ran
 
-job.result_handles[0]               # stream handle for the first (only) job
+job.get_result_handles()            # stream handle for the first (only) job
 param_table.push_to_opx(..., job=job.get_qm_job(), qm=backend.qm)
 ```
 
@@ -136,11 +142,11 @@ On IQCC, streamed jobs auto-generate a **sync hook** script that performs this p
 
 ## Debugging checklist
 
-1. **Print the QUA** — `print(generate_qua_script(job.programs[0]))` (or iterate `job.programs` for chunked jobs)
+1. **Print the QUA** — `print(generate_qua_script(job.get_program()))` (or iterate `job.programs` for chunked jobs)
 2. **Check job id** — `job.job_id` after submit
 3. **Poll status** — `job.status()` (not on `IQCCJob`)
 4. **IQCC failures** — `job.run_data` before trusting `result()`
-5. **Stream keys** — `job.result_handles` for raw stream names
+5. **Stream keys** — `job.get_result_handles()` for the active stream fetcher
 
 ## Related
 

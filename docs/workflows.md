@@ -80,16 +80,20 @@ Keeps the Target and qm_qasm compiler in sync for both `backend.run()` and `quan
 
 ### 3.1 Generated QUA programs (and how to inspect them)
 
-Every primitive job and `backend.run()` exposes the compiled QUA programs on `job.programs` — always a `list[Program]`, regardless of whether chunking occurred:
+Every primitive job and `backend.run()` exposes the compiled QUA programs on `job.programs` — always a `list[Program]`, regardless of whether chunking occurred. Use `get_program()` for single-program (non-chunked) access, or iterate `job.programs` when chunking may have occurred:
 
 ```python
 from qm import generate_qua_script
 
+# Non-chunked default:
+print(generate_qua_script(job.get_program()))
+
+# All chunks:
 for i, prog in enumerate(job.programs):
     print(generate_qua_script(prog))
 ```
 
-See [Jobs](jobs.md) for the full job interface (`qm_job`, `pubs`, IQCC `run_data`, lifecycle).
+See [Jobs](jobs.md) for the full job interface (`get_qm_job()`, `get_result_handles()`, `pubs`, IQCC `run_data`, lifecycle).
 
 End-to-end snippet:
 
@@ -113,17 +117,17 @@ qc = transpile(qc, backend)
 sampler = QMSamplerV2(backend=backend, options=QMSamplerOptions(default_shots=256))
 sampler_job = sampler.run([qc])
 print("=== Sampler ===")
-print(generate_qua_script(sampler_job.programs[0]))
+print(generate_qua_script(sampler_job.get_program()))
 
 obs = SparsePauliOp.from_list([("Z", 1.0)])
 estimator = QMEstimatorV2(backend=backend, options=QMEstimatorOptions())
 estimator_job = estimator.run([(qc.remove_final_measurements(inplace=False), obs, [])])
 print("=== Estimator ===")
-print(generate_qua_script(estimator_job.programs[0]))
+print(generate_qua_script(estimator_job.get_program()))
 
 backend_job = backend.run(qc, shots=256)
 print("=== backend.run() ===")
-print(generate_qua_script(backend_job.programs[0]))
+print(generate_qua_script(backend_job.get_program()))
 ```
 
 - **Guide:** [Primitives](primitives.md)

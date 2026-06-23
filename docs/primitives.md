@@ -18,14 +18,14 @@ Although [`QMSamplerOptions.meas_level`](apidocs/stubs/qiskit_qm_provider.primit
 
 ## QMSamplerV2
 
-Shot-based measurement counts. Maps to backend `run()` under the hood. The returned [`QMSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.QMSamplerJob.rst) exposes the compiled QUA programs on `job.programs`:
+Shot-based measurement counts. Maps to backend `run()` under the hood. The returned [`QMSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.QMSamplerJob.rst) exposes the compiled QUA programs via `get_program()`:
 
 ```python
 from qm import generate_qua_script
 
 sampler = QMSamplerV2(backend=backend, options=QMSamplerOptions(default_shots=256))
 sampler_job = sampler.run([qc])
-print(generate_qua_script(sampler_job.programs[0]))
+print(generate_qua_script(sampler_job.get_program()))
 ```
 
 ## QMEstimatorV2
@@ -145,13 +145,17 @@ You can also inspect `job.run_data` after submission without calling `result()` 
 
 ## Debugging generated QUA
 
-Every primitive job and `backend.run()` exposes the compiled QUA programs on `job.programs` — always a `list[Program]`, one entry per chunk (length 1 when no chunking occurred). See the [Jobs guide](jobs.md) for the full property table (`qm_jobs`, `get_qm_job()`, `get_program()`, `pubs`, IQCC `run_data`, …).
+Every primitive job and `backend.run()` exposes the compiled QUA programs via `get_program()` (single/default) or by iterating `job.programs` (all chunks). See the [Jobs guide](jobs.md) for the full accessor table (`qm_jobs`, `get_qm_job()`, `get_program()`, `get_result_handles()`, `pubs`, IQCC `run_data`, …).
 
 For [`QMEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.QMEstimatorJob.rst), the compiled execution plans are also available on **`job.runtime_pubs`** — one [`_ExecutionPlan`](apidocs/stubs/qiskit_qm_provider.job.qm_estimator_job._ExecutionPlan.rst) per input PUB, showing how observables were grouped and what will be streamed to the OPX.
 
 ```python
 from qm import generate_qua_script
 
+# Non-chunked (default): use the getter
+print(generate_qua_script(job.get_program()))
+
+# Chunked: iterate all programs
 for chunk_idx, prog in enumerate(job.programs):
     print(f"=== QUA program {chunk_idx} ===")
     print(generate_qua_script(prog))

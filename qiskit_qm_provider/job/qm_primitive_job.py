@@ -156,6 +156,18 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         """
         return result_handles_from_qm_job(self._qm_jobs)
 
+    def get_result_handles(self, idx: Optional[int] = None):
+        """Return the result-handles object at *idx* (default: first / only job).
+
+        Convenience accessor equivalent to ``job.result_handles[idx]``.  Defaults
+        to index 0, which is the correct handle for non-chunked execution.
+
+        Raises:
+            RuntimeError: If the job has not been submitted yet.
+            IndexError: If *idx* is out of range.
+        """
+        return result_handles_from_qm_job(self._qm_jobs)[0 if idx is None else idx]
+
     @property
     def inputs(self) -> Dict:
         """Job input parameters.
