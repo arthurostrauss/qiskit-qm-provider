@@ -331,22 +331,18 @@ def _build_single_program(
     mapping those local indices back to global circuit indices when stitching
     results (see :func:`plan_run_programs`).
     """
-    clbits_dicts = []
+    outputs_list = []
     with program() as prog:
         backend.init_macro()
 
         for qc in circuits:
-            clbits_dict = _process_circuit(
-                qc,
-                backend,
-                num_shots,
-            )
-            clbits_dicts.append(clbits_dict)
+            outputs = _process_circuit(qc, backend, num_shots)
+            outputs_list.append(outputs)
 
         with stream_processing():
-            for i, clbits_dict in enumerate(clbits_dicts):
-                for creg_name, creg_dict in clbits_dict.items():
-                    creg_dict["stream"].save_all(f"{creg_name}_{i}")
+            for i, outputs in enumerate(outputs_list):
+                for creg_name, field in outputs.table.items():
+                    field.stream.save_all(f"{creg_name}_{i}")
 
     return prog
 
