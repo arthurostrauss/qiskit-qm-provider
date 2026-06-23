@@ -486,7 +486,6 @@ class Parameter:
                 # The variable is already in scope — skip redeclaration silently.
                 # DGX_Q / None (compile-time) always require a strict single declaration.
                 # See claude_work/2026-06-03_parameter-redeclaration-tradeoffs.md
-                import warnings
                 warnings.warn(
                     f"Parameter '{self.name}' is already declared. "
                     "Skipping redeclaration (safe for streaming input types).",

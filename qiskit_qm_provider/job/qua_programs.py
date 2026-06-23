@@ -353,7 +353,7 @@ def _build_single_program(
 
 def compute_chunk_layout(
     num_circuits: int,
-    max_circuits: Optional[int] = None,
+    max_circuits: int,
     conflicting_calibrations: bool = False,
 ) -> List[List[int]]:
     """Compute the chunk layout (lists of global circuit indices per program).
@@ -362,15 +362,22 @@ def compute_chunk_layout(
     unit-tested in isolation. ``chunk_layout[c]`` lists the global circuit
     indices packed into program ``c``.
 
+    Args:
+        num_circuits: Total number of circuits (or PUBs/plans).
+        max_circuits: Maximum circuits per program. Must be >= 1.
+        conflicting_calibrations: When ``True``, each circuit gets its own
+            program (takes priority over ``max_circuits``).
+
     Rules, in priority order:
         1. ``conflicting_calibrations`` -> one circuit per program.
-        2. ``max_circuits`` set and ``num_circuits > max_circuits`` ->
-           consecutive groups of ``max_circuits``.
+        2. ``num_circuits > max_circuits`` -> consecutive groups of ``max_circuits``.
         3. Otherwise -> a single program holding all circuits.
     """
+    if not isinstance(max_circuits, int) or max_circuits < 1:
+        raise ValueError(f"max_circuits must be a positive integer (>= 1), got {max_circuits!r}")
     if conflicting_calibrations:
         return [[i] for i in range(num_circuits)]
-    if max_circuits and num_circuits > max_circuits:
+    if num_circuits > max_circuits:
         return [
             list(range(start, min(start + max_circuits, num_circuits)))
             for start in range(0, num_circuits, max_circuits)
@@ -443,13 +450,12 @@ def plan_sampler_programs(
         Tuple of (list of QUA programs, chunk layout).
     """
     chunk_layout = compute_chunk_layout(len(pubs), max_circuits=backend.options.max_circuits)
-    qua_kwargs = {k: v for k, v in kwargs.items() if k != "max_circuits"}
     programs = [
         sampler_program(
             backend,
             [pubs[g] for g in chunk],
             [param_tables[g] for g in chunk],
-            **qua_kwargs,
+            **kwargs,
         )
         for chunk in chunk_layout
     ]

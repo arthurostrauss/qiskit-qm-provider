@@ -108,10 +108,8 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         if self._qm_job is None:
             raise RuntimeError("QM job is not running")
         if isinstance(self._qm_job, list):
-            for j in self._qm_job:
-                j.cancel()
-        else:
-            return self._qm_job.cancel()
+            return all(j.cancel() for j in self._qm_job)
+        return self._qm_job.cancel()
 
     @property
     def qm_job(self) -> Optional[Union[RunningQmJob, List[QmPendingJob]]]:

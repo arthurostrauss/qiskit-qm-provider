@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import Optional, Union, List, TYPE_CHECKING
 import os
 import inspect
+import tempfile
 
 import numpy as np
 
@@ -198,43 +199,70 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
     """IQCC Primitive Job class for executing QUA programs from PUBs."""
 
     def submit(self):
-        """Submit the job to the backend."""
+        """Submit the job to the backend.
+
+        When PUBs were split into multiple QUA programs (chunked execution), each
+        program is submitted as a separate IQCC cloud job with its own sync hook
+        written to a system temp file.  Results are stitched back transparently
+        in :meth:`_result_function` using the locator built at construction time.
+        """
         from .post_hook_sampler import generate_sync_hook_sampler
 
-        param_tables = self._param_tables
-        # IQCC execution does not support multi-program chunking; use the first (and only) chunk.
-        sampler_prog = self._program[0] if isinstance(self._program, list) else self._program
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
-        if any(param_table is not None and param_table.input_type is not None for param_table in param_tables):
-            sync_hook_code = generate_sync_hook_sampler(self._pubs, param_tables)
-        else:
-            sync_hook_code = None
-        # Determine the calling context to get the script file path
-        caller_frame = inspect.stack()[-1]
-        main_script_path = caller_frame.filename
-        main_script_dir = os.path.dirname(os.path.abspath(main_script_path))
-        sync_hook_path = os.path.join(main_script_dir, "sync_hook_sampler.py")
-        if sync_hook_code is not None:
-            with open(sync_hook_path, "w") as f:
-                f.write(sync_hook_code)
-            options = {"sync_hook": sync_hook_path}
-        else:
-            options = {}
-        if self.metadata.get("timeout", None) is not None:
-            options["timeout"] = self.metadata.get("timeout")
 
-        self._qm_job = self._backend.qm.execute(sampler_prog, options=options)
+        programs = self._program if isinstance(self._program, list) else [self._program]
+        timeout = self.metadata.get("timeout", None)
+        jobs = []
 
-    def _result_function(self, qm_job: CloudJob) -> PrimitiveResult[SamplerPubResult]:
-        """Get the result from the IQCC QM job."""
-        results_handle = qm_job.result_handles
-        results_handle.wait_for_all_values()
+        for prog, chunk in zip(programs, self._chunk_layout):
+            chunk_pubs = [self._pubs[g] for g in chunk]
+            chunk_tables = [self._param_tables[g] for g in chunk]
+
+            if any(t is not None and t.input_type is not None for t in chunk_tables):
+                sync_hook_code = generate_sync_hook_sampler(chunk_pubs, chunk_tables)
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+                    f.write(sync_hook_code)
+                    sync_hook_path = f.name
+                options = {"sync_hook": sync_hook_path}
+            else:
+                options = {}
+
+            if timeout is not None:
+                options["timeout"] = timeout
+
+            jobs.append(self._backend.qm.execute(prog, options=options))
+
+        if len(jobs) == 1:
+            self._qm_job = jobs[0]
+            self._job_id = getattr(self._qm_job, "id", "")
+        else:
+            self._qm_job = jobs
+            self._job_id = ",".join(getattr(j, "id", "") for j in jobs)
+
+    def _result_function(self, qm_job) -> PrimitiveResult[SamplerPubResult]:
+        """Get the result from the IQCC QM job(s).
+
+        Handles both single-job and multi-chunk (list of jobs) cases.
+        Uses ``_locator`` to fetch each PUB's measurement data from the correct
+        chunk handle under the correct local stream key.
+        """
+        is_job_list = isinstance(qm_job, list)
+        if is_job_list:
+            results_handles = [job.result_handles for job in qm_job]
+            for handle in results_handles:
+                handle.wait_for_all_values()
+        else:
+            results_handles = qm_job.result_handles
+            results_handles.wait_for_all_values()
+
         all_data = []
         for i, pub in enumerate(self._pubs):
+            chunk_idx, local_idx = self._locator[i]
+            handle = results_handles[chunk_idx] if is_job_list else results_handles
             qc_meas_data = {}
             for output_key, bit_width in measurement_output_bit_sizes(pub.circuit).items():
-                raw = results_handle.get(f"{output_key}_{i}").fetch_all()
+                raw = handle.get(f"{output_key}_{local_idx}").fetch_all()
                 data = np.asarray(raw)
                 bit_array = BitArray.from_samples(data.tolist(), bit_width).reshape(pub.shape + (pub.shots,))
                 qc_meas_data[output_key] = bit_array
@@ -242,8 +270,7 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
             sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
             all_data.append(sampler_data)
 
-        result = PrimitiveResult(all_data)
-        return result
+        return PrimitiveResult(all_data)
 
     def status(self) -> JobStatus:
         """Return the job status."""

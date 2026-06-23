@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from collections import defaultdict
 import os
 import inspect
+import tempfile
 
 if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import CloudJob
@@ -590,34 +591,43 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
     """IQCC Primitive Job class for executing QUA programs from PUBs."""
 
     def submit(self):
-        """Submit the job to the backend."""
+        """Submit the job to the backend.
+
+        When execution plans were split into multiple QUA programs (chunked
+        execution), each program is submitted as a separate IQCC cloud job with
+        its own sync hook written to a system temp file.  Results are stitched
+        back transparently by the inherited :meth:`_result_function` using the
+        locator built at construction time.
+        """
         from .post_hook_estimator import generate_sync_hook_estimator
 
-        # IQCC execution does not support multi-program chunking; use the first (and only) chunk.
-        estimator_prog = self._program[0] if isinstance(self._program, list) else self._program
         if self._qm_job is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
 
-        if any(
-            plan.param_table is not None and plan.param_table.input_type is not None for plan in self._execution_plans
-        ):
-            sync_hook_code = generate_sync_hook_estimator(self._execution_plans, obs_length_var=self._obs_length_vars)
-        else:
-            sync_hook_code = None
+        programs = self._program if isinstance(self._program, list) else [self._program]
+        timeout = self.metadata.get("run_options", {}).get("timeout", None)
+        jobs = []
 
-        # Determine the calling context to get the script file path
-        caller_frame = inspect.stack()[-1]
-        main_script_path = caller_frame.filename
-        main_script_dir = os.path.dirname(os.path.abspath(main_script_path))
-        sync_hook_path = os.path.join(main_script_dir, "sync_hook_estimator.py")
-        if sync_hook_code is not None:
-            with open(sync_hook_path, "w") as f:
-                f.write(sync_hook_code)
-            options = {"sync_hook": sync_hook_path}
+        for prog, chunk in zip(programs, self._chunk_layout):
+            chunk_plans = [self._execution_plans[g] for g in chunk]
+
+            if any(p.param_table is not None and p.param_table.input_type is not None for p in chunk_plans):
+                sync_hook_code = generate_sync_hook_estimator(chunk_plans, obs_length_var=self._obs_length_vars)
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+                    f.write(sync_hook_code)
+                    sync_hook_path = f.name
+                options = {"sync_hook": sync_hook_path}
+            else:
+                options = {}
+
+            if timeout is not None:
+                options["timeout"] = timeout
+
+            jobs.append(self._backend.qm.execute(prog, options=options))  # type: ignore
+
+        if len(jobs) == 1:
+            self._qm_job = jobs[0]
+            self._job_id = getattr(self._qm_job, "id", "")
         else:
-            options = {}
-        timeout = self.metadata["run_options"].get("timeout", None)
-        if timeout is not None:
-            options["timeout"] = timeout
-        # # For IQCC, execute returns CloudJob instead of RunningQmJob
-        self._qm_job = self._backend.qm.execute(estimator_prog, options=options)  # type: ignore
+            self._qm_job = jobs
+            self._job_id = ",".join(getattr(j, "id", "") for j in jobs)

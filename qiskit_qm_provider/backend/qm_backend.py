@@ -128,7 +128,6 @@ class QMBackend(Backend):
         init_macro: Optional[Callable] = None,
         qmm: QuantumMachinesManager | CloudQuantumMachinesManager | None = None,
         name: Optional[str] = None,
-        max_circuits: Optional[int] = 30,
         **fields,
     ):
         """Initialize the QM backend.
@@ -147,16 +146,12 @@ class QMBackend(Backend):
                 omitted.
             name: Optional backend name. Defaults to the network backend name or
                 ``"QMBackend"``.
-            max_circuits: Maximum number of circuits packed into a single QUA program (default 30).
-                When ``backend.run`` receives more circuits than this, the batch is split into
-                several QUA programs that are queued sequentially and whose results are stitched
-                back into a single Qiskit ``Result``. Set to ``None`` to disable splitting and
-                always build one program.
             fields: Optional keyword overrides for default run options:
                 ``shots`` (1024), ``compiler_options``, ``simulate``, ``memory``
                 (False), ``skip_reset`` (False), ``meas_level``
                 (``MeasLevel.CLASSIFIED``), ``meas_return``
-                (``MeasReturnType.AVERAGE``), and ``timeout`` (60 seconds).
+                (``MeasReturnType.AVERAGE``), ``timeout`` (60 seconds), and
+                ``max_circuits`` (30).
         """
         if name is None:
             if "quantum_computer_backend" in machine.network:
@@ -164,8 +159,6 @@ class QMBackend(Backend):
             else:
                 name = "QMBackend"
         Backend.__init__(self, name=name, **fields)
-
-        self.set_options(max_circuits=max_circuits)
         self._custom_instructions = {}
         self.machine = validate_machine(machine)
         self._qmm: Optional[QuantumMachinesManager | CloudQuantumMachinesManager] = qmm
@@ -420,8 +413,8 @@ class QMBackend(Backend):
 
         ``backend.run``, ``QMSamplerV2``, and ``QMEstimatorV2`` all split larger batches into
         several queued QUA programs whose results are stitched back transparently.
-        ``None`` disables splitting (a single program is always built).
 
+        Must be a positive integer (>= 1). Defaults to 30.
         Can be updated at any time via ``backend.set_options(max_circuits=N)``.
         """
         return self.options.max_circuits

@@ -128,8 +128,8 @@ class TestPlanSamplerPrograms:
         assert len(programs) == 3
         assert all(isinstance(p, Program) for p in programs)
 
-    def test_max_circuits_none_never_splits(self, flux_tunable_backend):
-        flux_tunable_backend.set_options(max_circuits=None)
+    def test_large_max_circuits_never_splits(self, flux_tunable_backend):
+        flux_tunable_backend.set_options(max_circuits=100)
         pubs = _sampler_pubs(flux_tunable_backend, 5)
         tables = _param_tables(pubs)
         programs, layout = plan_sampler_programs(flux_tunable_backend, pubs, tables)
@@ -180,8 +180,8 @@ class TestPlanEstimatorPrograms:
         assert len(programs) == 3
         assert all(isinstance(p, Program) for p in programs)
 
-    def test_max_circuits_none_never_splits(self, flux_tunable_backend):
-        flux_tunable_backend.set_options(max_circuits=None)
+    def test_large_max_circuits_never_splits(self, flux_tunable_backend):
+        flux_tunable_backend.set_options(max_circuits=100)
         _, plans, obs_var = _execution_plans_and_obs_var(flux_tunable_backend, 4)
         programs, layout = plan_estimator_programs(
             flux_tunable_backend, plans, obs_length_var=obs_var
@@ -226,7 +226,7 @@ class TestPrimitivesLocator:
         assert loc[6] == (2, 0)
 
     def test_single_program_locator_is_identity(self):
-        layout = compute_chunk_layout(5, max_circuits=None)
+        layout = compute_chunk_layout(5, max_circuits=10)
         loc = _locator(layout)
         for g in range(5):
             assert loc[g] == (0, g)
@@ -390,10 +390,13 @@ class TestMaxCircuitsBackendOption:
         assert flux_tunable_backend.max_circuits == 7
 
 
-    def test_set_options_none_disables_splitting(self, flux_tunable_backend):
-        flux_tunable_backend.set_options(max_circuits=None)
-        layout = compute_chunk_layout(50, max_circuits=flux_tunable_backend.options.max_circuits)
-        assert len(layout) == 1
+    def test_invalid_max_circuits_raises(self):
+        with pytest.raises(ValueError, match="max_circuits must be a positive integer"):
+            compute_chunk_layout(50, max_circuits=0)
+
+    def test_max_circuits_one_splits_each_circuit(self):
+        layout = compute_chunk_layout(4, max_circuits=1)
+        assert layout == [[0], [1], [2], [3]]
 
 
     def test_sampler_job_respects_backend_max_circuits(self, flux_tunable_backend):

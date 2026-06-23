@@ -43,8 +43,8 @@ class TestComputeChunkLayout:
         assert layout[1] == list(range(30, 60))
         assert layout[2] == list(range(60, 70))
 
-    def test_max_circuits_none_never_splits(self):
-        layout = compute_chunk_layout(100, max_circuits=None)
+    def test_single_program_when_max_equals_count(self):
+        layout = compute_chunk_layout(100, max_circuits=100)
         assert layout == [list(range(100))]
 
     def test_conflicting_calibrations_one_per_program(self):
@@ -82,9 +82,9 @@ class TestResultLocator:
         }
 
     def test_locator_single_program_is_identity(self):
-        layout = compute_chunk_layout(40, max_circuits=None)
+        layout = compute_chunk_layout(40, max_circuits=40)
         locator = self._locator(layout)
-        # Single program: chunk 0, local index == global index (back-compat key).
+        # Single program: chunk 0, local index == global index.
         for g in range(40):
             assert locator[g] == (0, g)
 
@@ -139,7 +139,15 @@ class TestPlanRunPrograms:
         self, flux_tunable_backend
     ):
         # Backward-compat wrapper: a single program is returned bare (not a list).
-        flux_tunable_backend.set_options(max_circuits=None)
+        flux_tunable_backend.set_options(max_circuits=100)
         circuits = [_measure_circuit() for _ in range(40)]
         prog = get_run_program(flux_tunable_backend, 100, circuits)
         assert isinstance(prog, Program)
+
+    def test_max_circuits_one_gives_one_program_per_circuit(self, flux_tunable_backend):
+        flux_tunable_backend.set_options(max_circuits=1)
+        circuits = [_measure_circuit() for _ in range(4)]
+        programs, layout = plan_run_programs(flux_tunable_backend, 100, circuits)
+        assert layout == [[0], [1], [2], [3]]
+        assert len(programs) == 4
+        assert all(isinstance(p, Program) for p in programs)

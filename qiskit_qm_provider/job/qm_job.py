@@ -242,7 +242,7 @@ class QMJob(JobV1):
         This method performs:
         - circuit validation and optional reset insertion,
         - target / calibration updates,
-        - QUA program generation via ``get_run_program``,
+        - QUA program generation via ``plan_run_programs``,
         - result object construction from streamed data,
         - and submission of either a local ``QMJob`` or cloud ``IQCCJob``.
         """
