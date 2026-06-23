@@ -77,7 +77,8 @@ For `QMJob`, `program` may be a single `Program` or a `list` of programs when mu
 | `backend` | [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) | Construction | Backend that compiled the circuits |
 | `metadata` | `dict` | Construction | Run options forwarded from backend/primitive (`compiler_options`, `simulate`, `timeout`, …) |
 | `program` | `Program` or `list` | Construction | Compiled QUA program — use with `generate_qua_script` |
-| `qm_job` | `RunningQmJob` / `QmPendingJob` / `list` | After `submit()` | Low-level QM SDK handle (`result_handles`, `cancel`, `push_to_input_stream`, …) |
+| `qm_job` | `RunningQmJob` / `QmPendingJob` / `list` | After `submit()` | Low-level QM SDK handle (`cancel`, `push_to_input_stream`, …) |
+| `result_handles` | QM result fetcher (or `list`) | After `submit()` | Same as `qm_job.result_handles` — stream keys for debugging |
 
 `QMJob` also stores **`qm`** — the [`QuantumMachine`](https://docs.quantum-machines.co/latest/docs/qm/quam/user_guide/quam/components/quam_root/qmmachine/) (or cloud equivalent) used for execution.
 
@@ -88,12 +89,7 @@ For `QMJob`, `program` may be a single `Program` or a `list` of programs when mu
 | `pubs` | `list[SamplerPub \| EstimatorPub]` | PUBs passed to `run()` |
 | `inputs` | `dict` | Snapshot of pubs, `input_type`, and `metadata` |
 | `program` | `Program` | Same as above — sampler/estimator QUA program |
-
-[`QMEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.QMEstimatorJob.rst) additionally exposes:
-
-| Name | Type | Purpose |
-|------|------|---------|
-| `result_handles` | QM result fetcher | Direct access to `qm_job.result_handles` after submit (advanced debugging) |
+| `result_handles` | QM result fetcher | `qm_job.result_handles` after submit (via [`QMPrimitiveJob`](apidocs/stubs/qiskit_qm_provider.job.qm_primitive_job.QMPrimitiveJob.rst)) |
 
 ### IQCC wrapper jobs
 
@@ -121,7 +117,7 @@ For streamed primitives, parameter values are pushed **after** submit via the pa
 job = sampler.run([(qc, param_values)])
 # submit already ran; qm_job is live
 
-job.qm_job.result_handles          # stream handles (estimator: job.result_handles)
+job.result_handles                 # stream handles (all job types)
 param_table.push_to_opx(..., job=job.qm_job, qm=backend.qm)
 ```
 
@@ -133,7 +129,7 @@ On IQCC, streamed jobs auto-generate a **sync hook** script that performs this p
 2. **Check job id** — `job.job_id` after submit
 3. **Poll status** — `job.status()` (not on `IQCCJob`)
 4. **IQCC failures** — `job.run_data` before trusting `result()`
-5. **Stream keys** — `job.qm_job.result_handles` (or `job.result_handles` on estimator) for raw stream names
+5. **Stream keys** — `job.result_handles` for raw stream names
 
 ## Related
 
