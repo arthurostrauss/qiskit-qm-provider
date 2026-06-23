@@ -446,8 +446,8 @@ class ParameterTable(QuaFieldTable):
                 warnings.warn("Filter function is not supported for OPNIC parameter tables.")
             if self.direction == Direction.OUTGOING:
                 raise ValueError("Cannot load input values for outgoing OPNIC parameter tables.")
-            elif self.direction == Direction.INCOMING or self.direction == Direction.BOTH:
-                self._var.recv()
+            
+            self._var.recv()
 
         else:
             for parameter in self.parameters:

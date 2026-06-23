@@ -48,6 +48,145 @@ Both `ParameterTable` and `Parameter` share **the same canonical verb names**, s
 - `push_to_opx(param_dict, job, qm)` — send values to the OPX.
 - `fetch_from_opx(job, ...)` — retrieve streamed results.
 
+## Constructing a `ParameterTable`
+
+We recommend building explicit [`Parameter`](apidocs/stubs/qiskit_qm_provider.parameter_table.Parameter.rst) objects first and passing a **list** to `ParameterTable`. That keeps `input_type`, `direction`, and `qua_type` visible at each field and matches how OPNIC / Quarc emission inspects the table.
+
+You can also pass a **dictionary** when a quick inline spec is enough. Every key is the parameter name; each value follows one of the shapes below.
+
+### Dictionary value shapes
+
+| Value | Meaning |
+|---|---|
+| `scalar` or `[v0, v1, …]` | Initial value only; `qua_type` is inferred from the value (`int` → `int`, `float` → `fixed`, list of floats → `fixed` array, etc.). |
+| `(value, qua_type)` | Explicit QUA type: `int`, `fixed`, `bool`, or the string `"int"` / `"fixed"` / `"bool"`. |
+| `(value, qua_type, input_type)` | Adds how the host talks to the OPX: `InputType.INPUT_STREAM`, `InputType.IO1`, `InputType.IO2`, or `InputType.OPNIC`. |
+| `(value, qua_type, input_type, direction)` | Required fourth field when `input_type` is `InputType.OPNIC` (`Direction.INCOMING`, `OUTGOING`, or `BOTH`). |
+
+**Rules:**
+
+- Every parameter in one table must share the same `input_type` (and the same `direction` for OPNIC).
+- A list or 1D numpy array as `value` defines an array parameter; length is `len(value)`.
+- OPNIC tables cannot use `add_parameters` / `remove_parameter` after the struct has been emitted (`declare()` in Flow A, or a pre-bound handle in Flow B).
+
+### Recommended — list of `Parameter` objects
+
+```python
+from qm.qua import fixed
+from qiskit_qm_provider import Parameter, ParameterTable, Direction, InputType
+
+mu = Parameter("mu", [0.0, 0.0], qua_type=fixed, input_type=InputType.OPNIC, direction=Direction.INCOMING)
+sigma = Parameter("sigma", [0.1, 0.1], qua_type=fixed, input_type=InputType.OPNIC, direction=Direction.INCOMING)
+
+policy_params = ParameterTable([mu, sigma], name="PolicyParams")
+```
+
+Compile-time angles (no streaming — assigned in QUA or bound from calibration):
+
+```python
+gate_params = ParameterTable(
+    [
+        Parameter("theta", 0.5, qua_type=fixed),
+        Parameter("phi", 0.0, qua_type=fixed),
+    ],
+    name="gate_params",
+)
+```
+
+### Dictionary shorthand — scalar compile-time
+
+```python
+# qua_type inferred: 0.0 → fixed, 1 → int, False → bool
+cal_table = ParameterTable(
+    {
+        "theta": 0.5,
+        "n_reps": 100,
+        "flag": False,
+    },
+    name="cal",
+)
+```
+
+### Dictionary shorthand — explicit type
+
+```python
+from qm.qua import fixed
+
+cal_table = ParameterTable(
+    {
+        "theta": (0.5, fixed),
+        "n_reps": (100, int),
+        "flag": (False, bool),
+    },
+    name="cal",
+)
+```
+
+### Dictionary shorthand — input stream / IO
+
+```python
+# Host pushes values before each rcv() in QUA
+stream_table = ParameterTable(
+    {
+        "input_state_0": (0, int, InputType.INPUT_STREAM),
+        "observable_0": (0, int, InputType.INPUT_STREAM),
+    },
+    name="input_state_vars",
+)
+
+# IO registers (job must be paused; see Parameter.push_to_opx)
+io_table = ParameterTable(
+    {
+        "sync_flag": (False, bool, InputType.IO1),
+        "status": (0, int, InputType.IO2),
+    },
+    name="io_flags",
+)
+```
+
+String literals work the same as enums: `"INPUT_STREAM"`, `"IO1"`, `"IO2"`.
+
+### Dictionary shorthand — OPNIC packet (four-tuple)
+
+```python
+policy_params = ParameterTable(
+    {
+        "mu": ([0.0, 0.0], "fixed", "OPNIC", "INCOMING"),
+        "sigma": ([0.1, 0.1], "fixed", "OPNIC", "INCOMING"),
+    },
+    name="PolicyParams",
+)
+```
+
+### Growing a table before `declare()` — `add_parameters`
+
+Build the core fields first, then attach more `Parameter` instances **before** the table is emitted (before `declare()` for OPNIC, or before any Flow-B handle is bound):
+
+```python
+base = ParameterTable(
+    [Parameter("mu", [0.0, 0.0], input_type=InputType.OPNIC, direction=Direction.INCOMING)],
+    name="PolicyParams",
+)
+
+base.add_parameters(
+    Parameter("sigma", [0.1, 0.1], input_type=InputType.OPNIC, direction=Direction.INCOMING)
+)
+
+# Or merge another table's fields:
+extra = ParameterTable(
+    [Parameter("bias", 0.0, input_type=InputType.OPNIC, direction=Direction.INCOMING)],
+    name="bias_only",
+)
+base.add_table(extra)  # adds Parameter("bias", ...)
+```
+
+After `declare()` (or once a Quarc struct handle is bound), `add_parameters` and `remove_parameter` raise — Quarc struct layout is append-only.
+
+### Other constructors
+
+- [`ParameterTable.from_qiskit(qc, ...)`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) — split circuit `Parameter` / `Var` inputs into tables (see tomography example below).
+- [`ParameterTable.from_spec(spec_dict)`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) — round-trip from serialized module state.
+
 ## Minimal example
 
 ```python
@@ -56,13 +195,10 @@ from qiskit_qm_provider import Parameter, ParameterTable, Direction, InputType
 
 Represents a single parameter. Shares the same canonical interface as `ParameterTable` (see table above).
 
+```python
 # Streamed syndrome integer (host ← device)
-syndrome_data = Parameter(
-    "syndrome_data",
-    0,
-    input_type=InputType.INPUT_STREAM,
-    direction=Direction.INCOMING,
-)
+syndrome_data = Parameter("syndrome_data", 0, input_type=InputType.INPUT_STREAM)
+```
 
 **Parameter `__init__` arguments:**
 - `name`: Parameter name.
@@ -71,6 +207,7 @@ syndrome_data = Parameter(
 - `input_type`: `InputType` enum.
 - `direction`: `Direction` enum (for OPNIC).
 
+```python
 # Recovery circuit parameters (host → device)
 recovery_vars = ParameterTable.from_qiskit(
     recovery_circuit,
@@ -93,6 +230,144 @@ syndrome_data.declare_stream()
 ```
 
 For the full error-correction loop using these tables, see [Error-Correction Workflow](error_correction.md).
+
+## Splitting one circuit into multiple tables (`filter_function`)
+
+Quantum process tomography and direct fidelity estimation repeat the same pulse program many times while varying two independent choices: which **input state** to prepare (e.g. the six Pauli eigenstates on the Bloch sphere) and which **measurement observable** to read out (e.g. Pauli X, Y, Z). A compact real-time circuit encodes both choices as `switch` blocks driven by classical input variables, but the host must not load every index at once — the observable can stay fixed while input states are swept, and only then move to the next observable.
+
+[`ParameterTable.from_qiskit()`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) walks **both** symbolic [`Parameter`](https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.circuit.Parameter) objects (gate angles under calibration) and real-time [`Var`](https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.circuit.classical.expr.Var) inputs (via `qc.add_input(...)`). The optional **`filter_function`** selects which objects belong in a given table:
+
+```python
+filter_function: Callable[[Parameter | Var], bool] | None
+```
+
+Call `from_qiskit` several times on the **same** circuit with different filters to obtain disjoint tables that share one compiled circuit but are **`rcv()`'d at different depths** in the QUA control flow. The same filter can be passed to [`ParameterTable.rcv()`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) to load only a subset of an already-declared table (not supported for OPNIC tables).
+
+Typical split for tomography:
+
+| Table | Filter | Loaded when |
+|---|---|---|
+| `observable_vars` | `"observable" in x.name` | Start of each observable group (outer loop) |
+| `input_state_vars` | `"input" in x.name` | Start of each input-state group (inner loop) |
+| `gate_params` | `isinstance(x, Parameter)` | Assigned in QUA before the shot loop (calibration angles) |
+
+The host streams one `(observable_0, input_state_0)` pair per inner iteration, sweeping all **3 × 6 = 18** combinations — without storing the full index grid on the FPGA.
+
+### Single-qubit process tomography (Qiskit side)
+
+The circuit below is a minimal tomography cell for one qubit: a **Pauli-6 input-state** switch, a parametrized gate under test (`x_cal`), a **3-way measurement-basis** switch, then measure and reset. Real-time indices enter through `add_input`; the gate angle is a single symbolic `Parameter` named `a`.
+
+```python
+from qiskit.circuit import QuantumCircuit, Gate, ClassicalRegister, Parameter as QiskitParameter
+from qiskit.circuit.classical import types
+from qiskit_qm_provider import Parameter, ParameterTable, InputType
+
+# --- Real-time circuit (one qubit) -----------------------------------------
+a = QiskitParameter("a")
+x_cal = Gate("x_cal", 1, [a])
+
+qc = QuantumCircuit(1, name="single_qubit_tomography")
+meas = ClassicalRegister(1, name="meas_target_0")
+qc.add_register(meas)
+
+input_state_0 = qc.add_input("input_state_0", types.Uint(32))
+observable_0 = qc.add_input("observable_0", types.Uint(32))
+
+# Pauli-6 input-state preparation (indices 0 … 5)
+with qc.switch(input_state_0) as case_input:
+    with case_input(0):
+        qc.delay(16, 0)          # |0⟩
+    with case_input(1):
+        qc.x(0)                    # |1⟩
+    with case_input(2):
+        qc.h(0)                    # |+⟩
+    with case_input(3):
+        qc.h(0)
+        qc.z(0)                    # |−⟩
+    with case_input(4):
+        qc.h(0)
+        qc.s(0)                    # |+i⟩
+    with case_input(5):
+        qc.h(0)
+        qc.sdg(0)                  # |−i⟩
+
+qc.append(x_cal, [0])
+
+# Pauli measurement basis (0: Z, 1: X, 2: Y)
+with qc.switch(observable_0) as case_obs:
+    with case_obs(0):
+        qc.delay(16, 0)
+    with case_obs(1):
+        qc.h(0)
+    with case_obs(2):
+        qc.sdg(0)
+        qc.h(0)
+
+qc.measure(0, meas[0])
+qc.reset(0)
+
+# --- Split one circuit into role-specific tables ---------------------------
+input_state_vars = ParameterTable.from_qiskit(
+    qc,
+    input_type=InputType.INPUT_STREAM,
+    filter_function=lambda x: "input" in x.name,
+    name="input_state_vars",
+)
+observable_vars = ParameterTable.from_qiskit(
+    qc,
+    input_type=InputType.INPUT_STREAM,
+    filter_function=lambda x: "observable" in x.name,
+    name="observable_vars",
+)
+gate_params = ParameterTable.from_qiskit(
+    qc,
+    input_type=None,  # assigned in QUA (calibration angle)
+    filter_function=lambda x: isinstance(x, QiskitParameter),
+    name="gate_params",
+)
+
+n_shots = Parameter("n_shots", 100, input_type=InputType.INPUT_STREAM)
+```
+
+On the Python host, `push_to_opx` is called in lockstep with the QUA loops: for each of the 3 observables and 6 input states, push `observable_0`, `input_state_0`, and `n_shots`. Histograms from each pair are combined offline into expectation values or a process matrix.
+
+### Matching QUA program (nested loops, staged loading)
+
+The template below exhausts all **3 × 6** tomography settings while keeping only **two** integer control-flow variables live (`input_state_0`, `observable_0`) plus one gate angle — not 18 copies of every index stored on the FPGA at once.
+
+```python
+from qm.qua import program, declare, for_, fixed
+from qiskit_qm_provider import QMBackend
+
+backend = ...  # QMBackend with the transpiled qc above
+calibration_angle = declare(fixed)  # set once, or loaded from the host before the sweep
+
+with program() as tomography_prog:
+    input_state_vars.declare()
+    observable_vars.declare()
+    gate_params.declare()
+    n_shots.declare()
+
+    o_idx = declare(int)
+    i_idx = declare(int)
+    shots = declare(int)
+
+    backend.init_macro()
+
+    with for_(o_idx, 0, o_idx < 3, o_idx + 1):
+        observable_vars.rcv()      # host pushes observable_0 ∈ {0, 1, 2}
+
+        with for_(i_idx, 0, i_idx < 6, i_idx + 1):
+            input_state_vars.rcv()  # host pushes input_state_0 ∈ {0, …, 5}
+            n_shots.rcv()
+            gate_params.get_parameter("a").assign(calibration_angle)
+
+            with for_(shots, 0, shots < n_shots.var, shots + 1):
+                backend.quantum_circuit_to_qua(qc, circuit_variables)
+                # accumulate counts into histogram for this (observable, input_state) pair …
+```
+
+**Why the filters matter:** a single unfiltered `ParameterTable.from_qiskit(qc)` would merge `input_state_0`, `observable_0`, and `a`. One `rcv()` would advance every input stream at once, breaking the nested-loop schedule. Splitting by `filter_function` keeps each stream aligned with the control-flow depth where its Qiskit `switch` is evaluated — the natural structure for tomography experiments on long-running QUA programs.
 
 ## ParameterPool
 
