@@ -171,6 +171,15 @@ class FSimGate(Gate):
     def __init__(self, theta: ParameterValueType, phi: ParameterValueType, label=None):
         super().__init__("fsim", num_qubits=2, params=[theta, phi], label=label)
 
+    def _define(self):
+        """Decompose fSim(theta, phi) into standard Qiskit two-qubit rotations."""
+        theta, phi = self.params
+        qc = QuantumCircuit(2, name=self.name)
+        qc.rxx(theta, 0, 1)
+        qc.ryy(theta, 0, 1)
+        qc.cp(-phi, 0, 1)
+        self._definition = qc
+
     def __array__(self, dtype=None):
         theta, phi = float(self.params[0]), float(self.params[1])
         cos = np.cos(theta)
