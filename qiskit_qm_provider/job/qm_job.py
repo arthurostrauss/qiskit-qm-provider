@@ -96,7 +96,7 @@ class QMJob(JobV1):
         job_id: str,
         qm: QuantumMachine | CloudQuantumMachine,
         program: Union[Program, List[Program]],
-        result_function: Callable[[RunningQmJob], Result],
+        result_function: Callable[[List[Union[RunningQmJob, QmPendingJob]]], Result],
         **kwargs,
     ):
         JobV1.__init__(self, backend, job_id, **kwargs)
@@ -156,7 +156,7 @@ class QMJob(JobV1):
         meas_return: MeasReturnType,
         memory: bool,
         chunk_layout: Optional[List[List[int]]] = None,
-    ) -> Callable[[RunningQmJob | List[RunningQmJob] | CloudJob | Dict], Result]:
+    ) -> Callable[[List[Union[RunningQmJob, QmPendingJob]]], Result]:
         """Create a Result-building callback for standard circuit execution.
 
         This function encapsulates the data plumbing that was previously
@@ -181,7 +181,7 @@ class QMJob(JobV1):
         locator: Dict[int, tuple] = compute_locator(chunk_layout)
 
         def result_function(
-            qm_jobs: List[RunningQmJob],
+            qm_jobs: List[Union[RunningQmJob, QmPendingJob]],
         ) -> Result:
             try:
                 from iqcc_cloud_client.qmm_cloud import CloudResultHandles  # type: ignore[import]
@@ -230,7 +230,7 @@ class QMJob(JobV1):
                     meas_level=meas_level,
                     meas_return=meas_return,
                     header={"metadata": circuit_metadata},
-                    status=getattr(qm_jobs[0], "status", "done"),
+                    status=getattr(running_jobs[0], "status", "done"),
                 )
                 experiment_data.append(experiment_result)
 
@@ -473,7 +473,7 @@ class IQCCJob(IQCCJobMixin, QMJob):
         job_id: str,
         qm: IQCC_Cloud,
         program: Program,
-        result_function: Callable[[RunningQmJob], Result],
+        result_function: Callable[[List[Union[RunningQmJob, QmPendingJob]]], Result],
         **kwargs,
     ):
         super().__init__(backend, job_id, qm, program, result_function, **kwargs)
