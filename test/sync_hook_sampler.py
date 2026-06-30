@@ -230,7 +230,7 @@ for parameter_value, parameter_table in zip(parameter_values, parameter_tables):
         param_dict = {param.name: value for param, value in zip(parameter_table.parameters, parameter_value)}
         parameter_table.push_to_opx(param_dict, job)
 
-results_handle = job.get_result_handles()
+results_handle = job.result_handles
 results_handle.wait_for_all_values()
 
 # all_data = []

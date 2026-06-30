@@ -22,8 +22,6 @@ Changes on the `max_circuits_spec` and `quarc-support` branches relative to `mai
 ### Fixed (`max_circuits_spec`)
 
 - **`QMSamplerJob.submit()` simulate path** — was always submitting only `programs[0]`; now iterates all chunks so multi-program simulation works correctly.
-- **`parameter.py fetch_from_opx()`** — was using `job.result_handles` (now a list after the always-list `_qm_jobs` refactor); fixed to `job.get_result_handles()`.
-- **`test/sync_hook_sampler.py`** — same `result_handles` → `get_result_handles()` fix.
 
 ### Changes on the `quarc-support` branch relative to `main` (22 commits, ~8.5k lines added).
 

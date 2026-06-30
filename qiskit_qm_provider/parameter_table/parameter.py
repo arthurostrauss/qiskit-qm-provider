@@ -1073,7 +1073,7 @@ class Parameter:
                 raise ValueError("Job object is required to fetch values from the result handles.")
             if verbosity > 1:
                 print(f"Fetching value from {self.name} with input type {self.input_type}")
-            result_handle = job.get_result_handles()
+            result_handle = job.result_handles
             if self.name not in result_handle:
                 raise ValueError(
                     f"Parameter {self.name} not found in the result handles. "
