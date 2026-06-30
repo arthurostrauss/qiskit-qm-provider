@@ -16,7 +16,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from qiskit.providers import JobStatus
 
 
 def result_handles_from_qm_job(qm_jobs: Any) -> Any:
@@ -72,6 +75,16 @@ class IQCCJobMixin:
 
     Exposes the raw IQCC cloud execution record and re-raises remote failures
     instead of surfacing misleading local ``KeyError``s on missing stream keys.
+
+    **IQCC execution model** — :meth:`submit` is synchronous: ``CloudJob`` is
+    constructed only *after* the remote program has finished running, so
+    ``CloudJob.status`` is unconditionally ``"completed"`` and conveys no
+    information about success or failure.  The real failure signal lives in
+    ``_run_data["stderr"]``: when the cloud runtime raises an exception its
+    full traceback is stored there.  :meth:`status` and :meth:`result` both
+    inspect this field; :meth:`result` raises :class:`IQCCCloudExecutionError`
+    with the traceback text so callers see a meaningful error instead of a
+    downstream ``KeyError`` on a missing stream key.
     """
 
     _qm_jobs: Any
@@ -88,6 +101,38 @@ class IQCCJobMixin:
 
     def _check_iqcc_cloud_execution(self) -> None:
         raise_if_iqcc_cloud_failed(getattr(self, "_qm_jobs", None))
+
+    def status(self) -> "JobStatus":
+        """Return the job status based on cloud stderr.
+
+        IQCC execution is synchronous — :meth:`submit` blocks until the remote
+        program finishes, so ``CloudJob.status`` is always ``"completed"``
+        regardless of whether the run succeeded.  This method instead mirrors
+        the logic in :func:`raise_if_iqcc_cloud_failed`: it checks
+        ``_run_data["stderr"]`` for a Python traceback and returns
+        ``JobStatus.ERROR`` when one is found, ``JobStatus.DONE`` otherwise.
+
+        Call :meth:`result` to retrieve the full
+        :class:`IQCCCloudExecutionError` with the traceback text.
+
+        Returns:
+            ``JobStatus.ERROR`` when any chunk's stderr contains a traceback,
+            ``JobStatus.DONE`` otherwise.
+
+        Raises:
+            RuntimeError: If the job has not been submitted yet.
+        """
+        from qiskit.providers import JobStatus as _JobStatus
+
+        if getattr(self, "_qm_jobs", None) is None:
+            raise RuntimeError("IQCC job has not been submitted yet")
+        for job in self._qm_jobs:
+            run_data = getattr(job, "_run_data", None)
+            if isinstance(run_data, dict):
+                stderr = run_data.get("stderr", "")
+                if isinstance(stderr, str) and "Traceback" in stderr:
+                    return _JobStatus.ERROR
+        return _JobStatus.DONE
 
     def result(self):
         if getattr(self, "_qm_jobs", None) is None:

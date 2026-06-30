@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Changes on the `quarc-support` branch relative to `main` (22 commits, ~8.5k lines added).
+Changes on the `max_circuits_spec` and `quarc-support` branches relative to `main`.
+
+### Added (`max_circuits_spec`)
+
+#### Chunked execution
+
+- **`max_circuits` backend option** — `QMBackend`, `QMSamplerV2`, and `QMEstimatorV2` accept a `max_circuits` option.  When the circuit/PUB count exceeds it, execution is automatically split into consecutive QUA programs; results are stitched back transparently.
+- **`compute_chunk_layout()`** in `qua_programs.py` — plans the per-program circuit/PUB grouping for a given `max_circuits` limit.
+- **`compute_locator()`** in `qua_programs.py` — inverts a chunk layout into a `global_index → (chunk_idx, local_idx)` mapping used during result assembly.  Previously inlined as a dict comprehension in three separate places.
+- **`stream_assembly.py`** — shared helpers `bit_array_from_stream()` and `bit_array_from_measurement_stream()` that assemble `BitArray` results from QUA streams, handling both standard QM (flat output) and IQCC cloud (may carry an extra leading dimension) via a `reshape` normalisation step.
+- **`IQCCJobMixin.status()`** — IQCC-aware status check: since `CloudJob.status` is unconditionally `"completed"` (IQCC execution is synchronous), this method inspects `_run_data["stderr"]` instead.  Returns `JobStatus.ERROR` when the cloud stderr contains a Python traceback, `JobStatus.DONE` otherwise.  Inherited by both `IQCCSamplerJob` and `IQCCEstimatorJob`.
+
+### Fixed (`max_circuits_spec`)
+
+- **`QMSamplerJob.submit()` simulate path** — was always submitting only `programs[0]`; now iterates all chunks so multi-program simulation works correctly.
+- **`parameter.py fetch_from_opx()`** — was using `job.result_handles` (now a list after the always-list `_qm_jobs` refactor); fixed to `job.get_result_handles()`.
+- **`test/sync_hook_sampler.py`** — same `result_handles` → `get_result_handles()` fix.
+
+### Changes on the `quarc-support` branch relative to `main` (22 commits, ~8.5k lines added).
 
 ### Added
 

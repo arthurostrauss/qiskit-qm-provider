@@ -124,8 +124,9 @@ class QMSamplerJob(QMPrimitiveJob):
         """Submit the job to the backend.
 
         When the PUBs were split into multiple QUA programs (chunked execution),
-        each program is queued sequentially on QOP.  Results from all chunks are
-        transparently stitched back in :meth:`_result_function`.
+        each program is either simulated (all chunks, sequentially) or queued on
+        QOP.  Results from all chunks are transparently stitched back in
+        :meth:`_result_function` using the locator built at construction time.
         """
         if self._qm_jobs is not None:
             raise RuntimeError("QM job has already been submitted")
@@ -184,15 +185,28 @@ class QMSamplerJob(QMPrimitiveJob):
 
 
 class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
-    """IQCC Primitive Job class for executing QUA programs from PUBs."""
+    """IQCC cloud variant of :class:`QMSamplerJob`.
+
+    Execution is **synchronous**: each :meth:`submit` call blocks until the
+    remote OPX program completes.  ``CloudJob.status`` is therefore always
+    ``"completed"``; real failure information lives in ``_run_data["stderr"]``
+    (see :class:`~.IQCCJobMixin` and :meth:`~.IQCCJobMixin.status`).
+
+    ``result()`` raises :class:`~.IQCCCloudExecutionError` before attempting to
+    fetch streams when any chunk job's stderr contains a Python traceback.
+    """
 
     def submit(self):
-        """Submit the job to the backend.
+        """Submit all QUA programs to the IQCC cloud backend.
 
-        When PUBs were split into multiple QUA programs (chunked execution), each
-        program is submitted as a separate IQCC cloud job with its own sync hook
-        written to a system temp file.  Results are stitched back transparently
-        in :meth:`_result_function` using the locator built at construction time.
+        For each chunk produced by :func:`~.plan_sampler_programs`, a separate
+        cloud job is executed synchronously.  When the chunk's PUBs have
+        parameterised circuits, a sync-hook script is written to a temporary
+        file and passed to ``execute()``; the file is unlinked immediately
+        after the call regardless of outcome.
+
+        Results from all chunks are stitched back by :meth:`_result_function`
+        using the locator built at construction time.
         """
         from .post_hook_sampler import generate_sync_hook_sampler
 
@@ -229,21 +243,3 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
         self._qm_jobs = jobs
         self._job_id = ",".join(getattr(j, "id", "") for j in jobs)
 
-    def status(self) -> JobStatus:
-        """Return the job status."""
-        if self._qm_jobs is None:
-            raise RuntimeError("IQCC QM job has not submitted yet")
-        mapping = {
-            "unknown": JobStatus.ERROR,
-            "pending": JobStatus.QUEUED,
-            "running": JobStatus.RUNNING,
-            "completed": JobStatus.DONE,
-            "canceled": JobStatus.CANCELLED,
-            "loading": JobStatus.VALIDATING,
-            "error": JobStatus.ERROR,
-        }
-        statuses = [mapping.get(getattr(job, "status", "unknown"), JobStatus.ERROR) for job in self._qm_jobs]
-        for state in (JobStatus.ERROR, JobStatus.CANCELLED, JobStatus.VALIDATING, JobStatus.QUEUED, JobStatus.RUNNING):
-            if state in statuses:
-                return state
-        return JobStatus.DONE

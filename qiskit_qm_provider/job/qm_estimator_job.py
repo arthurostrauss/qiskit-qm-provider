@@ -573,16 +573,28 @@ class QMEstimatorJob(QMPrimitiveJob):
 
 
 class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
-    """IQCC Primitive Job class for executing QUA programs from PUBs."""
+    """IQCC cloud variant of :class:`QMEstimatorJob`.
+
+    Execution is **synchronous**: each :meth:`submit` call blocks until the
+    remote OPX program completes.  ``CloudJob.status`` is always
+    ``"completed"``; real failure information lives in ``_run_data["stderr"]``
+    (see :class:`~.IQCCJobMixin` and :meth:`~.IQCCJobMixin.status`).
+
+    ``result()`` raises :class:`~.IQCCCloudExecutionError` before attempting to
+    fetch streams when any chunk job's stderr contains a Python traceback.
+    """
 
     def submit(self):
-        """Submit the job to the backend.
+        """Submit all QUA programs to the IQCC cloud backend.
 
-        When execution plans were split into multiple QUA programs (chunked
-        execution), each program is submitted as a separate IQCC cloud job with
-        its own sync hook written to a system temp file.  Results are stitched
-        back transparently by the inherited :meth:`_result_function` using the
-        locator built at construction time.
+        For each chunk produced by :func:`~.plan_estimator_programs`, a separate
+        cloud job is executed synchronously.  When the chunk's execution plans
+        have parameterised circuits, a sync-hook script is written to a
+        temporary file and passed to ``execute()``; the file is unlinked
+        immediately after the call regardless of outcome.
+
+        Results from all chunks are stitched back by the inherited
+        :meth:`_result_function` using the locator built at construction time.
         """
         from .post_hook_estimator import generate_sync_hook_estimator
 
