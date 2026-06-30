@@ -52,6 +52,13 @@ if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import CloudJob
 
 
+def bit_array_from_measurement_stream(pub: SamplerPub, raw, bit_width: int) -> BitArray:
+    """Assemble a classified :class:`~qiskit.primitives.containers.BitArray` from a QUA stream."""
+    target_shape = pub.shape + (pub.shots,)
+    data = np.asarray(raw, dtype=int).reshape(target_shape)
+    return BitArray.from_samples(data.reshape(-1).tolist(), bit_width).reshape(target_shape)
+
+
 class QMSamplerJob(QMPrimitiveJob):
     """Job handle for :class:`~qiskit_qm_provider.primitives.QMSamplerV2` execution.
 
@@ -110,9 +117,7 @@ class QMSamplerJob(QMPrimitiveJob):
                     raw = results_handle[i].get(f"{output_key}_{i}").fetch_all()
                 else:
                     raw = results_handle.get(f"{output_key}_{i}").fetch_all()
-                data = np.asarray(raw)
-                bit_array = BitArray.from_samples(data.tolist(), bit_width).reshape(pub.shape + (pub.shots,))
-                qc_meas_data[output_key] = bit_array
+                qc_meas_data[output_key] = bit_array_from_measurement_stream(pub, raw, bit_width)
 
             sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
             all_data.append(sampler_data)
@@ -196,9 +201,7 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
             qc_meas_data = {}
             for output_key, bit_width in measurement_output_bit_sizes(pub.circuit).items():
                 raw = results_handle.get(f"{output_key}_{i}").fetch_all()
-                data = np.asarray(raw)
-                bit_array = BitArray.from_samples(data.tolist(), bit_width).reshape(pub.shape + (pub.shots,))
-                qc_meas_data[output_key] = bit_array
+                qc_meas_data[output_key] = bit_array_from_measurement_stream(pub, raw, bit_width)
 
             sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
             all_data.append(sampler_data)
