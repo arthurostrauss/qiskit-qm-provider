@@ -614,7 +614,7 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
             raise RuntimeError("IQCC QM job has already been submitted")
 
         programs = self._programs
-        timeout = self.metadata.get("run_options", {}).get("timeout", None)
+        timeout = self.metadata.get("timeout") or self.metadata.get("run_options", {}).get("timeout")
         jobs = []
 
         for prog, chunk in zip(programs, self._chunk_layout):

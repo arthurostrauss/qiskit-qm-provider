@@ -230,7 +230,7 @@ class QMJob(JobV1):
                     meas_level=meas_level,
                     meas_return=meas_return,
                     header={"metadata": circuit_metadata},
-                    status=getattr(running_jobs[0], "status", "done"),
+                    status=getattr(running_jobs[locator[i][0]], "status", "done"),
                 )
                 experiment_data.append(experiment_result)
 
@@ -415,7 +415,9 @@ class QMJob(JobV1):
                     self.qm.queue.add_compiled(pid) for pid in program_ids
                 ]
             else:
-                self._qm_jobs = [self.qm.execute(self.programs[0], **kwargs)]
+                self._qm_jobs = [
+                    self.qm.execute(prog, **kwargs) for prog in self.programs
+                ]
             self._job_id = ",".join(
                 getattr(j, "id", "") for j in self._qm_jobs
             ).strip(",")

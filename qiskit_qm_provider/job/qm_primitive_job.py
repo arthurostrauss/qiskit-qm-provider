@@ -107,7 +107,7 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         """Attempt to cancel the job.  Cancels all chunk jobs for chunked execution."""
         if self._qm_jobs is None:
             raise RuntimeError("QM job is not running")
-        return all(j.cancel() for j in self._qm_jobs)
+        return all([j.cancel() for j in self._qm_jobs])
 
     @property
     def qm_jobs(self) -> Optional[List[Union[RunningQmJob, QmPendingJob]]]:
