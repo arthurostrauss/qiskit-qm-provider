@@ -192,7 +192,11 @@ class QMJob(JobV1):
             if CloudResultHandles is not None:
                 result_handle_types = (StreamingResultFetcher, CloudResultHandles)
 
-            results_handles = [job.result_handles for job in qm_jobs]
+            running_jobs = [
+                job.wait_for_execution() if isinstance(job, QmPendingJob) else job
+                for job in qm_jobs
+            ]
+            results_handles = [job.result_handles for job in running_jobs]
             for handle in results_handles:
                 if isinstance(handle, result_handle_types):
                     handle.wait_for_all_values()
@@ -363,7 +367,18 @@ class QMJob(JobV1):
         return JobStatus.DONE
 
     def submit(self):
-        """Execute or queue the QUA program on the Quantum Machine."""
+        """Compile and queue all QUA programs on the Quantum Machine.
+
+        For local QM backends, all programs are first compiled via
+        ``qm.compile()`` and then added to the OPX queue via
+        ``qm.queue.add_compiled()``.  Separating compilation from execution
+        means all programs are compiled upfront so the OPX can execute them
+        back-to-back without recompilation stalls between chunks.
+
+        For cloud (IQCC) backends, programs are executed directly since the
+        cloud runtime manages its own queuing.  Simulation is handled
+        separately (no queue used).
+        """
         compiler_options = self.metadata.get("compiler_options", None)
         simulate = self.metadata.get("simulate", None)
         if isinstance(self.qm, QuantumMachine):
@@ -391,8 +406,14 @@ class QMJob(JobV1):
                 )]
             self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
         else:
-            if len(self.programs) > 1:
-                self._qm_jobs = [self.qm.queue.add(prog, **kwargs) for prog in self.programs]
+            if isinstance(self.qm, QuantumMachine):
+                program_ids = [
+                    self.qm.compile(prog, compiler_options=compiler_options)
+                    for prog in self.programs
+                ]
+                self._qm_jobs = [
+                    self.qm.queue.add_compiled(pid) for pid in program_ids
+                ]
             else:
                 self._qm_jobs = [self.qm.execute(self.programs[0], **kwargs)]
             self._job_id = ",".join(

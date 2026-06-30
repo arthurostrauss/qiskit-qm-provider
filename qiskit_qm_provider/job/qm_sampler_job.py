@@ -102,7 +102,11 @@ class QMSamplerJob(QMPrimitiveJob):
         self._locator = compute_locator(self._chunk_layout)
 
     def _result_function(self, qm_jobs: List[RunningQmJob]) -> PrimitiveResult[SamplerPubResult]:
-        results_handles = [job.result_handles for job in qm_jobs]
+        running_jobs = [
+            j.wait_for_execution() if isinstance(j, QmPendingJob) else j
+            for j in qm_jobs
+        ]
+        results_handles = [job.result_handles for job in running_jobs]
         for handle in results_handles:
             handle.wait_for_all_values()
 
@@ -123,9 +127,14 @@ class QMSamplerJob(QMPrimitiveJob):
     def submit(self):
         """Submit the job to the backend.
 
-        When the PUBs were split into multiple QUA programs (chunked execution),
-        each program is either simulated (all chunks, sequentially) or queued on
-        QOP.  Results from all chunks are transparently stitched back in
+        All QUA programs are first compiled via ``qm.compile()``, then added to
+        the OPX queue via ``qm.queue.add_compiled()``.  Separating compilation
+        from execution means the queue never stalls waiting for recompilation of
+        later chunks — all programs are compiled upfront so the OPX can start
+        executing them as soon as the queue is free.
+
+        For simulation runs, programs are submitted directly to the simulator
+        (no queue).  Results from all chunks are stitched back in
         :meth:`_result_function` using the locator built at construction time.
         """
         if self._qm_jobs is not None:
@@ -146,18 +155,18 @@ class QMSamplerJob(QMPrimitiveJob):
                 for prog in programs
             ]
             self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
-        elif len(programs) == 1:
-            job = self._backend.qm.execute(programs[0], compiler_options=compiler_options)
-            self._qm_jobs = [job]
-            self._job_id = job.id
-            self._push_parameters(job, self._chunk_layout[0])
         else:
-            self._qm_jobs = []
-            for prog, chunk in zip(programs, self._chunk_layout):
-                job = self._backend.qm.queue.add(prog, compiler_options=compiler_options)
-                self._qm_jobs.append(job)
-                self._push_parameters(job, chunk)
-            self._job_id = ",".join(j.id for j in self._qm_jobs)
+            program_ids = [
+                self._backend.qm.compile(prog, compiler_options=compiler_options)
+                for prog in programs
+            ]
+            pending_jobs = [
+                self._backend.qm.queue.add_compiled(pid) for pid in program_ids
+            ]
+            self._qm_jobs = pending_jobs
+            self._job_id = ",".join(j.id for j in pending_jobs)
+            for pending, chunk in zip(pending_jobs, self._chunk_layout):
+                self._push_parameters(pending, chunk)
 
     def _push_parameters(self, qm_job, chunk: List[int]) -> None:
         """Stream circuit parameters to the OPX for the given chunk of pub indices."""
