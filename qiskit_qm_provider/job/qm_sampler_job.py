@@ -28,7 +28,7 @@ import numpy as np
 
 from qiskit.circuit import Parameter
 from qiskit.primitives import PrimitiveResult
-from qiskit.primitives.containers import SamplerPubResult, DataBin, BitArray
+from qiskit.primitives.containers import SamplerPubResult, DataBin
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit.providers import JobStatus
 from qiskit.result.models import MeasLevel
@@ -46,18 +46,12 @@ from ..backend import QMBackend
 from ..backend.backend_utils import measurement_output_bit_sizes, require_classified_meas_level
 from ..parameter_table import InputType, ParameterPool, ParameterTable
 from .iqcc_job_mixin import IQCCJobMixin
-from .qua_programs import plan_sampler_programs
+from .qua_programs import plan_sampler_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
+from .stream_assembly import bit_array_from_measurement_stream
 
 if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import CloudJob
-
-
-def bit_array_from_measurement_stream(pub: SamplerPub, raw, bit_width: int) -> BitArray:
-    """Assemble a classified :class:`~qiskit.primitives.containers.BitArray` from a QUA stream."""
-    target_shape = pub.shape + (pub.shots,)
-    data = np.asarray(raw, dtype=int).reshape(target_shape)
-    return BitArray.from_samples(data.reshape(-1).tolist(), bit_width).reshape(target_shape)
 
 
 class QMSamplerJob(QMPrimitiveJob):
@@ -105,12 +99,7 @@ class QMSamplerJob(QMPrimitiveJob):
             **self.metadata,
         )
         self._programs = programs
-        # Locator: global pub index -> (chunk_program_index, local_pub_index)
-        self._locator = {
-            g: (c, l)
-            for c, chunk in enumerate(self._chunk_layout)
-            for l, g in enumerate(chunk)
-        }
+        self._locator = compute_locator(self._chunk_layout)
 
     def _result_function(self, qm_jobs: List[RunningQmJob]) -> PrimitiveResult[SamplerPubResult]:
         results_handles = [job.result_handles for job in qm_jobs]
@@ -146,14 +135,16 @@ class QMSamplerJob(QMPrimitiveJob):
         programs = self._programs
 
         if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
-            job = self._backend.qmm.simulate(
-                self._backend.qm_config,
-                programs[0],
-                simulate=simulate,
-                compiler_options=compiler_options,
-            )
-            self._qm_jobs = [job]
-            self._job_id = job.id
+            self._qm_jobs = [
+                self._backend.qmm.simulate(
+                    self._backend.qm_config,
+                    prog,
+                    simulate=simulate,
+                    compiler_options=compiler_options,
+                )
+                for prog in programs
+            ]
+            self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
         elif len(programs) == 1:
             job = self._backend.qm.execute(programs[0], compiler_options=compiler_options)
             self._qm_jobs = [job]
@@ -238,30 +229,10 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
         self._qm_jobs = jobs
         self._job_id = ",".join(getattr(j, "id", "") for j in jobs)
 
-    def _result_function(self, qm_jobs) -> PrimitiveResult[SamplerPubResult]:
-        results_handles = [job.result_handles for job in qm_jobs]
-        for handle in results_handles:
-            handle.wait_for_all_values()
-
-        all_data = []
-        for i, pub in enumerate(self._pubs):
-            chunk_idx, local_idx = self._locator[i]
-            handle = results_handles[chunk_idx]
-            qc_meas_data = {}
-            for output_key, bit_width in measurement_output_bit_sizes(pub.circuit).items():
-                raw = handle.get(f"{output_key}_{local_idx}").fetch_all()
-                qc_meas_data[output_key] = bit_array_from_measurement_stream(pub, raw, bit_width)
-
-            sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
-            all_data.append(sampler_data)
-
-        return PrimitiveResult(all_data)
-
     def status(self) -> JobStatus:
         """Return the job status."""
         if self._qm_jobs is None:
             raise RuntimeError("IQCC QM job has not submitted yet")
-        status = "completed"
         mapping = {
             "unknown": JobStatus.ERROR,
             "pending": JobStatus.QUEUED,
@@ -271,4 +242,8 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
             "loading": JobStatus.VALIDATING,
             "error": JobStatus.ERROR,
         }
-        return mapping.get(status, JobStatus.ERROR)
+        statuses = [mapping.get(getattr(job, "status", "unknown"), JobStatus.ERROR) for job in self._qm_jobs]
+        for state in (JobStatus.ERROR, JobStatus.CANCELLED, JobStatus.VALIDATING, JobStatus.QUEUED, JobStatus.RUNNING):
+            if state in statuses:
+                return state
+        return JobStatus.DONE

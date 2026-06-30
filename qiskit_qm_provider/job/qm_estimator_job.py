@@ -43,7 +43,7 @@ from ..parameter_table import (
     Parameter as QuaParameter,
 )
 from .iqcc_job_mixin import IQCCJobMixin
-from .qua_programs import plan_estimator_programs
+from .qua_programs import plan_estimator_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
 from ..primitives.qm_estimator import QMEstimatorOptions
 from dataclasses import dataclass, field
@@ -231,7 +231,7 @@ def _param_binding_index(param_indices: np.ndarray, param_index: tuple) -> int:
 
 def counts_from_estimator_stream(plan: _ExecutionPlan, raw) -> List[Counts]:
     """Build per-metadata :class:`~qiskit.result.Counts` from the ``__c`` stream."""
-    data = np.asarray(raw)
+    data = np.asarray(raw, dtype=int)
     shots = plan.shots
     num_qubits = plan.num_qubits
     unit = shots * num_qubits
@@ -360,12 +360,7 @@ class QMEstimatorJob(QMPrimitiveJob):
             obs_length_var=self._obs_length_vars,
         )
         self._programs = programs
-        # Locator: global plan index -> (chunk_program_index, local_plan_index)
-        self._locator = {
-            g: (c, l)
-            for c, chunk in enumerate(self._chunk_layout)
-            for l, g in enumerate(chunk)
-        }
+        self._locator = compute_locator(self._chunk_layout)
 
     def _push_plan_data(self, qm_job, plan: "_ExecutionPlan") -> None:
         """Stream parameters and observable indices for one execution plan to OPX."""

@@ -26,7 +26,7 @@ from copy import deepcopy
 
 import numpy as np
 from qiskit.circuit import QuantumCircuit
-from qiskit.primitives import BitArray, SamplerPubResult, DataBin
+from qiskit.primitives import SamplerPubResult, DataBin
 from qiskit.providers.job import JobV1, JobStatus
 from qiskit.result import Result
 from qiskit.result.models import (
@@ -51,6 +51,7 @@ from qiskit_qm_provider.backend.backend_utils import (
     measurement_output_bit_sizes,
 )
 from .iqcc_job_mixin import IQCCJobMixin, result_handles_from_qm_job
+from .stream_assembly import bit_array_from_stream
 
 if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import CloudJob, CloudQuantumMachine
@@ -171,17 +172,13 @@ class QMJob(JobV1):
         equals the global index, matching the historical behaviour.
         """
         from ..backend.backend_utils import require_classified_meas_level
+        from .qua_programs import compute_locator
 
         require_classified_meas_level(meas_level, context="QMBackend.run()")
 
         if chunk_layout is None:
             chunk_layout = [list(range(num_circuits))]
-        # global circuit index -> (chunk/program index, local index within chunk)
-        locator: Dict[int, tuple] = {
-            g: (c, l)
-            for c, chunk in enumerate(chunk_layout)
-            for l, g in enumerate(chunk)
-        }
+        locator: Dict[int, tuple] = compute_locator(chunk_layout)
 
         def result_function(
             qm_jobs: List[RunningQmJob],
@@ -211,9 +208,7 @@ class QMJob(JobV1):
                         raw = handle.get(key).fetch_all()
                     else:
                         raw = handle.get(key)
-                    data = np.asarray(raw).tolist()
-                    bit_array = BitArray.from_samples(data, creg_size)
-                    qc_meas_data[creg] = bit_array
+                    qc_meas_data[creg] = bit_array_from_stream(raw, creg_size, (num_shots,))
 
                 sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
                 all_data.append(sampler_data.join_data())
@@ -267,7 +262,7 @@ class QMJob(JobV1):
             from iqcc_cloud_client.qmm_cloud import CloudQuantumMachinesManager  # type: ignore[import]
         except ImportError:
             CloudQuantumMachinesManager = None
-        from .qua_programs import plan_run_programs
+        from .qua_programs import plan_run_programs, compute_locator
 
         # Merge explicit options into backend defaults (preserving current behaviour)
         options_ = deepcopy(backend.options.__dict__)

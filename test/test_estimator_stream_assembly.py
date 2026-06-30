@@ -62,6 +62,24 @@ class TestEstimatorStreamAssembly:
         for counts in counts_list:
             assert counts["0"] + counts.get("1", 0) == shots
 
+    def test_counts_from_estimator_stream_nested_buffers(self):
+        theta = Parameter("theta")
+        circuit = QuantumCircuit(1)
+        circuit.rx(theta, 0)
+        observables = SparsePauliOp(["Z"])
+        parameter_values = np.linspace(0, np.pi, 3)
+        pub = EstimatorPub.coerce((circuit, observables, parameter_values), precision=0.5)
+        plan = _ExecutionPlan.from_pub(pub, QMEstimatorOptions(input_type=None))
+
+        shots = plan.shots
+        stream_count = plan.stream_buffer_count
+        raw = np.zeros((stream_count, shots), dtype=int)
+        for stream_idx in plan.stream_indices_for_metadata():
+            raw[stream_idx, 0] = 1
+
+        counts_list = counts_from_estimator_stream(plan, raw)
+        assert len(counts_list) == len(plan.metadata)
+
     def test_counts_from_estimator_stream_streamed_parameters(self):
         from qiskit_qm_provider.parameter_table import InputType
 

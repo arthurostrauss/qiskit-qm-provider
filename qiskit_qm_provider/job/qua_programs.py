@@ -27,7 +27,7 @@ from qm import Program
 from qm.qua import *
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from ..parameter_table import ParameterTable, QUA2DArray
-from typing import List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
@@ -379,6 +379,15 @@ def compute_chunk_layout(
             for start in range(0, num_circuits, max_circuits)
         ]
     return [list(range(num_circuits))]
+
+
+def compute_locator(chunk_layout: List[List[int]]) -> Dict[int, tuple]:
+    """Invert a chunk layout into a ``global_index -> (chunk_idx, local_idx)`` dict."""
+    return {
+        g: (c, l)
+        for c, chunk in enumerate(chunk_layout)
+        for l, g in enumerate(chunk)
+    }
 
 
 def plan_run_programs(
