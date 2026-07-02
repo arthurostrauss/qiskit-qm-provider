@@ -481,6 +481,40 @@ class Parameter:
         self._reset_if_stale_scope()
         if self.is_declared:
             raise ValueError("Variable already declared. Cannot declare again.")
+
+        # QUA's declare_input_stream rejects a second declaration of the same *name*
+        # within one program scope, even from a distinct Parameter instance. This
+        # happens whenever multiple independently-built Parameter/ParameterTable
+        # objects expose the same streamed field name in the same program (e.g. each
+        # chunked EstimatorPub's "obs_0" observable-index channel, or a shared
+        # "obs_length_var" counter). Such collisions are semantically a single shared
+        # streaming channel: rebind onto the existing declaration instead of
+        # re-declaring, after checking the two Parameters are type/length compatible.
+        reused_from: Optional["Parameter"] = None
+        scope_token = current_scope_token()
+        if self.input_type == InputType.INPUT_STREAM:
+            existing = ParameterPool._get_declared_stream_var(scope_token, self.name)
+            if existing is not None and existing is not self:
+                if existing.type != self.type or existing.is_array != self.is_array or existing.length != self.length:
+                    raise ValueError(
+                        f"Parameter {self.name!r} cannot be declared as an INPUT_STREAM: "
+                        "a different Parameter with the same name is already declared in "
+                        "this QUA program with an incompatible type/length. Distinct "
+                        "input streams must use distinct names."
+                    )
+                warnings.warn(
+                    f"Input stream {self.name!r} is already declared by another Parameter "
+                    "instance in this QUA program (expected when several execution plans "
+                    "share the same streaming channel, e.g. chunked estimator pubs). "
+                    "Reusing the existing declaration instead of re-declaring.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                reused_from = existing
+
+        if reused_from is not None:
+            self._var = reused_from._var
+            self._ctr = reused_from._ctr
         else:
             if self.input_type == InputType.INPUT_STREAM:
                 # if self.is_array:
@@ -493,14 +527,16 @@ class Parameter:
                     self._var = declare(self.type, value=self.value)
                 else:
                     self._var = declare(self.type, size=self.length if self.is_array else None)
-        if self.is_array and self.length > 1:
-            self._ctr = declare(int)
+            if self.is_array and self.length > 1:
+                self._ctr = declare(int)
         if pause_program:
             pause()
         self._is_declared = True
-        self._declared_scope = current_scope_token()
+        self._declared_scope = scope_token
         if declare_stream:
             self.declare_stream()
+        if self.input_type == InputType.INPUT_STREAM and reused_from is None:
+            ParameterPool._register_declared_stream_var(scope_token, self.name, self)
         # Auto-register non-OPNIC standalone parameters on the pool's bound module
         # (if any). Table-managed parameters are registered via their owning
         # ParameterTable.declare() instead — guarded here by ``not self.tables``.

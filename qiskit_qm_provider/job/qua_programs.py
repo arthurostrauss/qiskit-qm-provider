@@ -192,6 +192,11 @@ def _process_observables_with_circuit(
         param_table: Optional additional ParameterTable to pass to _process_circuit
         **kwargs: Additional arguments for _process_circuit
     """
+    # obs_length_var is a single Parameter shared by every plan in the enclosing
+    # QUA program (one program can hold several plans when chunked). It is
+    # declared once, up front, by the caller (estimator_program) — declaring it
+    # again here per-plan would raise "Variable already declared" starting on the
+    # second plan. Only rcv() (which loads a fresh value each time) belongs here.
     obs_length_var = kwargs.pop("obs_length_var", None)
     param_binding_var = kwargs.pop("param_binding_var", None)
     obs_lengths_qua = kwargs.pop("obs_lengths_qua", None)
@@ -200,8 +205,6 @@ def _process_observables_with_circuit(
     obs_idx = declare(int)
     num_qubits = len(plan.active_qubit_indices)
     plan.observables_var.declare()
-    if obs_length_var is not None:
-        obs_length_var.declare()
 
     process_param_table = _estimator_process_param_table(plan)
     circuit_kwargs = {
@@ -293,16 +296,25 @@ def estimator_program(backend: QMBackend, execution_plans: List[_ExecutionPlan],
     """
     Return the QUA program for the estimator primitive based on pre-computed plans.
     """
+    # obs_length_var (when provided) is a single Parameter shared across every plan
+    # processed in this program — it must be declared exactly once per program, not
+    # once per plan, otherwise the second plan's declaration raises "Variable
+    # already declared". Declare it here, before the per-plan loop, and forward the
+    # already-declared object down so each plan can still rcv() a fresh value.
+    obs_length_var = kwargs.pop("obs_length_var", None)
     # The execution plans are generated in the 'submit' method and passed here.
     outputs_tables = []
     with program() as estimator_prog:
         backend.init_macro()
+        if obs_length_var is not None:
+            obs_length_var.declare()
 
         # Loop over each PUB/circuit
         for plan in execution_plans:
             outputs = _process_estimator_pub(
                 plan,
                 backend,
+                obs_length_var=obs_length_var,
                 **kwargs,
             )
             outputs_tables.append(outputs)

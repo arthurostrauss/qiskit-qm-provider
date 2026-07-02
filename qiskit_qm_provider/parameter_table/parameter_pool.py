@@ -198,6 +198,16 @@ class ParameterPool:
     #: handles (including loose-bit ``_bitN`` fields), weakref-tracked. A ``WeakSet`` gives
     #: O(1) identity dedup and auto-prunes dead entries (no manual sweep).
     _measurement_register_fields: weakref.WeakSet[Any] = weakref.WeakSet()
+    #: Per-QUA-program-scope registry of ``InputType.INPUT_STREAM`` Parameters that have
+    #: already been declared, keyed by ``(scope_token, name)``. QUA's
+    #: ``declare_input_stream`` rejects a second declaration of the same *name* within one
+    #: program scope, even when the call comes from a distinct Python ``Parameter``
+    #: instance (e.g. independently-built per-pub ``ParameterTable`` objects that both
+    #: expose a field named ``"obs_0"``). :meth:`Parameter.declare` consults this registry
+    #: to safely rebind such a Parameter onto the already-declared QUA variable instead of
+    #: re-declaring (and to reject genuine type/length mismatches under the same name).
+    #: Cleared by :meth:`reset`.
+    _declared_stream_vars: Dict[Any, Dict[str, "Parameter"]] = {}
 
     # ------------------------------------------------------------------------
     # Internal helpers
@@ -220,6 +230,16 @@ class ParameterPool:
         """Clear measurement-only registries (called from :meth:`reset`)."""
         cls._measurement_outcome_tables = weakref.WeakSet()
         cls._measurement_register_fields = weakref.WeakSet()
+
+    @classmethod
+    def _get_declared_stream_var(cls, scope_token: Any, name: str) -> Optional["Parameter"]:
+        """Return the ``Parameter`` already declared under ``(scope_token, name)``, if any."""
+        return cls._declared_stream_vars.get(scope_token, {}).get(name)
+
+    @classmethod
+    def _register_declared_stream_var(cls, scope_token: Any, name: str, parameter: "Parameter") -> None:
+        """Record ``parameter`` as the INPUT_STREAM declaration owner for ``name`` in this scope."""
+        cls._declared_stream_vars.setdefault(scope_token, {})[name] = parameter
 
     @classmethod
     def iter_measurement_outcome_tables(cls) -> Iterator[Any]:
@@ -315,6 +335,7 @@ class ParameterPool:
         cls._pending_standalone_opnic.clear()
         cls._quarc_module = None
         cls._committed_scope_token = None
+        cls._declared_stream_vars.clear()
         cls._reset_quarc_stream_id_counters()
         cls._reset_measurement_registries()
 
