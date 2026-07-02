@@ -51,7 +51,7 @@ from qiskit_qm_provider.backend.backend_utils import (
     measurement_output_bit_sizes,
     experiment_result_header,
 )
-from .iqcc_job_mixin import IQCCJobMixin, result_handles_from_qm_job
+from .iqcc_job_mixin import IQCCJobMixin, result_handles_from_qm_job, aggregate_job_statuses
 from .stream_assembly import bit_array_from_stream
 
 if TYPE_CHECKING:
@@ -347,29 +347,7 @@ class QMJob(JobV1):
         """
         if self._qm_jobs is None:
             raise RuntimeError("QM job has not submitted yet")
-        mapping = {
-            "unknown": JobStatus.ERROR,
-            "pending": JobStatus.QUEUED,
-            "running": JobStatus.RUNNING,
-            "completed": JobStatus.DONE,
-            "canceled": JobStatus.CANCELLED,
-            "loading": JobStatus.VALIDATING,
-            "error": JobStatus.ERROR,
-        }
-        statuses = [
-            mapping.get(getattr(job, "status", "unknown"), JobStatus.ERROR)
-            for job in self._qm_jobs
-        ]
-        for state in (
-            JobStatus.ERROR,
-            JobStatus.CANCELLED,
-            JobStatus.VALIDATING,
-            JobStatus.QUEUED,
-            JobStatus.RUNNING,
-        ):
-            if state in statuses:
-                return state
-        return JobStatus.DONE
+        return aggregate_job_statuses(self._qm_jobs)
 
     def submit(self):
         """Compile and queue all QUA programs on the Quantum Machine.
@@ -380,23 +358,10 @@ class QMJob(JobV1):
         means all programs are compiled upfront so the OPX can execute them
         back-to-back without recompilation stalls between chunks.
 
-        For cloud (IQCC) backends, programs are executed directly since the
-        cloud runtime manages its own queuing.  Simulation is handled
-        separately (no queue used).
+        Simulation is handled separately (no queue used).
         """
         compiler_options = self.metadata.get("compiler_options", None)
         simulate = self.metadata.get("simulate", None)
-        if isinstance(self.qm, QuantumMachine):
-            kwargs = {
-                "simulate": simulate,
-                "compiler_options": compiler_options,
-            }
-        else:  # CloudQuantumMachine
-            kwargs = {
-                "terminal_output": True,
-            }
-            if "timeout" in self.metadata:
-                kwargs["options"] = {"timeout": self.metadata["timeout"]}
         if isinstance(simulate, SimulationConfig):
             self._qm_jobs = [
                 self.qm.simulate(
@@ -416,7 +381,8 @@ class QMJob(JobV1):
                 ]
             else:
                 self._qm_jobs = [
-                    self.qm.execute(prog, **kwargs) for prog in self.programs
+                    self.qm.execute(prog, compiler_options=compiler_options)
+                    for prog in self.programs
                 ]
             self._job_id = ",".join(
                 getattr(j, "id", "") for j in self._qm_jobs

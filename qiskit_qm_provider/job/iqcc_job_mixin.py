@@ -22,6 +22,30 @@ if TYPE_CHECKING:
     from qiskit.providers import JobStatus
 
 
+def aggregate_job_statuses(qm_jobs: Any) -> "JobStatus":
+    """Return the aggregate Qiskit status across a list of QM SDK job objects.
+
+    Aggregates via worst-case priority: ERROR > CANCELLED > VALIDATING > QUEUED >
+    RUNNING > DONE.  DONE is only returned when every job has completed.
+    """
+    from qiskit.providers import JobStatus
+
+    mapping = {
+        "unknown": JobStatus.ERROR,
+        "pending": JobStatus.QUEUED,
+        "running": JobStatus.RUNNING,
+        "completed": JobStatus.DONE,
+        "canceled": JobStatus.CANCELLED,
+        "loading": JobStatus.VALIDATING,
+        "error": JobStatus.ERROR,
+    }
+    statuses = [mapping.get(getattr(j, "status", "unknown"), JobStatus.ERROR) for j in qm_jobs]
+    for state in (JobStatus.ERROR, JobStatus.CANCELLED, JobStatus.VALIDATING, JobStatus.QUEUED, JobStatus.RUNNING):
+        if state in statuses:
+            return state
+    return JobStatus.DONE
+
+
 def result_handles_from_qm_job(qm_jobs: Any) -> Any:
     """Return a list of ``result_handles``, one per submitted QM job.
 
@@ -124,7 +148,7 @@ class IQCCJobMixin:
         """
         from qiskit.providers import JobStatus as _JobStatus
 
-        if getattr(self, "_qm_jobs", None) is None:
+        if not getattr(self, "_qm_jobs", None):
             raise RuntimeError("IQCC job has not been submitted yet")
         for job in self._qm_jobs:
             run_data = getattr(job, "_run_data", None)
@@ -135,7 +159,7 @@ class IQCCJobMixin:
         return _JobStatus.DONE
 
     def result(self):
-        if getattr(self, "_qm_jobs", None) is None:
+        if not getattr(self, "_qm_jobs", None):
             raise RuntimeError("IQCC job has not been submitted yet")
         self._check_iqcc_cloud_execution()
         return super().result()

@@ -160,8 +160,14 @@ class QMSamplerJob(QMPrimitiveJob):
             ]
             self._job_id = ",".join(j.id for j in pending_jobs)
             self._qm_jobs = []
-            for pending, chunk in zip(pending_jobs, self._chunk_layout):
-                running = pending.wait_for_execution()
+            for i, (pending, chunk) in enumerate(zip(pending_jobs, self._chunk_layout)):
+                try:
+                    running = pending.wait_for_execution()
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Chunk {i} of {len(pending_jobs)} (circuit indices {chunk}) "
+                        f"failed to start execution"
+                    ) from exc
                 self._qm_jobs.append(running)
                 self._push_parameters(running, chunk)
 

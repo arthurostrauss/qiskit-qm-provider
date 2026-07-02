@@ -29,7 +29,7 @@ from qm.jobs.running_qm_job import RunningQmJob
 from qm import Program
 from ..backend import QMBackend
 from ..parameter_table import InputType
-from .iqcc_job_mixin import result_handles_from_qm_job
+from .iqcc_job_mixin import result_handles_from_qm_job, aggregate_job_statuses
 
 Pub = Union[SamplerPub, EstimatorPub]
 
@@ -72,20 +72,7 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         """
         if self._qm_jobs is None:
             raise RuntimeError("QM job has not submitted yet")
-        mapping = {
-            "unknown": JobStatus.ERROR,
-            "pending": JobStatus.QUEUED,
-            "running": JobStatus.RUNNING,
-            "completed": JobStatus.DONE,
-            "canceled": JobStatus.CANCELLED,
-            "loading": JobStatus.VALIDATING,
-            "error": JobStatus.ERROR,
-        }
-        statuses = [mapping.get(getattr(j, "status", "unknown"), JobStatus.ERROR) for j in self._qm_jobs]
-        for state in (JobStatus.ERROR, JobStatus.CANCELLED, JobStatus.VALIDATING, JobStatus.QUEUED, JobStatus.RUNNING):
-            if state in statuses:
-                return state
-        return JobStatus.DONE
+        return aggregate_job_statuses(self._qm_jobs)
 
     def done(self) -> bool:
         """Return whether the job has successfully run."""
