@@ -77,10 +77,11 @@ class QMJob(JobV1):
         from qm import generate_qua_script
         print(generate_qua_script(job.programs[0]))
 
+    Compiled QUA programs are exposed on :attr:`programs` (always a list) and
+    :attr:`program` (backward-compatible alias for the first program). Both are
+    set at construction and safe to inspect before :meth:`submit`.
+
     Attributes:
-        program: Compiled :class:`qm.Program` (or ``list[Program]`` when
-            ``backend.max_circuits`` splits a large batch into chunks). Set at
-            construction; safe to inspect before ``submit()``.
         qm: :class:`qm.QuantumMachine` or cloud QM used for execution.
         backend: :class:`~qiskit_qm_provider.backend.qm_backend.QMBackend` that built
             the program.
