@@ -16,7 +16,9 @@
 
 Supports converting **gate pulse schedules** to QUA via ``schedule_to_qua_macro``.
 Qiskit Pulse **measurement instructions** are not supported; use circuit-level
-``measure`` gates and :func:`~qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes`
+``measure`` gates compiled via :meth:`~qiskit_qm_provider.backend.QMBackend.quantum_circuit_to_qua`
+and read outcomes from ``comp.outputs`` on the returned
+:class:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation`
 in hybrid programs instead.
 """
 

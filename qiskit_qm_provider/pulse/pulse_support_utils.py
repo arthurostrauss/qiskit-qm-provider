@@ -247,9 +247,10 @@ def schedule_to_qua_macro(
 
     Supports drive/play instructions on mapped QuAM channels. Qiskit Pulse
     **measurement instructions** (``Measure``, kerneled readout, and similar) are
-    **not** supported — use circuit-level ``measure`` gates with
-    :func:`~qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes`
-    in hybrid programs instead.
+    **not** supported — use circuit-level ``measure`` gates compiled via
+    :meth:`~qiskit_qm_provider.backend.QMBackend.quantum_circuit_to_qua` and read
+    outcomes from ``comp.outputs`` on the returned compilation wrapper in hybrid
+    programs instead.
 
     Args:
         backend: Backend whose QuAM channel mapping resolves Pulse channels.

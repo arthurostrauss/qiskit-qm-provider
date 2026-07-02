@@ -58,7 +58,7 @@ When Pulse is available:
 - Convert **gate pulse schedules** via [`schedule_to_qua_macro`](apidocs/stubs/qiskit_qm_provider.pulse.schedule_to_qua_macro.rst).
 - Seed macros with [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.add_basic_macros.rst) (flux-tunable defaults — see [Providers guide](providers.md#seeding-gate-macros-with-add_basic_macros)).
 
-**Pulse caveat:** supported for **gate schedules only**. Qiskit Pulse **`Measure` / measurement instructions** are **not** supported. Use circuit-level `measure` + [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) for readout in hybrid programs.
+**Pulse caveat:** supported for **gate schedules only**. Qiskit Pulse **`Measure` / measurement instructions** are **not** supported. Use circuit-level `measure` + [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) and read outcomes from **`comp.outputs`** in hybrid programs (see [Measurement outputs](measurement_outputs.md)). Legacy [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) remains available.
 
 - **Guide:** [Backend — Pulse scope](backend.md#pulse-support-qiskit-1-x-legacy)
 - **Example:** `examples/circuit_calibrations_pulse.py`

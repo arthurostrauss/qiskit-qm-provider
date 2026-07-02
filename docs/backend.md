@@ -188,7 +188,7 @@ When `QISKIT_PULSE_AVAILABLE`, [`schedule_to_qua_macro`](apidocs/stubs/qiskit_qm
 | Gate operations as Pulse schedules | Qiskit Pulse **`Measure` / measurement instructions** |
 | QuAM ↔ Pulse channel mapping on `FluxTunableTransmonBackend` | Kerneled / raw IQ readout (see [classified-only note](index.md#classified-measurement-outcomes-only)) |
 
-Hybrid readout: circuit-level `measure` → [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) → [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst).
+Hybrid readout: circuit-level `measure` → [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) → **`comp.outputs`** ([Measurement outputs guide](measurement_outputs.md)).
 
 ## Related
 
