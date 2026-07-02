@@ -6,6 +6,8 @@ This page is the **routing guide** for the main paths through `qiskit-qm-provide
 
 Get a backend from a provider, transpile circuits, then use [`QMBackend.run()`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) or V2 primitives. Same Qiskit ergonomics; QOP executes the generated QUA underneath.
 
+Large **lists** passed to `backend.run` are automatically split into several QUA programs when the batch exceeds [`max_circuits`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) (default 30); see [Backend — multi-circuit batches](backend.md#multi-circuit-batches-and-max_circuits-backend-run-only). Primitives and hybrid embedding are unaffected.
+
 ### 1.1 Local hardware with QMProvider
 
 1. Create [`QMProvider`](apidocs/stubs/qiskit_qm_provider.providers.QMProvider.rst) with your QuAM state folder.
@@ -78,14 +80,20 @@ Keeps the Target and qm_qasm compiler in sync for both `backend.run()` and `quan
 
 ### 3.1 Generated QUA programs (and how to inspect them)
 
-Every primitive job and `backend.run()` exposes the generated QUA `Program` on `job.program`:
+Every primitive job and `backend.run()` exposes the compiled QUA programs on `job.programs` — always a `list[Program]`, regardless of whether chunking occurred. Use `get_program()` for single-program (non-chunked) access, or iterate `job.programs` when chunking may have occurred:
 
 ```python
 from qm import generate_qua_script
-print(generate_qua_script(job.program))
+
+# Non-chunked default:
+print(generate_qua_script(job.get_program()))
+
+# All chunks:
+for i, prog in enumerate(job.programs):
+    print(generate_qua_script(prog))
 ```
 
-See [Jobs](jobs.md) for the full job interface (`qm_job`, `pubs`, IQCC `run_data`, lifecycle).
+See [Jobs](jobs.md) for the full job interface (`get_qm_job()`, `get_result_handles()`, `pubs`, IQCC `run_data`, lifecycle).
 
 End-to-end snippet:
 
@@ -109,17 +117,17 @@ qc = transpile(qc, backend)
 sampler = QMSamplerV2(backend=backend, options=QMSamplerOptions(default_shots=256))
 sampler_job = sampler.run([qc])
 print("=== Sampler ===")
-print(generate_qua_script(sampler_job.program))
+print(generate_qua_script(sampler_job.get_program()))
 
 obs = SparsePauliOp.from_list([("Z", 1.0)])
 estimator = QMEstimatorV2(backend=backend, options=QMEstimatorOptions())
 estimator_job = estimator.run([(qc.remove_final_measurements(inplace=False), obs, [])])
 print("=== Estimator ===")
-print(generate_qua_script(estimator_job.program))
+print(generate_qua_script(estimator_job.get_program()))
 
 backend_job = backend.run(qc, shots=256)
 print("=== backend.run() ===")
-print(generate_qua_script(backend_job.program))
+print(generate_qua_script(backend_job.get_program()))
 ```
 
 - **Guide:** [Primitives](primitives.md)
@@ -171,6 +179,8 @@ Repeated cycles: encode → syndrome measure (Qiskit circuit) → stream syndrom
 `examples/iqcc_t1_experiment.py` shows T1 characterization with Qiskit Experiments on an IQCC backend. Before adopting this pattern broadly, read the [home-page callout](index.md#using-qiskit-experiments-with-this-provider):
 
 **Batch vs real-time:** Experiments emit large batches of near-identical circuits (AWG-style preloading). QUA prefers one program with real-time loops and streaming. For calibration sweeps, consider [Qualibrate](https://qualibrate-docs.quantum-machines.co/) or [qua-libs](https://github.com/qua-platform/qua-libs). Use this provider to **compose** Qiskit circuits into real-time QUA programs when that is the right model.
+
+When you do run large Experiment batches through `backend.run`, tune [`max_circuits`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) on the backend so each QUA program stays within compile/size limits while results are still stitched into one Qiskit `Result` — see [Backend — multi-circuit batches](backend.md#multi-circuit-batches-and-max_circuits-backend-run-only).
 
 **Counts only:** experiments needing raw I/Q or kerneled data will not work yet. Only classified 0/1 outcomes are supported.
 

@@ -32,7 +32,6 @@ from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit.primitives.containers import PubResult
 from qiskit.result import Counts
 from qm import SimulationConfig, CompilerOptionArguments, QuantumMachinesManager
-from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
 from typing import Optional, Union, List, Dict, Tuple, TYPE_CHECKING
 from ..backend import QMBackend
@@ -43,13 +42,14 @@ from ..parameter_table import (
     Parameter as QuaParameter,
 )
 from .iqcc_job_mixin import IQCCJobMixin
-from .qua_programs import estimator_program
+from .qua_programs import plan_estimator_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
 from ..primitives.qm_estimator import QMEstimatorOptions
 from dataclasses import dataclass, field
 from collections import defaultdict
 import os
 import inspect
+import tempfile
 
 if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import CloudJob
@@ -230,7 +230,7 @@ def _param_binding_index(param_indices: np.ndarray, param_index: tuple) -> int:
 
 def counts_from_estimator_stream(plan: _ExecutionPlan, raw) -> List[Counts]:
     """Build per-metadata :class:`~qiskit.result.Counts` from the ``__c`` stream."""
-    data = np.asarray(raw)
+    data = np.asarray(raw, dtype=int)
     shots = plan.shots
     num_qubits = plan.num_qubits
     unit = shots * num_qubits
@@ -301,7 +301,7 @@ class QMEstimatorJob(QMPrimitiveJob):
     """Job handle for :class:`~qiskit_qm_provider.primitives.QMEstimatorV2` execution.
 
     Builds a QUA estimator program from pubs and returns expectation values via
-    :meth:`result`. See :attr:`program` for the compiled QUA source and
+    :meth:`result`. See :attr:`programs` for the compiled QUA source and
     :attr:`result_handles` for raw QM stream access after submit.
     """
 
@@ -312,9 +312,20 @@ class QMEstimatorJob(QMPrimitiveJob):
             :class:`~qiskit.primitives.PrimitiveResult` with per-pub expectation
             values and standard errors.
         """
-        if self._qm_job is None:
+        if self._qm_jobs is None:
             raise RuntimeError("QM job has not submitted yet")
-        return self._result_function(self._qm_job)
+        return self._result_function(self._qm_jobs)
+
+    @property
+    def runtime_pubs(self) -> "List[_ExecutionPlan]":
+        """Compiled execution plans for this estimator job.
+
+        One :class:`_ExecutionPlan` per input PUB.  Each plan holds the grouped
+        observable metadata, parameter table, and obs-index tables that drive the
+        QUA switch statement and parameter streaming.  Inspect to understand how
+        observables were grouped or what will be streamed cycle-by-cycle.
+        """
+        return self._execution_plans
 
     def __init__(
         self,
@@ -339,52 +350,99 @@ class QMEstimatorJob(QMPrimitiveJob):
             _ExecutionPlan.from_pub(pub, options=QMEstimatorOptions(input_type=input_type, **kwargs)) for pub in pubs
         ]
         self._switch_obs_circuit: QuantumCircuit = switch_obs_circuit
-        self._obs_length_vars = QuaParameter(name="obs_length_var", value=0, qua_type=int, input_type=input_type)
-        self._program = estimator_program(backend, self._execution_plans, obs_length_var=self._obs_length_vars)
+        self._obs_length_vars = QuaParameter(
+            name="obs_length_var", value=0, qua_type=int, input_type=input_type
+        )
+        programs, self._chunk_layout = plan_estimator_programs(
+            backend,
+            self._execution_plans,
+            obs_length_var=self._obs_length_vars,
+        )
+        self._programs = programs
+        self._locator = compute_locator(self._chunk_layout)
+
+    def _push_plan_data(self, qm_job, plan: "_ExecutionPlan") -> None:
+        """Stream parameters and observable indices for one execution plan to OPX."""
+        param_table = plan.param_table
+        observables_var = plan.observables_var
+
+        if param_table is not None and param_table.input_type is not None:
+            for p, param_value in enumerate(plan.pub.parameter_values.ravel().as_array()):
+                param_dict = {
+                    param.name: value
+                    for param, value in zip(param_table.parameters, param_value)
+                }
+                param_table.push_to_opx(param_dict, qm_job, self._backend.qm)
+                if observables_var.input_type is not None:
+                    self._obs_length_vars.push_to_opx(
+                        len(plan.obs_indices[p]), qm_job, self._backend.qm
+                    )
+                    for obs_value in plan.obs_indices[p]:
+                        obs_dict = {f"obs_{j}": val for j, val in enumerate(obs_value)}
+                        observables_var.push_to_opx(obs_dict, qm_job, self._backend.qm)
+        elif observables_var.input_type is not None:
+            self._obs_length_vars.push_to_opx(
+                len(plan.obs_indices[0]), qm_job, self._backend.qm
+            )
+            for obs_value in plan.obs_indices[0]:
+                obs_dict = {f"obs_{j}": val for j, val in enumerate(obs_value)}
+                observables_var.push_to_opx(obs_dict, qm_job, self._backend.qm)
 
     def submit(self):
-        """Submit the job to the backend after creating an efficient execution plan."""
-        if self._qm_job is not None:
+        """Submit the job to the backend.
+
+        All QUA programs are first compiled via ``qm.compile()``, then added to
+        the OPX queue via ``qm.queue.add_compiled()``.  Separating compilation
+        from execution means the queue never stalls waiting for recompilation of
+        later chunks — all programs are compiled upfront so the OPX can start
+        executing them as soon as the queue is free.
+
+        For simulation runs, programs are submitted directly to the simulator
+        (no queue).  Results from all chunks are stitched back in
+        :meth:`_result_function` using the locator built at construction time.
+        """
+        if self._qm_jobs is not None:
             raise RuntimeError("Job has already been submitted.")
-        estimator_prog = self._program
         compiler_options = self.metadata.get("compiler_options", None)
         simulate = self.metadata.get("simulate", None)
-        # 3. EXECUTION: Start the QUA program on the OPX. It will wait for data.
+
+        programs = self._programs
+
         if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
-            self._qm_job = self._backend.qmm.simulate(
-                self._backend.qm_config,
-                estimator_prog,
-                simulate=simulate,
-                compiler_options=compiler_options,
-            )
-            self._job_id = self._qm_job.id
+            self._qm_jobs = [
+                self._backend.qmm.simulate(
+                    self._backend.qm_config,
+                    prog,
+                    simulate=simulate,
+                    compiler_options=compiler_options,
+                )
+                for prog in programs
+            ]
+            self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
+            for job, chunk in zip(self._qm_jobs, self._chunk_layout):
+                for global_idx in chunk:
+                    self._push_plan_data(job, self._execution_plans[global_idx])
         else:
-            self._qm_job = self._backend.qm.execute(estimator_prog, compiler_options=compiler_options)
-            self._job_id = self._qm_job.id
-
-        # 4. DATA PUSHING: Loop through the planned tasks and push data to the running job.
-        for i, plan in enumerate(self._execution_plans):
-            plan = self._execution_plans[i]
-            param_table = plan.param_table
-            observables_var = plan.observables_var
-
-            # Push parameter values if the circuit has them
-            if param_table is not None and param_table.input_type is not None:
-                for p, param_value in enumerate(plan.pub.parameter_values.ravel().as_array()):
-                    param_dict = {param.name: value for param, value in zip(param_table.parameters, param_value)}
-                    param_table.push_to_opx(param_dict, self.qm_job, self._backend.qm)
-                    if observables_var.input_type is not None:
-                        self._obs_length_vars.push_to_opx(len(plan.obs_indices[p]), self.qm_job, self._backend.qm)
-                        for obs_value in plan.obs_indices[p]:
-                            obs_dict = {f"obs_{i}": val for i, val in enumerate(obs_value)}
-                            observables_var.push_to_opx(obs_dict, self.qm_job, self._backend.qm)
-
-            # Push observable indices
-            elif observables_var.input_type is not None:
-                self._obs_length_vars.push_to_opx(len(plan.obs_indices[0]), self.qm_job, self._backend.qm)
-                for obs_value in plan.obs_indices[0]:
-                    obs_dict = {f"obs_{i}": val for i, val in enumerate(obs_value)}
-                    observables_var.push_to_opx(obs_dict, self.qm_job, self._backend.qm)
+            program_ids = [
+                self._backend.qm.compile(prog, compiler_options=compiler_options)
+                for prog in programs
+            ]
+            pending_jobs = [
+                self._backend.qm.queue.add_compiled(pid) for pid in program_ids
+            ]
+            self._job_id = ",".join(j.id for j in pending_jobs)
+            self._qm_jobs = []
+            for i, (pending, chunk) in enumerate(zip(pending_jobs, self._chunk_layout)):
+                try:
+                    running = pending.wait_for_execution()
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Chunk {i} of {len(pending_jobs)} (PUB indices {chunk}) "
+                        f"failed to start execution"
+                    ) from exc
+                self._qm_jobs.append(running)
+                for global_idx in chunk:
+                    self._push_plan_data(running, self._execution_plans[global_idx])
 
     def _calc_expval_map(
         self,
@@ -497,22 +555,16 @@ class QMEstimatorJob(QMPrimitiveJob):
             },
         )
 
-    def _result_function(self, qm_job: Union[RunningQmJob, List[QmPendingJob]]) -> PrimitiveResult[PubResult]:
-        is_job_list = isinstance(qm_job, list)
-        if is_job_list:
-            results_handle = [job.result_handles for job in qm_job]
-            for handle in results_handle:
-                handle.wait_for_all_values()
-        else:
-            results_handle = qm_job.result_handles
-            results_handle.wait_for_all_values()
+    def _result_function(self, qm_jobs: List[RunningQmJob]) -> PrimitiveResult[PubResult]:
+        results_handles = [job.result_handles for job in qm_jobs]
+        for handle in results_handles:
+            handle.wait_for_all_values()
 
         pub_results = []
         for i, plan in enumerate(self._execution_plans):
-            if is_job_list:
-                raw = results_handle[i].get(f"__c_{i}").fetch_all()
-            else:
-                raw = results_handle.get(f"__c_{i}").fetch_all()
+            chunk_idx, local_idx = self._locator[i]
+            handle = results_handles[chunk_idx]
+            raw = handle.get(f"__c_{local_idx}").fetch_all()
             counts_list = counts_from_estimator_stream(plan, raw)
 
             # Compute expectation value map
@@ -536,36 +588,58 @@ class QMEstimatorJob(QMPrimitiveJob):
 
 
 class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
-    """IQCC Primitive Job class for executing QUA programs from PUBs."""
+    """IQCC cloud variant of :class:`QMEstimatorJob`.
+
+    Execution is **synchronous**: each :meth:`submit` call blocks until the
+    remote OPX program completes.  ``CloudJob.status`` is always
+    ``"completed"``; real failure information lives in ``_run_data["stderr"]``
+    (see :class:`~.IQCCJobMixin` and :meth:`~.IQCCJobMixin.status`).
+
+    ``result()`` raises :class:`~.IQCCCloudExecutionError` before attempting to
+    fetch streams when any chunk job's stderr contains a Python traceback.
+    """
 
     def submit(self):
-        """Submit the job to the backend."""
+        """Submit all QUA programs to the IQCC cloud backend.
+
+        For each chunk produced by :func:`~.plan_estimator_programs`, a separate
+        cloud job is executed synchronously.  When the chunk's execution plans
+        have parameterised circuits, a sync-hook script is written to a
+        temporary file and passed to ``execute()``; the file is unlinked
+        immediately after the call regardless of outcome.
+
+        Results from all chunks are stitched back by the inherited
+        :meth:`_result_function` using the locator built at construction time.
+        """
         from .post_hook_estimator import generate_sync_hook_estimator
 
-        estimator_prog = self._program
-        if self._qm_job is not None:
+        if self._qm_jobs is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
 
-        if any(
-            plan.param_table is not None and plan.param_table.input_type is not None for plan in self._execution_plans
-        ):
-            sync_hook_code = generate_sync_hook_estimator(self._execution_plans, obs_length_var=self._obs_length_vars)
-        else:
-            sync_hook_code = None
+        programs = self._programs
+        timeout = self.metadata.get("timeout") or self.metadata.get("run_options", {}).get("timeout")
+        self._qm_jobs = []
 
-        # Determine the calling context to get the script file path
-        caller_frame = inspect.stack()[-1]
-        main_script_path = caller_frame.filename
-        main_script_dir = os.path.dirname(os.path.abspath(main_script_path))
-        sync_hook_path = os.path.join(main_script_dir, "sync_hook_estimator.py")
-        if sync_hook_code is not None:
-            with open(sync_hook_path, "w") as f:
-                f.write(sync_hook_code)
-            options = {"sync_hook": sync_hook_path}
-        else:
-            options = {}
-        timeout = self.metadata["run_options"].get("timeout", None)
-        if timeout is not None:
-            options["timeout"] = timeout
-        # # For IQCC, execute returns CloudJob instead of RunningQmJob
-        self._qm_job = self._backend.qm.execute(estimator_prog, options=options)  # type: ignore
+        for prog, chunk in zip(programs, self._chunk_layout):
+            chunk_plans = [self._execution_plans[g] for g in chunk]
+
+            sync_hook_path = None
+            if any(p.param_table is not None and p.param_table.input_type is not None for p in chunk_plans):
+                sync_hook_code = generate_sync_hook_estimator(chunk_plans, obs_length_var=self._obs_length_vars)
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+                    f.write(sync_hook_code)
+                    sync_hook_path = f.name
+                options = {"sync_hook": sync_hook_path}
+            else:
+                options = {}
+
+            if timeout is not None:
+                options["timeout"] = timeout
+
+            try:
+                self._qm_jobs.append(self._backend.qm.execute(prog, options=options))  # type: ignore
+            finally:
+                if sync_hook_path is not None:
+                    os.unlink(sync_hook_path)
+
+        self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)

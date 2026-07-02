@@ -24,6 +24,7 @@ from copy import deepcopy
 from typing import Iterable, Literal, Any, Optional, Union
 
 from qiskit.circuit.classical import types
+from qiskit.circuit.classical.expr import Var
 from qiskit.primitives import (
     BaseEstimatorV2,
     EstimatorPubLike,
@@ -104,7 +105,11 @@ class QMEstimatorV2(BaseEstimatorV2):
 
         self._passmanager = PassManager([opt1q])
         qc_switch_obs = QuantumCircuit(1)
-        obs_var = qc_switch_obs.add_input("obs", types.Uint(4))
+        # Use add_capture so that when composed into the parent circuit the var is
+        # mapped to the parent's input var (already added via add_input) without
+        # triggering a second add_input call inside copy_with_remapping.
+        obs_var = Var.new("obs", types.Uint(4))
+        qc_switch_obs.add_capture(obs_var)
         with qc_switch_obs.switch(obs_var) as case_obs:
             with case_obs(1):
                 qc_switch_obs.h(0)
@@ -192,16 +197,19 @@ class QMEstimatorV2(BaseEstimatorV2):
                 )
 
             qc = pub.circuit.remove_final_measurements(inplace=False)
+            qc.name = f'{pub.circuit.name}_pub{i}'
             active_qubits = logically_active_qubits(qc)
             num_active_qubits = len(active_qubits)
             creg = ClassicalRegister(num_active_qubits, name="__c")
             qc.add_register(creg)
             for q, qubit in enumerate(active_qubits):
+                obs_var = qc.add_input(f"obs_{q}", types.Uint(4))
                 qc.compose(
                     self._switch_obs_circuit,
                     [qubit],
                     inplace=True,
-                    var_remap={"obs": f"obs_{q}"},
+                    var_remap={"obs": obs_var},
+                    inline_captures=True,
                 )
             qc.measure(active_qubits, creg)
             qc = validate_circuits(qc)[0]

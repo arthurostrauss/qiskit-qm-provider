@@ -5,13 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-Changes on the `quarc-support` branch relative to `main` (22 commits, ~8.5k lines added).
+## [0.3.0] - 2026-07-02
 
 ### Added
 
-#### Quarc hybrid integration
+#### Chunked execution (`max_circuits_spec`)
+
+- **`max_circuits` backend option** — `QMBackend`, `QMSamplerV2`, and `QMEstimatorV2` accept a `max_circuits` option.  When the circuit/PUB count exceeds it, execution is automatically split into consecutive QUA programs; results are stitched back transparently.
+- **`compute_chunk_layout()`** in `qua_programs.py` — plans the per-program circuit/PUB grouping for a given `max_circuits` limit.
+- **`compute_locator()`** in `qua_programs.py` — inverts a chunk layout into a `global_index → (chunk_idx, local_idx)` mapping used during result assembly.  Previously inlined as a dict comprehension in three separate places.
+- **`stream_assembly.py`** — shared helpers `bit_array_from_stream()` and `bit_array_from_measurement_stream()` that assemble `BitArray` results from QUA streams, handling both standard QM (flat output) and IQCC cloud (may carry an extra leading dimension) via a `reshape` normalisation step.
+- **`IQCCJobMixin.status()`** — IQCC-aware status check: since `CloudJob.status` is unconditionally `"completed"` (IQCC execution is synchronous), this method inspects `_run_data["stderr"]` instead.  Returns `JobStatus.ERROR` when the cloud stderr contains a Python traceback, `JobStatus.DONE` otherwise.  Inherited by both `IQCCSamplerJob` and `IQCCEstimatorJob`.
+- **`aggregate_job_statuses()`** in `iqcc_job_mixin.py` — shared status-aggregation helper (worst-case across all chunk jobs) used by both `QMJob.status()` and `QMPrimitiveJob.status()`.
+- **`QMJob.program`** — backward-compatible property alias for `programs[0]`.
+
+### Fixed
+
+#### Chunked execution (`max_circuits_spec`)
+
+- **`IQCCJob.submit()`** — was executing only `programs[0]`, silently dropping all chunks beyond the first for IQCC `backend.run()` calls with chunking; now loops over all programs.
+- **`QMSamplerJob.submit()` simulate path** — was always submitting only `programs[0]`; now iterates all chunks so multi-program simulation works correctly.
+- **IO1/IO2 parameter push on `QmPendingJob`** — `wait_until_job_is_paused` requires a `RunningQmJob`; the compile+add_compiled refactor passed a pending job. Both `QMSamplerJob.submit()` and `QMEstimatorJob.submit()` now call `pending.wait_for_execution()` before pushing parameters and store the resulting `RunningQmJob` in `_qm_jobs`.
+- **`Result(results=…)` single-circuit** — was passing a bare `ExperimentResult` (not a list) for single-circuit runs, causing `TypeError` on `result.results[0]`; always passes a list now.
+- **IQCC partial execution** — `IQCCSamplerJob` and `IQCCEstimatorJob` now initialize `self._qm_jobs = []` before the execute loop and append incrementally; a mid-loop failure no longer leaves `_qm_jobs = None`, making partial state visible.
+- **`IQCCJobMixin.status()` / `result()` empty-list false DONE** — `self._qm_jobs = []` (set before the loop, never appended to when the first `execute()` raises) previously passed the `is None` guard and returned `JobStatus.DONE`; guard now uses a falsy check covering both `None` and `[]`.
+- **`wait_for_execution()` mid-loop failure** — a failure on chunk *k* previously left a partial `_qm_jobs` list and caused a cryptic `IndexError` in `_result_function`; now raises `RuntimeError` naming the chunk index and the circuit/PUB indices in that chunk so the user knows which job to isolate.
+- **`QMJob.submit()` dead cloud kwargs** — removed a `CloudQuantumMachine` kwargs block (timeout / terminal_output) that silently dropped the user-specified timeout on multi-program cloud jobs; `IQCCJob` overrides `submit()` entirely so the path was unreachable.
+- **Status mapping duplication** — `QMJob.status()` and `QMPrimitiveJob.status()` had identical status-string → `JobStatus` mapping dicts inlined separately; both now delegate to the shared `aggregate_job_statuses()` helper.
+
+#### Quarc hybrid integration (`quarc-support`)
 
 - **Quarc integration for OPNIC stream assignment** — `ParameterPool.prepare_opnic_quarc_hybrid_packets()` deterministically attaches incoming/outgoing stream IDs to `ParameterTable` and standalone `Parameter` objects before QUA variable declaration, replacing the legacy `opnic_wrapper`-based path.
 - **`default_quarc_struct_name()`** — helper to keep struct naming consistent between this provider and the Quarc build system.

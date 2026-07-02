@@ -60,7 +60,8 @@ class FluxTunableTransmonBackend(QMBackend):
             qmm: Optional ``QuantumMachinesManager`` (cloud simulator or IQCC).
             name: Optional backend name.
             fields: Optional keyword overrides for default run options (same
-                keys as :class:`~.QMBackend`).
+                keys as :class:`~.QMBackend`), including ``max_circuits`` (see
+                :attr:`~.QMBackend.max_circuits`).
         """
         if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
             raise ValueError("Invalid QuAM instance provided, should have qubits and qubit_pairs attributes")

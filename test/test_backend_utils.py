@@ -11,6 +11,7 @@ from qiskit_qm_provider.backend.backend_utils import (
     has_reset_at_boundary,
     validate_circuits,
     measurement_output_bit_sizes,
+    experiment_result_header,
     binary,
     logically_active_qubits,
     get_non_trivial_observables,
@@ -226,6 +227,44 @@ class TestMeasurementOutputBitSizes:
         qc.add_bits([loose])
         qc.measure(0, loose)
         assert measurement_output_bit_sizes(qc) == {"_bit0": 1}
+
+
+class TestExperimentResultHeader:
+    def test_standard_creg_circuit(self):
+        qc = QuantumCircuit(2, name="bell_meas")
+        creg = ClassicalRegister(2, "c")
+        qc.add_register(creg)
+        qc.h(0)
+        qc.cx(0, 1)
+        qc.measure([0, 1], creg)
+
+        header = experiment_result_header(qc)
+        assert header["name"] == "bell_meas"
+        assert header["n_qubits"] == 2
+        assert header["qreg_sizes"] == [["q", 2]]
+        assert header["creg_sizes"] == [["c", 2]]
+        assert header["memory_slots"] == 2
+        assert header["clbit_labels"] == [["c", 0], ["c", 1]]
+        assert header["metadata"] == {}
+
+    def test_creg_and_loose_bits(self):
+        creg = ClassicalRegister(1, "c")
+        loose = Clbit()
+        qc = QuantumCircuit(2, name="loose")
+        qc.add_register(creg)
+        qc.add_bits([loose])
+        qc.measure(0, creg[0])
+        qc.measure(1, loose)
+
+        header = experiment_result_header(qc)
+        assert header["creg_sizes"] == [["c", 1], ["_bit0", 1]]
+        assert header["memory_slots"] == 2
+        assert header["clbit_labels"] == [["c", 0], ["_bit0", 0]]
+
+    def test_preserves_metadata(self):
+        qc = QuantumCircuit(1, 1, name="meta")
+        qc.metadata = {"foo": "bar"}
+        assert experiment_result_header(qc)["metadata"] == {"foo": "bar"}
 
 
 class TestBinary:

@@ -22,12 +22,13 @@ from __future__ import annotations
 from typing import Optional, Union, List, TYPE_CHECKING
 import os
 import inspect
+import tempfile
 
 import numpy as np
 
 from qiskit.circuit import Parameter
 from qiskit.primitives import PrimitiveResult
-from qiskit.primitives.containers import SamplerPubResult, DataBin, BitArray
+from qiskit.primitives.containers import SamplerPubResult, DataBin
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit.providers import JobStatus
 from qiskit.result.models import MeasLevel
@@ -38,25 +39,18 @@ from qm import (
     QuantumMachinesManager,
     generate_qua_script,
 )
-from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
 
 from ..backend import QMBackend
 from ..backend.backend_utils import measurement_output_bit_sizes, require_classified_meas_level
 from ..parameter_table import InputType, ParameterPool, ParameterTable
 from .iqcc_job_mixin import IQCCJobMixin
-from .qua_programs import sampler_program
+from .qua_programs import plan_sampler_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
+from .stream_assembly import bit_array_from_measurement_stream
 
 if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import CloudJob
-
-
-def bit_array_from_measurement_stream(pub: SamplerPub, raw, bit_width: int) -> BitArray:
-    """Assemble a classified :class:`~qiskit.primitives.containers.BitArray` from a QUA stream."""
-    target_shape = pub.shape + (pub.shots,)
-    data = np.asarray(raw, dtype=int).reshape(target_shape)
-    return BitArray.from_samples(data.reshape(-1).tolist(), bit_width).reshape(target_shape)
 
 
 class QMSamplerJob(QMPrimitiveJob):
@@ -97,57 +91,98 @@ class QMSamplerJob(QMPrimitiveJob):
             )
             for i, pub in enumerate(self._pubs)
         ]
-        self._program = sampler_program(self._backend, self._pubs, self._param_tables, **self.metadata)
+        programs, self._chunk_layout = plan_sampler_programs(
+            self._backend,
+            self._pubs,
+            self._param_tables,
+            **self.metadata,
+        )
+        self._programs = programs
+        self._locator = compute_locator(self._chunk_layout)
 
-    def _result_function(self, qm_job: Union[RunningQmJob, List[QmPendingJob]]) -> PrimitiveResult[SamplerPubResult]:
-        is_job_list = isinstance(qm_job, list)
-        if is_job_list:
-            results_handle = [job.result_handles for job in qm_job]
-            for handle in results_handle:
-                handle.wait_for_all_values()
-        else:
-            results_handle = qm_job.result_handles
-            results_handle.wait_for_all_values()
+    def _result_function(self, qm_jobs: List[RunningQmJob]) -> PrimitiveResult[SamplerPubResult]:
+        results_handles = [job.result_handles for job in qm_jobs]
+        for handle in results_handles:
+            handle.wait_for_all_values()
 
         all_data = []
         for i, pub in enumerate(self._pubs):
+            chunk_idx, local_idx = self._locator[i]
+            handle = results_handles[chunk_idx]
             qc_meas_data = {}
             for output_key, bit_width in measurement_output_bit_sizes(pub.circuit).items():
-                if is_job_list:
-                    raw = results_handle[i].get(f"{output_key}_{i}").fetch_all()
-                else:
-                    raw = results_handle.get(f"{output_key}_{i}").fetch_all()
+                raw = handle.get(f"{output_key}_{local_idx}").fetch_all()
                 qc_meas_data[output_key] = bit_array_from_measurement_stream(pub, raw, bit_width)
 
             sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
             all_data.append(sampler_data)
 
-        result = PrimitiveResult(all_data)
-        return result
+        return PrimitiveResult(all_data)
 
     def submit(self):
-        """Submit the job to the backend."""
-        sampler_prog = self._program
-        if self._qm_job is not None:
+        """Submit the job to the backend.
+
+        All QUA programs are first compiled via ``qm.compile()``, then added to
+        the OPX queue via ``qm.queue.add_compiled()``.  Separating compilation
+        from execution means the queue never stalls waiting for recompilation of
+        later chunks — all programs are compiled upfront so the OPX can start
+        executing them as soon as the queue is free.
+
+        For simulation runs, programs are submitted directly to the simulator
+        (no queue).  Results from all chunks are stitched back in
+        :meth:`_result_function` using the locator built at construction time.
+        """
+        if self._qm_jobs is not None:
             raise RuntimeError("QM job has already been submitted")
         compiler_options: Optional[CompilerOptionArguments] = self.metadata.get("compiler_options", None)
         simulate: Optional[SimulationConfig] = self.metadata.get("simulate", None)
+
+        programs = self._programs
+
         if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
-            self._qm_job = self._backend.qmm.simulate(
-                self._backend.qm_config,
-                sampler_prog,
-                simulate=simulate,
-                compiler_options=compiler_options,
-            )
-            self._job_id = self._qm_job.id
+            self._qm_jobs = [
+                self._backend.qmm.simulate(
+                    self._backend.qm_config,
+                    prog,
+                    simulate=simulate,
+                    compiler_options=compiler_options,
+                )
+                for prog in programs
+            ]
+            self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
         else:
-            self._qm_job = self._backend.qm.execute(sampler_prog, compiler_options=compiler_options)
-            self._job_id = self._qm_job.id
-            for pub, param_table in zip(self._pubs, self._param_tables):
-                if param_table is not None and param_table.input_type is not None:
-                    for parameters in pub.parameter_values.ravel().as_array():
-                        param_dict = {param.name: value for param, value in zip(param_table.parameters, parameters)}
-                        param_table.push_to_opx(param_dict, self._qm_job, self._backend.qm)
+            program_ids = [
+                self._backend.qm.compile(prog, compiler_options=compiler_options)
+                for prog in programs
+            ]
+            pending_jobs = [
+                self._backend.qm.queue.add_compiled(pid) for pid in program_ids
+            ]
+            self._job_id = ",".join(j.id for j in pending_jobs)
+            self._qm_jobs = []
+            for i, (pending, chunk) in enumerate(zip(pending_jobs, self._chunk_layout)):
+                try:
+                    running = pending.wait_for_execution()
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Chunk {i} of {len(pending_jobs)} (circuit indices {chunk}) "
+                        f"failed to start execution"
+                    ) from exc
+                self._qm_jobs.append(running)
+                self._push_parameters(running, chunk)
+
+    def _push_parameters(self, qm_job, chunk: List[int]) -> None:
+        """Stream circuit parameters to the OPX for the given chunk of pub indices."""
+        for global_idx in chunk:
+            pub = self._pubs[global_idx]
+            param_table = self._param_tables[global_idx]
+            if param_table is not None and param_table.input_type is not None:
+                for parameters in pub.parameter_values.ravel().as_array():
+                    param_dict = {
+                        param.name: value
+                        for param, value in zip(param_table.parameters, parameters)
+                    }
+                    param_table.push_to_opx(param_dict, qm_job, self._backend.qm)
 
     def result(self) -> PrimitiveResult[SamplerPubResult]:
         """Build and return classified measurement counts for all pubs.
@@ -156,71 +191,66 @@ class QMSamplerJob(QMPrimitiveJob):
             :class:`~qiskit.primitives.PrimitiveResult` with
             :class:`~qiskit.primitives.SamplerPubResult` entries.
         """
-        if self._qm_job is None:
+        if self._qm_jobs is None:
             raise RuntimeError("QM job has not submitted yet")
-        return self._result_function(self._qm_job)
+        return self._result_function(self._qm_jobs)
 
 
 class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
-    """IQCC Primitive Job class for executing QUA programs from PUBs."""
+    """IQCC cloud variant of :class:`QMSamplerJob`.
+
+    Execution is **synchronous**: each :meth:`submit` call blocks until the
+    remote OPX program completes.  ``CloudJob.status`` is therefore always
+    ``"completed"``; real failure information lives in ``_run_data["stderr"]``
+    (see :class:`~.IQCCJobMixin` and :meth:`~.IQCCJobMixin.status`).
+
+    ``result()`` raises :class:`~.IQCCCloudExecutionError` before attempting to
+    fetch streams when any chunk job's stderr contains a Python traceback.
+    """
 
     def submit(self):
-        """Submit the job to the backend."""
+        """Submit all QUA programs to the IQCC cloud backend.
+
+        For each chunk produced by :func:`~.plan_sampler_programs`, a separate
+        cloud job is executed synchronously.  When the chunk's PUBs have
+        parameterised circuits, a sync-hook script is written to a temporary
+        file and passed to ``execute()``; the file is unlinked immediately
+        after the call regardless of outcome.
+
+        Results from all chunks are stitched back by :meth:`_result_function`
+        using the locator built at construction time.
+        """
         from .post_hook_sampler import generate_sync_hook_sampler
 
-        param_tables = self._param_tables
-        sampler_prog = self._program
-        if self._qm_job is not None:
+        if self._qm_jobs is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
-        if any(param_table is not None and param_table.input_type is not None for param_table in param_tables):
-            sync_hook_code = generate_sync_hook_sampler(self._pubs, param_tables)
-        else:
-            sync_hook_code = None
-        # Determine the calling context to get the script file path
-        caller_frame = inspect.stack()[-1]
-        main_script_path = caller_frame.filename
-        main_script_dir = os.path.dirname(os.path.abspath(main_script_path))
-        sync_hook_path = os.path.join(main_script_dir, "sync_hook_sampler.py")
-        if sync_hook_code is not None:
-            with open(sync_hook_path, "w") as f:
-                f.write(sync_hook_code)
-            options = {"sync_hook": sync_hook_path}
-        else:
-            options = {}
-        if self.metadata.get("timeout", None) is not None:
-            options["timeout"] = self.metadata.get("timeout")
 
-        self._qm_job = self._backend.qm.execute(sampler_prog, options=options)
+        programs = self._programs
+        timeout = self.metadata.get("timeout", None)
+        self._qm_jobs = []
 
-    def _result_function(self, qm_job: CloudJob) -> PrimitiveResult[SamplerPubResult]:
-        """Get the result from the IQCC QM job."""
-        results_handle = qm_job.result_handles
-        results_handle.wait_for_all_values()
-        all_data = []
-        for i, pub in enumerate(self._pubs):
-            qc_meas_data = {}
-            for output_key, bit_width in measurement_output_bit_sizes(pub.circuit).items():
-                raw = results_handle.get(f"{output_key}_{i}").fetch_all()
-                qc_meas_data[output_key] = bit_array_from_measurement_stream(pub, raw, bit_width)
+        for prog, chunk in zip(programs, self._chunk_layout):
+            chunk_pubs = [self._pubs[g] for g in chunk]
+            chunk_tables = [self._param_tables[g] for g in chunk]
 
-            sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
-            all_data.append(sampler_data)
+            sync_hook_path = None
+            if any(t is not None and t.input_type is not None for t in chunk_tables):
+                sync_hook_code = generate_sync_hook_sampler(chunk_pubs, chunk_tables)
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+                    f.write(sync_hook_code)
+                    sync_hook_path = f.name
+                options = {"sync_hook": sync_hook_path}
+            else:
+                options = {}
 
-        result = PrimitiveResult(all_data)
-        return result
+            if timeout is not None:
+                options["timeout"] = timeout
 
-    def status(self) -> JobStatus:
-        """Return the job status."""
-        if self._qm_job is None:
-            raise RuntimeError("IQCC QM job has not submitted yet")
-        status = "completed"
-        mapping = {
-            "unknown": JobStatus.ERROR,
-            "pending": JobStatus.QUEUED,
-            "running": JobStatus.RUNNING,
-            "completed": JobStatus.DONE,
-            "canceled": JobStatus.CANCELLED,
-            "loading": JobStatus.VALIDATING,
-            "error": JobStatus.ERROR,
-        }
-        return mapping.get(status, JobStatus.ERROR)
+            try:
+                self._qm_jobs.append(self._backend.qm.execute(prog, options=options))
+            finally:
+                if sync_hook_path is not None:
+                    os.unlink(sync_hook_path)
+
+        self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
+

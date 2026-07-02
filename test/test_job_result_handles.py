@@ -17,7 +17,9 @@ class _FakeQmJob:
 
 def test_result_handles_from_qm_job_single():
     job = _FakeQmJob("streams")
-    assert result_handles_from_qm_job(job).name == "streams"
+    handles = result_handles_from_qm_job([job])
+    assert len(handles) == 1
+    assert handles[0].name == "streams"
 
 
 def test_result_handles_from_qm_job_list():

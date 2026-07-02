@@ -30,8 +30,16 @@ class TestQMBackendInit:
     def test_num_qubits_matches_machine(self, flux_tunable_backend, quam_machine):
         assert flux_tunable_backend.num_qubits == len(quam_machine.active_qubits)
 
-    def test_max_circuits_is_none(self, flux_tunable_backend):
-        assert flux_tunable_backend.max_circuits is None
+    def test_max_circuits_default(self, flux_tunable_backend):
+        assert flux_tunable_backend.max_circuits == 30
+
+    def test_max_circuits_configurable(self, quam_machine):
+        backend = FluxTunableTransmonBackend(quam_machine, max_circuits=10)
+        assert backend.max_circuits == 10
+
+    def test_max_circuits_via_set_options(self, flux_tunable_backend):
+        flux_tunable_backend.set_options(max_circuits=5)
+        assert flux_tunable_backend.max_circuits == 5
 
 
 class TestQMBackendOptions:

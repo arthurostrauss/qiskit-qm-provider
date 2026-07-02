@@ -29,7 +29,7 @@ from qm.jobs.running_qm_job import RunningQmJob
 from qm import Program
 from ..backend import QMBackend
 from ..parameter_table import InputType
-from .iqcc_job_mixin import result_handles_from_qm_job
+from .iqcc_job_mixin import result_handles_from_qm_job, aggregate_job_statuses
 
 Pub = Union[SamplerPub, EstimatorPub]
 
@@ -37,11 +37,13 @@ Pub = Union[SamplerPub, EstimatorPub]
 class QMPrimitiveJob(BasePrimitiveJob, ABC):
     """Base class for :class:`QMSamplerJob` and :class:`QMEstimatorJob`.
 
-    Primitive jobs compile PUBs into a single QUA program at construction time.
-    Inspect it with ``qm.generate_qua_script(job.program)``.
+    Primitive jobs compile PUBs into QUA program(s) at construction time.
+    Inspect them with ``qm.generate_qua_script(job.programs[0])`` or iterate
+    ``job.programs`` for chunked execution.
 
     Attributes:
-        program: Compiled :class:`qm.Program` for this job's pubs.
+        programs: List of compiled :class:`qm.Program` objects; length 1 when
+            no chunking occurred.
         pubs: PUB list passed to ``run()``.
         inputs: Dict snapshot of pubs, ``input_type``, and ``metadata``.
         backend: :class:`~qiskit_qm_provider.backend.qm_backend.QMBackend` used for
@@ -58,24 +60,19 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         self._backend = backend
         self._pubs = pubs
         self._input_type = input_type
-        self._qm_job: Optional[Union[RunningQmJob, QmPendingJob, List[QmPendingJob]]] = None
-        self._program = None
+        self._qm_jobs: Optional[List[Union[RunningQmJob, QmPendingJob]]] = None
+        self._programs: Optional[List[Program]] = None
 
     def status(self) -> JobStatus:
-        """Return the job status."""
-        if self._qm_job is None:
+        """Return the job status.
+
+        When the job was split into multiple QUA programs (chunked execution),
+        returns the least-advanced status across all chunk jobs.  The aggregate
+        is ``DONE`` only when every chunk has completed.
+        """
+        if self._qm_jobs is None:
             raise RuntimeError("QM job has not submitted yet")
-        status = self._qm_job.status
-        mapping = {
-            "unknown": JobStatus.ERROR,
-            "pending": JobStatus.QUEUED,
-            "running": JobStatus.RUNNING,
-            "completed": JobStatus.DONE,
-            "canceled": JobStatus.CANCELLED,
-            "loading": JobStatus.VALIDATING,
-            "error": JobStatus.ERROR,
-        }
-        return mapping.get(status, JobStatus.ERROR)
+        return aggregate_job_statuses(self._qm_jobs)
 
     def done(self) -> bool:
         """Return whether the job has successfully run."""
@@ -94,28 +91,69 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         return self.status() in [JobStatus.DONE, JobStatus.ERROR]
 
     def cancel(self):
-        """Attempt to cancel the job."""
-        if self._qm_job is None:
+        """Attempt to cancel the job.  Cancels all chunk jobs for chunked execution."""
+        if self._qm_jobs is None:
             raise RuntimeError("QM job is not running")
-        return self._qm_job.cancel()
+        return all([j.cancel() for j in self._qm_jobs])
 
     @property
-    def qm_job(self) -> Optional[Union[RunningQmJob, List[QmPendingJob]]]:
-        """Underlying QM SDK job after :meth:`submit`.
+    def qm_jobs(self) -> Optional[List[Union[RunningQmJob, QmPendingJob]]]:
+        """Underlying QM SDK jobs after :meth:`submit` — always a list.
 
-        Exposes ``result_handles``, ``cancel``, ``push_to_input_stream``, and other
-        runtime APIs. Raises if the job has not been submitted yet.
+        Length 1 for single-program execution; one entry per chunk otherwise.
+        Exposes ``result_handles``, ``cancel``, ``push_to_input_stream``, and
+        other runtime APIs on each element.
         """
-        return self._qm_job
+        return self._qm_jobs
+
+    def get_qm_job(self, idx: Optional[int] = None):
+        """Return the QM SDK job at *idx* (default: first / only job).
+
+        Convenience accessor equivalent to ``job.qm_jobs[idx]``.  Defaults to
+        index 0, which is correct for non-chunked execution.
+
+        Raises:
+            RuntimeError: If the job has not been submitted yet.
+            IndexError: If *idx* is out of range.
+        """
+        if self._qm_jobs is None:
+            raise RuntimeError("QM job has not been submitted yet")
+        return self._qm_jobs[0 if idx is None else idx]
+
+    def get_program(self, idx: Optional[int] = None) -> "Program":
+        """Return the compiled QUA program at *idx* (default: first / only program).
+
+        Convenience accessor equivalent to ``job.programs[idx]``.  Defaults to
+        index 0, which is correct for non-chunked execution.
+
+        Raises:
+            RuntimeError: If programs have not been compiled yet.
+            IndexError: If *idx* is out of range.
+        """
+        if self._programs is None:
+            raise RuntimeError("Programs have not been compiled yet")
+        return self._programs[0 if idx is None else idx]
 
     @property
     def result_handles(self) -> Any:
         """QM SDK result stream handles after :meth:`submit`.
 
-        Returns ``qm_job.result_handles``. Raises if the job has not been
-        submitted yet.
+        Always a list — one ``result_handles`` object per submitted job.
+        Length 1 for non-chunked execution.  Raises if not yet submitted.
         """
-        return result_handles_from_qm_job(self._qm_job)
+        return result_handles_from_qm_job(self._qm_jobs)
+
+    def get_result_handles(self, idx: Optional[int] = None):
+        """Return the result-handles object at *idx* (default: first / only job).
+
+        Convenience accessor equivalent to ``job.result_handles[idx]``.  Defaults
+        to index 0, which is the correct handle for non-chunked execution.
+
+        Raises:
+            RuntimeError: If the job has not been submitted yet.
+            IndexError: If *idx* is out of range.
+        """
+        return result_handles_from_qm_job(self._qm_jobs)[0 if idx is None else idx]
 
     @property
     def inputs(self) -> Dict:
@@ -132,15 +170,17 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         }
 
     @property
-    def program(self) -> Optional[Program]:
-        """Compiled QUA program for this job.
+    def programs(self) -> Optional[List[Program]]:
+        """Compiled QUA programs for this job.
 
-        Available immediately after job construction. Print with::
+        Always a list; length 1 when no chunking occurred.  Available
+        immediately after job construction.  Print with::
 
             from qm import generate_qua_script
-            print(generate_qua_script(job.program))
+            for prog in job.programs:
+                print(generate_qua_script(prog))
         """
-        return self._program
+        return self._programs
 
     @property
     def pubs(self) -> List[Pub]:

@@ -150,7 +150,8 @@ class QMBackend(Backend):
                 ``shots`` (1024), ``compiler_options``, ``simulate``, ``memory``
                 (False), ``skip_reset`` (False), ``meas_level``
                 (``MeasLevel.CLASSIFIED``), ``meas_return``
-                (``MeasReturnType.AVERAGE``), and ``timeout`` (60 seconds).
+                (``MeasReturnType.AVERAGE``), ``timeout`` (60 seconds), and
+                ``max_circuits`` (30).
         """
         if name is None:
             if "quantum_computer_backend" in machine.network:
@@ -158,7 +159,6 @@ class QMBackend(Backend):
             else:
                 name = "QMBackend"
         Backend.__init__(self, name=name, **fields)
-
         self._custom_instructions = {}
         self.machine = validate_machine(machine)
         self._qmm: Optional[QuantumMachinesManager | CloudQuantumMachinesManager] = qmm
@@ -223,6 +223,7 @@ class QMBackend(Backend):
             meas_level=MeasLevel.CLASSIFIED,
             meas_return=MeasReturnType.AVERAGE,
             timeout=60,
+            max_circuits=30,
         )
 
     @property
@@ -408,7 +409,15 @@ class QMBackend(Backend):
 
     @property
     def max_circuits(self):
-        return None
+        """Maximum number of circuits (or PUBs for Primitives) packed into a single QUA program.
+
+        ``backend.run``, ``QMSamplerV2``, and ``QMEstimatorV2`` all split larger batches into
+        several queued QUA programs whose results are stitched back transparently.
+
+        Must be a positive integer (>= 1). Defaults to 30.
+        Can be updated at any time via ``backend.set_options(max_circuits=N)``.
+        """
+        return self.options.max_circuits
 
     def _populate_target(self) -> None:
         """

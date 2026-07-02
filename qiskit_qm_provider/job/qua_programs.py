@@ -27,7 +27,7 @@ from qm import Program
 from qm.qua import *
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from ..parameter_table import ParameterTable, QUA2DArray
-from typing import List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
@@ -320,54 +320,198 @@ def estimator_program(backend: QMBackend, execution_plans: List[_ExecutionPlan],
     return estimator_prog
 
 
-def get_run_program(backend: QMBackend, num_shots, circuits: List[QuantumCircuit]) -> Program | List[Program]:
+def _build_single_program(
+    backend: QMBackend, num_shots, circuits: List[QuantumCircuit]
+) -> Program:
+    """Build one QUA program executing ``circuits`` sequentially.
+
+    Each circuit's classical registers are saved to streams named
+    ``f"{creg_name}_{local_index}"`` where ``local_index`` is the position of
+    the circuit *within this program* (0-based). The caller is responsible for
+    mapping those local indices back to global circuit indices when stitching
+    results (see :func:`plan_run_programs`).
     """
-    QUA program generated upon the call of backend.run().
-    If the circuits have conflicting calibrations, a list of programs is returned.
-    Otherwise, a single program is returned, executing all the circuits sequentially.
+    outputs_list = []
+    with program() as prog:
+        backend.init_macro()
+
+        for qc in circuits:
+            outputs = _process_circuit(qc, backend, num_shots)
+            outputs_list.append(outputs)
+
+        with stream_processing():
+            for i, outputs in enumerate(outputs_list):
+                for creg_name, field in outputs.table.items():
+                    field.stream.save_all(f"{creg_name}_{i}")
+
+    return prog
+
+
+def compute_chunk_layout(
+    num_circuits: int,
+    max_circuits: int,
+    conflicting_calibrations: bool = False,
+) -> List[List[int]]:
+    """Compute the chunk layout (lists of global circuit indices per program).
+
+    Pure index arithmetic, independent of QUA program building, so it can be
+    unit-tested in isolation. ``chunk_layout[c]`` lists the global circuit
+    indices packed into program ``c``.
+
     Args:
-        backend: The QMBackend to use
-        num_shots: Number of shots to execute
-        circuits: List of QuantumCircuits to execute
+        num_circuits: Total number of circuits (or PUBs/plans).
+        max_circuits: Maximum circuits per program. Must be >= 1.
+        conflicting_calibrations: When ``True``, each circuit gets its own
+            program (takes priority over ``max_circuits``).
+
+    Rules, in priority order:
+        1. ``conflicting_calibrations`` -> one circuit per program.
+        2. ``num_circuits > max_circuits`` -> consecutive groups of ``max_circuits``.
+        3. Otherwise -> a single program holding all circuits.
+    """
+    if not isinstance(max_circuits, int) or max_circuits < 1:
+        raise ValueError(f"max_circuits must be a positive integer (>= 1), got {max_circuits!r}")
+    if conflicting_calibrations:
+        return [[i] for i in range(num_circuits)]
+    if num_circuits > max_circuits:
+        return [
+            list(range(start, min(start + max_circuits, num_circuits)))
+            for start in range(0, num_circuits, max_circuits)
+        ]
+    return [list(range(num_circuits))]
+
+
+def compute_locator(chunk_layout: List[List[int]]) -> Dict[int, tuple]:
+    """Invert a chunk layout into a ``global_index -> (chunk_idx, local_idx)`` dict."""
+    return {
+        g: (c, l)
+        for c, chunk in enumerate(chunk_layout)
+        for l, g in enumerate(chunk)
+    }
+
+
+def plan_run_programs(
+    backend: QMBackend,
+    num_shots,
+    circuits: List[QuantumCircuit],
+) -> tuple[List[Program], List[List[int]]]:
+    """Plan the QUA program(s) for ``backend.run``.
+
+    Splits ``circuits`` into one or more QUA programs and returns them together
+    with a ``chunk_layout`` describing which global circuit indices live in each
+    program. ``chunk_layout[c]`` is the list of global indices packed into
+    ``programs[c]`` (in order), so ``programs[c]`` saves the result of
+    ``chunk_layout[c][l]`` under stream key ``f"{creg}_{l}"``.
+
+    Splitting rules, in priority order:
+        1. Conflicting calibrations -> one circuit per program.
+        2. ``backend.options.max_circuits`` set and ``len(circuits) > max_circuits`` ->
+           consecutive groups of ``max_circuits``.
+        3. Otherwise -> a single program holding all circuits.
+
+    Args:
+        backend: The QMBackend to use.
+        num_shots: Number of shots to execute per circuit.
+        circuits: List of QuantumCircuits to execute.
 
     Returns:
-        Program: The QUA program
+        Tuple of (list of QUA programs, chunk layout).
     """
-    outputs_tables = []
-    if not has_conflicting_calibrations(circuits):
-        with program() as prog:
-            backend.init_macro()
+    chunk_layout = compute_chunk_layout(
+        len(circuits),
+        max_circuits=backend.options.max_circuits,
+        conflicting_calibrations=has_conflicting_calibrations(circuits),
+    )
 
-            for i, qc in enumerate(circuits):
-                outputs = _process_circuit(
-                    qc,
-                    backend,
-                    num_shots,
-                )
-                outputs_tables.append(outputs)
+    programs = [
+        _build_single_program(backend, num_shots, [circuits[g] for g in chunk])
+        for chunk in chunk_layout
+    ]
+    return programs, chunk_layout
 
-            with stream_processing():
-                for i, outputs in enumerate(outputs_tables):
-                    for creg_name, field in outputs.table.items():
-                        field.stream.save_all(f"{creg_name}_{i}")
 
-        return prog
-    else:
-        progs = []
-        for j, qc in enumerate(circuits):
-            with program() as prog:
-                backend.init_macro()
+def plan_sampler_programs(
+    backend: QMBackend,
+    pubs: List[SamplerPub],
+    param_tables: List[ParameterTable],
+    **kwargs,
+) -> tuple[List[Program], List[List[int]]]:
+    """Plan the QUA program(s) for ``QMSamplerV2``.
 
-                outputs = _process_circuit(
-                    qc,
-                    backend,
-                    num_shots,
-                )
-                outputs_tables.append(outputs)
+    When the number of PUBs exceeds ``max_circuits``, the list is split into
+    consecutive chunks, each compiled into its own QUA program.  Results are
+    stitched back by the caller using the returned ``chunk_layout``.
 
-                with stream_processing():
-                    for creg_name, field in outputs_tables[-1].table.items():
-                        field.stream.save_all(f"{creg_name}_{j}")
-            progs.append(prog)
+    Within each program, the local PUB index (0-based within the chunk) is used
+    for stream keys ``f"{creg_name}_{local_idx}"``.
 
-        return progs
+    Args:
+        backend: The QMBackend to use.
+        pubs: List of SamplerPub objects.
+        param_tables: Matching list of ParameterTable objects (one per pub).
+        **kwargs: Forwarded to :func:`sampler_program`.
+
+    Returns:
+        Tuple of (list of QUA programs, chunk layout).
+    """
+    chunk_layout = compute_chunk_layout(len(pubs), max_circuits=backend.options.max_circuits)
+    programs = [
+        sampler_program(
+            backend,
+            [pubs[g] for g in chunk],
+            [param_tables[g] for g in chunk],
+            **kwargs,
+        )
+        for chunk in chunk_layout
+    ]
+    return programs, chunk_layout
+
+
+def plan_estimator_programs(
+    backend: QMBackend,
+    execution_plans: List["_ExecutionPlan"],
+    **kwargs,
+) -> tuple[List[Program], List[List[int]]]:
+    """Plan the QUA program(s) for ``QMEstimatorV2``.
+
+    When the number of execution plans (one per EstimatorPub) exceeds
+    ``backend.options.max_circuits``, the list is split into consecutive chunks,
+    each compiled into its own QUA program.  Results are stitched back by the
+    caller using the returned ``chunk_layout``.
+
+    Within each program, the local plan index (0-based within the chunk) is
+    used for stream keys ``f"__c_{local_idx}"``.
+
+    Args:
+        backend: The QMBackend to use.
+        execution_plans: Pre-computed ``_ExecutionPlan`` objects (one per pub).
+        **kwargs: Forwarded to :func:`estimator_program`.
+
+    Returns:
+        Tuple of (list of QUA programs, chunk layout).
+    """
+    chunk_layout = compute_chunk_layout(len(execution_plans), max_circuits=backend.options.max_circuits)
+    programs = [
+        estimator_program(backend, [execution_plans[g] for g in chunk], **kwargs)
+        for chunk in chunk_layout
+    ]
+    return programs, chunk_layout
+
+
+def get_run_program(backend: QMBackend, num_shots, circuits: List[QuantumCircuit]) -> Program | List[Program]:
+    """
+    Build the QUA program(s) used by :meth:`~qiskit_qm_provider.backend.qm_backend.QMBackend.run`.
+
+    Backward-compatible wrapper around :func:`plan_run_programs`.  Splitting
+    behaviour is controlled by ``backend.options.max_circuits``.
+
+    Args:
+        backend: The QMBackend to use.
+        num_shots: Number of shots to execute per circuit.
+        circuits: List of QuantumCircuits to execute.
+
+    Returns:
+        A single :class:`~qm.Program`, or a list of programs when splitting occurs.
+    """
+    programs, _ = plan_run_programs(backend, num_shots, circuits)
+    return programs[0] if len(programs) == 1 else programs

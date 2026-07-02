@@ -8,7 +8,7 @@ For signatures and options fields, see the [Primitives API reference](apidocs/qm
 
 Generic cloud primitives assume parameters are bound at submission time. QOP workloads often **stream parameters cycle-by-cycle** via [`InputType`](apidocs/stubs/qiskit_qm_provider.parameter_table.InputType.rst) (`INPUT_STREAM`, `IO1`, `IO2`, `OPNIC`). These primitives expose that capability while reusing QuAM-derived Targets for transpilation.
 
-The traditional [`QMBackend.run()`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) interface mimics Sampler-like behavior for users who prefer the classic backend API.
+The traditional [`QMBackend.run()`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) interface mimics Sampler-like behavior for users who prefer the classic backend API. Like `backend.run`, primitives respect the [`max_circuits`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) backend option and will split large batches into multiple QUA programs when needed. See [Backend — multi-circuit batches](backend.md#multi-circuit-batches-and-max_circuits).
 
 ## Classified measurement outcomes only
 
@@ -18,14 +18,14 @@ Although [`QMSamplerOptions.meas_level`](apidocs/stubs/qiskit_qm_provider.primit
 
 ## QMSamplerV2
 
-Shot-based measurement counts. Maps to backend `run()` under the hood. The returned [`QMSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.QMSamplerJob.rst) exposes the generated QUA program on `job.program`:
+Shot-based measurement counts. Maps to backend `run()` under the hood. The returned [`QMSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.QMSamplerJob.rst) exposes the compiled QUA programs via `get_program()`:
 
 ```python
 from qm import generate_qua_script
 
 sampler = QMSamplerV2(backend=backend, options=QMSamplerOptions(default_shots=256))
 sampler_job = sampler.run([qc])
-print(generate_qua_script(sampler_job.program))
+print(generate_qua_script(sampler_job.get_program()))
 ```
 
 ## QMEstimatorV2
@@ -53,6 +53,22 @@ result = job.result()
 | `meas_level` | ✓ | — | **Use `"classified"` only** — see limitation above |
 
 Configure options via [`QMSamplerOptions`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerOptions.rst) or [`QMEstimatorOptions`](apidocs/stubs/qiskit_qm_provider.primitives.QMEstimatorOptions.rst). Set `input_type=None` to bind all parameter values at compile time (suitable only when the number of distinct parameter sets is small).
+
+## Large PUB batches and `max_circuits`
+
+When the number of PUBs passed to `sampler.run()` or `estimator.run()` exceeds `backend.options.max_circuits` (default `30`), the provider automatically splits them into consecutive chunks. Each chunk is compiled into its own QUA program and queued sequentially on QOP. The returned `PrimitiveResult` always has one entry per input PUB **in the original order** — the splitting is fully transparent to calling code.
+
+```python
+# Reduce the limit so that even small batches trigger splitting:
+backend.set_options(max_circuits=5)
+
+sampler = QMSamplerV2(backend=backend)
+# 12 PUBs -> 3 programs of 5, 5, 2 PUBs queued sequentially
+job = sampler.run([pub_0, pub_1, ..., pub_11])
+result = job.result()  # 12 SamplerPubResult entries, in original order
+```
+
+Set `max_circuits=None` to disable splitting and always build a single program regardless of batch size.
 
 ## Running on IQCC Cloud
 
@@ -105,7 +121,7 @@ QMSamplerV2(backend=backend, options=QMSamplerOptions(input_type=InputType.OPNIC
 
 Cloud-side failures (config validation, `open_qm` errors, etc.) often surface locally as a misleading `KeyError` on a measurement stream (for example `KeyError: '__c_0'`) because the QUA program never reached the streaming stage.
 
-All IQCC wrapper jobs — [`IQCCJob`](apidocs/stubs/qiskit_qm_provider.job.qm_job.IQCCJob.rst), [`IQCCSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.qm_sampler_job.IQCCSamplerJob.rst), and [`IQCCEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.qm_estimator_job.IQCCEstimatorJob.rst) — expose the raw IQCC execution record on **`job.run_data`** (backed by `job.qm_job._run_data`). Typical keys:
+All IQCC wrapper jobs — [`IQCCJob`](apidocs/stubs/qiskit_qm_provider.job.qm_job.IQCCJob.rst), [`IQCCSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.qm_sampler_job.IQCCSamplerJob.rst), and [`IQCCEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.qm_estimator_job.IQCCEstimatorJob.rst) — expose the raw IQCC execution record on **`job.run_data`** (backed by `job.get_qm_job()._run_data`). Typical keys:
 
 | Key | Content |
 |-----|---------|
@@ -129,11 +145,20 @@ You can also inspect `job.run_data` after submission without calling `result()` 
 
 ## Debugging generated QUA
 
-Every primitive job and `backend.run()` exposes the generated QUA `Program` on `job.program`. See the [Jobs guide](jobs.md) for the full property table (`qm_job`, `pubs`, IQCC `run_data`, …).
+Every primitive job and `backend.run()` exposes the compiled QUA programs via `get_program()` (single/default) or by iterating `job.programs` (all chunks). See the [Jobs guide](jobs.md) for the full accessor table (`qm_jobs`, `get_qm_job()`, `get_program()`, `get_result_handles()`, `pubs`, IQCC `run_data`, …).
+
+For [`QMEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.QMEstimatorJob.rst), the compiled execution plans are also available on **`job.runtime_pubs`** — one [`_ExecutionPlan`](apidocs/stubs/qiskit_qm_provider.job.qm_estimator_job._ExecutionPlan.rst) per input PUB, showing how observables were grouped and what will be streamed to the OPX.
 
 ```python
 from qm import generate_qua_script
-print(generate_qua_script(job.program))
+
+# Non-chunked (default): use the getter
+print(generate_qua_script(job.get_program()))
+
+# Chunked: iterate all programs
+for chunk_idx, prog in enumerate(job.programs):
+    print(f"=== QUA program {chunk_idx} ===")
+    print(generate_qua_script(prog))
 ```
 
 - **Guide:** [Jobs](jobs.md), [Workflows — Generated QUA programs](workflows.md#generated-qua-programs-and-how-to-inspect-them)
