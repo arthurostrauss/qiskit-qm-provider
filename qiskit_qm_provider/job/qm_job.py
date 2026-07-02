@@ -74,7 +74,7 @@ class QMJob(JobV1):
     Compile the generated QUA source with::
 
         from qm import generate_qua_script
-        print(generate_qua_script(job.program))
+        print(generate_qua_script(job.programs[0]))
 
     Attributes:
         program: Compiled :class:`qm.Program` (or ``list[Program]`` when
@@ -109,6 +109,11 @@ class QMJob(JobV1):
     def programs(self) -> List[Program]:
         """Compiled QUA program(s) for this job; always a list."""
         return self._programs
+
+    @property
+    def program(self) -> Program:
+        """Backward-compatible alias for :attr:`programs`\\ ``[0]``."""
+        return self._programs[0]
 
     @property
     def qm_jobs(self) -> Optional[List[Union[RunningQmJob, QmPendingJob]]]:
@@ -235,7 +240,7 @@ class QMJob(JobV1):
                 experiment_data.append(experiment_result)
 
             result = Result(
-                results=experiment_data if num_circuits > 1 else experiment_data[0],
+                results=experiment_data,
                 backend_name=backend.name,
                 job_id=",".join(getattr(j, "id", "") for j in qm_jobs),
                 backend_version=2,
@@ -495,9 +500,12 @@ class IQCCJob(IQCCJobMixin, QMJob):
         qm: IQCC_Cloud = self.qm
         timeout = self.metadata.get("timeout", None)
 
-        self._qm_jobs = [qm.execute(
-            self.programs[0],
-            config,
-            options={"timeout": timeout} if timeout is not None else {},
-        )]
-        self._job_id = getattr(self._qm_jobs[0], "id", "")
+        self._qm_jobs = [
+            qm.execute(
+                prog,
+                config,
+                options={"timeout": timeout} if timeout is not None else {},
+            )
+            for prog in self.programs
+        ]
+        self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)

@@ -32,7 +32,6 @@ from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit.primitives.containers import PubResult
 from qiskit.result import Counts
 from qm import SimulationConfig, CompilerOptionArguments, QuantumMachinesManager
-from qm.jobs.pending_job import QmPendingJob
 from qm.jobs.running_qm_job import RunningQmJob
 from typing import Optional, Union, List, Dict, Tuple, TYPE_CHECKING
 from ..backend import QMBackend
@@ -431,11 +430,13 @@ class QMEstimatorJob(QMPrimitiveJob):
             pending_jobs = [
                 self._backend.qm.queue.add_compiled(pid) for pid in program_ids
             ]
-            self._qm_jobs = pending_jobs
             self._job_id = ",".join(j.id for j in pending_jobs)
+            self._qm_jobs = []
             for pending, chunk in zip(pending_jobs, self._chunk_layout):
+                running = pending.wait_for_execution()
+                self._qm_jobs.append(running)
                 for global_idx in chunk:
-                    self._push_plan_data(pending, self._execution_plans[global_idx])
+                    self._push_plan_data(running, self._execution_plans[global_idx])
 
     def _calc_expval_map(
         self,
@@ -549,11 +550,7 @@ class QMEstimatorJob(QMPrimitiveJob):
         )
 
     def _result_function(self, qm_jobs: List[RunningQmJob]) -> PrimitiveResult[PubResult]:
-        running_jobs = [
-            j.wait_for_execution() if isinstance(j, QmPendingJob) else j
-            for j in qm_jobs
-        ]
-        results_handles = [job.result_handles for job in running_jobs]
+        results_handles = [job.result_handles for job in qm_jobs]
         for handle in results_handles:
             handle.wait_for_all_values()
 
@@ -615,7 +612,7 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
 
         programs = self._programs
         timeout = self.metadata.get("timeout") or self.metadata.get("run_options", {}).get("timeout")
-        jobs = []
+        self._qm_jobs = []
 
         for prog, chunk in zip(programs, self._chunk_layout):
             chunk_plans = [self._execution_plans[g] for g in chunk]
@@ -634,10 +631,9 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
                 options["timeout"] = timeout
 
             try:
-                jobs.append(self._backend.qm.execute(prog, options=options))  # type: ignore
+                self._qm_jobs.append(self._backend.qm.execute(prog, options=options))  # type: ignore
             finally:
                 if sync_hook_path is not None:
                     os.unlink(sync_hook_path)
 
-        self._qm_jobs = jobs
-        self._job_id = ",".join(getattr(j, "id", "") for j in jobs)
+        self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
