@@ -172,6 +172,43 @@ def measurement_output_bit_sizes(qc: QuantumCircuit) -> dict[str, int]:
     return sizes
 
 
+def experiment_result_header(qc: QuantumCircuit) -> dict[str, Any]:
+    """Build a Qiskit :class:`~qiskit.result.models.ExperimentResult` header for *qc*.
+
+    One circuit maps to one experiment result in the legacy ``Result`` API.  The
+    header fields mirror reference simulators (e.g. ``BasicSimulator``) so
+    :meth:`~qiskit.result.Result.get_counts`, :meth:`~qiskit.result.Result.get_memory`,
+    and name-based experiment lookup via :meth:`~qiskit.result.Result.data` work as
+    expected.
+
+    ``creg_sizes`` follows :func:`measurement_output_bit_sizes` key order (classical
+    registers first, then loose clbits as ``_bitN`` entries of width ``1``).  That
+    matches the bit order produced when classified measurement streams are joined in
+    :meth:`~qiskit_qm_provider.job.qm_job.QMJob._build_result_function`.
+    """
+    from .qua_circuit_compilation import _loose_bit_keys
+
+    output_sizes = measurement_output_bit_sizes(qc)
+    creg_sizes = [[name, size] for name, size in output_sizes.items()]
+    memory_slots = sum(output_sizes.values())
+
+    clbit_labels = [[creg.name, j] for creg in qc.cregs for j in range(creg.size)]
+    for key in _loose_bit_keys(qc):
+        clbit_labels.append([key, 0])
+
+    return {
+        "name": qc.name,
+        "n_qubits": qc.num_qubits,
+        "qreg_sizes": [[qreg.name, qreg.size] for qreg in qc.qregs],
+        "creg_sizes": creg_sizes,
+        "qubit_labels": [[qreg.name, j] for qreg in qc.qregs for j in range(qreg.size)],
+        "clbit_labels": clbit_labels,
+        "memory_slots": memory_slots,
+        "global_phase": qc.global_phase,
+        "metadata": qc.metadata if qc.metadata is not None else {},
+    }
+
+
 def has_conflicting_calibrations(circuits: List[QuantumCircuit]) -> bool:
     """Check whether circuits define conflicting custom calibrations.
 

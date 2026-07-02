@@ -49,6 +49,7 @@ from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qiskit_qm_provider.backend.backend_utils import (
     validate_circuits,
     measurement_output_bit_sizes,
+    experiment_result_header,
 )
 from .iqcc_job_mixin import IQCCJobMixin, result_handles_from_qm_job
 from .stream_assembly import bit_array_from_stream
@@ -224,17 +225,16 @@ class QMJob(JobV1):
 
             experiment_data = []
             for i, data in enumerate(all_data):
-                circuit_metadata = getattr(circuits[i], "metadata", {}) or {}
                 experiment_result = ExperimentResult(
                     shots=num_shots,
                     success=True,
                     data=ExperimentResultData(
-                        data.get_counts(),
+                        counts=data.get_counts(),
                         memory=data.get_bitstrings() if memory else None,
                     ),
                     meas_level=meas_level,
                     meas_return=meas_return,
-                    header={"metadata": circuit_metadata},
+                    header=experiment_result_header(circuits[i]),
                     status=getattr(running_jobs[locator[i][0]], "status", "done"),
                 )
                 experiment_data.append(experiment_result)
@@ -398,20 +398,15 @@ class QMJob(JobV1):
             if "timeout" in self.metadata:
                 kwargs["options"] = {"timeout": self.metadata["timeout"]}
         if isinstance(simulate, SimulationConfig):
-            if len(self.programs) > 1:
-                self._qm_jobs = [
-                    self.qm.simulate(
-                        prog, simulate=simulate, compiler_options=compiler_options
-                    )
-                    for prog in self.programs
-                ]
-            else:
-                self._qm_jobs = [self.qm.simulate(
-                    self.programs[0], simulate=simulate, compiler_options=compiler_options
-                )]
+            self._qm_jobs = [
+                self.qm.simulate(
+                    prog, simulate=simulate, compiler_options=compiler_options
+                )
+                for prog in self.programs
+            ]
             self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
         else:
-            if isinstance(self.qm, QuantumMachine):
+            if len(self.programs) > 1:
                 program_ids = [
                     self.qm.compile(prog, compiler_options=compiler_options)
                     for prog in self.programs
