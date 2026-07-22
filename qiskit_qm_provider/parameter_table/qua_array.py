@@ -223,26 +223,23 @@ class QUAArray(Parameter):
     # ------------------------------------------------------------------
 
     def assign(self, indices_or_val, val=None):
-        """
-        Flexible element / whole-array assignment.
+        """Flexible element / whole-array assignment.
 
-        Calling conventions
-        -------------------
-        ``arr.assign(value)``
-            Whole-array assign.  ``value`` must be list/ndarray/QUA array accepted
-            by ``Parameter.assign``.  Delegates directly to the parent implementation.
+        Calling conventions:
 
-        ``arr.assign((i,), row_value)``
-        ``arr.assign((i, j), scalar_val)``
-            Partial or full index assign.  ``indices_or_val`` must be a tuple of
-            indices (Python ints or QUA variables).  For partial indices a
-            ``_QUAArrayView`` is constructed and its ``assign`` is called, which
-            handles the flat ``for_`` loop internally.  For a complete index tuple a
-            direct ``qua_assign`` is emitted.
+        * ``arr.assign(value)`` — whole-array assign. ``value`` must be a
+          list/ndarray/QUA array accepted by :meth:`Parameter.assign`.
+          Delegates directly to the parent implementation.
+        * ``arr.assign((i,), row_value)`` / ``arr.assign((i, j), scalar_val)`` —
+          partial or full index assign. ``indices_or_val`` must be a tuple of
+          indices (Python ints or QUA variables). For partial indices a
+          :class:`_QUAArrayView` is constructed and its ``assign`` is called.
+          For a complete index tuple a direct ``qua_assign`` is emitted.
 
-        Note: single-element shorthand ``arr.assign(i, val)`` is intentionally *not*
-        supported — always wrap indices in a tuple to avoid ambiguity with the
-        whole-array form.
+        Note:
+            Single-element shorthand ``arr.assign(i, val)`` is intentionally
+            *not* supported — always wrap indices in a tuple to avoid ambiguity
+            with the whole-array form.
         """
         if val is None:
             # Whole-array assign — delegate to Parameter.
@@ -332,39 +329,33 @@ class QUAArray(Parameter):
         mode: Literal["save", "save_all"] = "save_all",
         buffer: Union[Tuple[int, ...], int, None] = None,
     ):
-        """
-        Declare stream-processing for this N-D array.
+        """Declare stream-processing for this N-D array.
 
         The QUA stream API expects a flat stream to be buffered into a shape before
-        saving.  This method builds the correct buffer tuple and calls
+        saving. This method builds the correct buffer tuple and calls
         ``stream.buffer(*buffer).save[_all](name)``.
 
-        Buffer resolution
-        -----------------
-        ``None`` (default)
-            Use ``self.shape`` as the buffer — the stream is reshaped back to the
-            array's natural N-D shape.  Equivalent to ``QUA2DArray``'s default of
-            ``(n_rows, n_cols)``.
+        Buffer resolution:
 
-        ``int`` (leading-dimension shorthand)
-            Prepend the integer to ``self.shape``, yielding a buffer of shape
-            ``(int, *self.shape)``.  This is useful when the array is streamed once
-            per repetition and you want to accumulate ``int`` repetitions before
-            saving.  Equivalent to ``QUA2DArray``'s ``buffer=int`` shorthand which
-            produced ``(int, n_cols)``.
-
-        ``tuple``
-            Used as-is.  Must be a tuple of positive ints; no further validation of
-            total size is performed here (the QUA compiler will catch mismatches).
+        * ``None`` (default) — use ``self.shape`` as the buffer; the stream is
+          reshaped back to the array's natural N-D shape. Equivalent to
+          :class:`QUA2DArray`'s default of ``(n_rows, n_cols)``.
+        * ``int`` (leading-dimension shorthand) — prepend the integer to
+          ``self.shape``, yielding ``(int, *self.shape)``. Useful when the array
+          is streamed once per repetition and you want to accumulate that many
+          repetitions before saving.
+        * ``tuple`` — used as-is. Must be a tuple of positive ints; no further
+          total-size validation is performed here (the QUA compiler will catch
+          mismatches).
 
         Args:
-            mode:   ``"save"`` to keep only the last buffer, ``"save_all"`` to
-                    accumulate all buffers (default).
+            mode: ``"save"`` to keep only the last buffer, ``"save_all"`` to
+                accumulate all buffers (default).
             buffer: Buffer shape — see above.
 
         Raises:
             ValueError: ``mode`` is invalid or the stream has not been declared.
-            TypeError:  ``buffer`` is not ``None``, an ``int``, or a ``tuple``.
+            TypeError: ``buffer`` is not ``None``, an ``int``, or a ``tuple``.
         """
         if mode not in ("save", "save_all"):
             raise ValueError(f"mode must be 'save' or 'save_all', got {mode!r}.")
@@ -426,31 +417,23 @@ class _QUAArrayView:
     # ------------------------------------------------------------------
 
     def assign(self, val):
-        """
-        Assign ``val`` to every element covered by this view.
+        """Assign ``val`` to every element covered by this view.
 
-        Strategy — flatten both sides, emit a single QUA ``for_`` loop
-        ---------------------------------------------------------------
-        Because the underlying storage is already 1D, assigning to a sub-array
-        is equivalent to writing a contiguous (or strided, but here always
-        contiguous in our row-major layout) range of the flat buffer.
-
-        The flat offset of this view's first element is::
+        Because the underlying storage is already 1D, assigning to a sub-array is
+        equivalent to writing a contiguous range of the flat buffer in row-major
+        layout. The flat offset of this view's first element is::
 
             base = parent._flat_index(*self._indices, 0, 0, ..., 0)
 
         The view then occupies ``view_size`` consecutive positions starting at
-        ``base``.  A single ``for_`` loop from ``0`` to ``view_size`` is therefore
-        sufficient regardless of the view's dimensionality.
+        ``base``. A single QUA ``for_`` loop from ``0`` to ``view_size`` is
+        therefore sufficient regardless of the view's dimensionality.
 
         ``val`` must be one of:
-        - A Python list / numpy array of length ``view_size`` (compile-time unroll
-          if len ≤ a small threshold, otherwise a ``for_`` loop over a QUA array).
-        - A 1D QUA array of length ``view_size`` (runtime ``for_`` loop).
 
-        For a Python list the loop is unrolled at compile time (one ``qua_assign``
-        per element), which is efficient for small fixed shapes.  For a QUA array
-        source a single ``for_`` is generated.
+        * A Python list / numpy array of length ``view_size`` (compile-time
+          unroll for small fixed shapes, otherwise a ``for_`` over a QUA array).
+        * A 1D QUA array of length ``view_size`` (runtime ``for_`` loop).
 
         Raises:
             ValueError: Shape / length mismatch between view and ``val``.
