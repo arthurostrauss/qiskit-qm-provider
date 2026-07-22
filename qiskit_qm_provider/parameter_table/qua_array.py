@@ -24,6 +24,8 @@ import numpy as np
 
 from qm.qua import declare, assign as qua_assign, fixed, for_
 from qm.jobs.running_qm_job import RunningQmJob
+from qm.api.v2.job_api.job_api import JobApi
+from qm import QuantumMachine
 from quam.utils.qua_types import QuaVariableInt, Scalar, ScalarInt
 
 from .parameter import Parameter
@@ -275,7 +277,8 @@ class QUAArray(Parameter):
     def push_to_opx(
         self,
         value: Union[np.ndarray, List],
-        job: RunningQmJob,
+        job: Optional[RunningQmJob | JobApi] = None,
+        qm: Optional[QuantumMachine] = None,
         verbosity: int = 1,
         time_out: int = 30,
     ):
@@ -312,6 +315,7 @@ class QUAArray(Parameter):
         super().push_to_opx(
             value=arr.flatten().tolist(),
             job=job,
+            qm=qm,
             verbosity=verbosity,
             time_out=time_out,
         )
