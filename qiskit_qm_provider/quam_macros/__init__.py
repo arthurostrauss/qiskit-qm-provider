@@ -14,6 +14,11 @@
 
 """QuAM macros for Qiskit-QM provider backends.
 
+Re-exports :func:`~qiskit_qm_provider.quam_macros.superconducting.add_basic_macros`
+for the common ``from qiskit_qm_provider.quam_macros import add_basic_macros`` path.
+The same symbol is also available from the top-level package and from
+:mod:`qiskit_qm_provider.backend.backend_utils`.
+
 Author: Arthur Strauss
 Date: 2026-07-12
 """

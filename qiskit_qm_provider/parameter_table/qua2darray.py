@@ -323,12 +323,30 @@ class QUA2DArray(Parameter):
         verbosity: int = 1,
         time_out: int = 30,
     ):
-        """
-        Push the 2D array to the OPX.
-        - value: single value or a sequence of values to push.
-        - job: RunningQmJob instance to use for pushing.
-        - verbosity: level of verbosity for the operation.
-        - time_out: time out in seconds for the operation.
+        """Push a 2D array of values into the OPX at runtime.
+
+        ``value`` must have shape ``(n_rows, n_cols)`` (NumPy array or nested list).
+        It is flattened in row-major order and forwarded to
+        :meth:`Parameter.push_to_opx`.
+
+        The ``job`` / ``qm`` arguments match the base :class:`Parameter` API: pass a
+        :class:`~qm.jobs.running_qm_job.RunningQmJob` or
+        :class:`~qm.api.v2.job_api.job_api.JobApi`. Current QUA drives IO through the
+        job interface; ``qm`` is kept only for older call sites.
+
+        Args:
+            value: 2D numpy array or list-of-lists with shape ``(n_rows, n_cols)``.
+            job: Running job or job API handle used for input-stream / IO pushes.
+                Optional; required when ``input_type`` needs a live job.
+            qm: Optional :class:`~qm.QuantumMachine`. Unused with modern
+                :class:`~qm.api.v2.job_api.job_api.JobApi` IO (legacy back-compat
+                when an older job object still routed IO via the machine).
+            verbosity: Verbosity level forwarded to :meth:`Parameter.push_to_opx`.
+            time_out: Timeout in seconds forwarded to :meth:`Parameter.push_to_opx`.
+
+        Raises:
+            TypeError: ``value`` is not a numpy array or list.
+            ValueError: ``value`` is not 2D or does not match ``(n_rows, n_cols)``.
         """
 
         if not isinstance(value, (np.ndarray, list)):

@@ -940,8 +940,8 @@ class Parameter:
         ``push_to_opx`` can synchronize), this is a non-blocking, fire-and-forget read of
         the global IO register: the OPX keeps running. It is the correct primitive for
         program-level control flags whose value the server writes on the *running* job via
-        ``qm.set_io_values(...)`` (a global operation that is intentionally not tied to any
-        single parameter).
+        ``job.set_io_values(...)`` (IO is exposed on the job interface in current QUA;
+        older stacks historically used ``qm.set_io_values(...)``).
 
         Because IO registers are scalar and global, this is only valid for a single
         declared scalar variable (it raises for array-backed parameters).
@@ -978,8 +978,12 @@ class Parameter:
 
         Args:
             value: Value to be passed to the OPX. Defaults to ``self.value`` when omitted.
-            job: RunningQmJob object (required if input_type is IO1 or IO2 or input_stream).
-            qm: QuantumMachine object (required if input_type is IO1 or IO2).
+            job: RunningQmJob or JobApi (required if input_type is IO1, IO2, or input_stream).
+                Prefer ``JobApi``: current QUA exposes IO via the job interface
+                (``job.set_io_values``).
+            qm: Optional QuantumMachine. Not needed for IO with modern ``JobApi``;
+                retained for backwards compatibility with older job objects that
+                still routed IO through ``qm.set_io_values``.
             verbosity: Verbosity level. Default is 1.
             time_out: Time out for waiting for the job to be paused. Default is 90 seconds.
         """

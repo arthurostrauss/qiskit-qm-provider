@@ -282,7 +282,8 @@ You can combine both: use bool arrays (or XOR) for real-time feedback inside the
 ### Push recovery parameters in
 
 ```python
-recovery_vars.push_to_opx(param_dict, job, qm, verbosity=0)
+recovery_vars.push_to_opx(param_dict, job, verbosity=0)
+# Prefer JobApi for IO; `qm` is only needed for older job objects.
 ```
 
 In QUA:

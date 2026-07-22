@@ -170,7 +170,8 @@ job = sampler.run([(qc, param_values)])
 # submit already ran
 
 job.get_result_handles()            # stream handle for the first (only) job
-param_table.push_to_opx(..., job=job.get_qm_job(), qm=backend.qm)
+param_table.push_to_opx(..., job=job.get_qm_job())
+# `qm=backend.qm` is optional legacy back-compat; current QUA drives IO via the job.
 ```
 
 On IQCC, streamed jobs auto-generate a **sync hook** script that performs this pushing on the cloud side (see [Primitives](primitives.md#running-on-iqcc-cloud)).

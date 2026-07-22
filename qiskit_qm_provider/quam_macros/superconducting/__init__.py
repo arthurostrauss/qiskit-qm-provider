@@ -14,6 +14,8 @@
 
 """Superconducting QuAM macros and seeding utilities.
 
+Canonical home of :func:`add_basic_macros` for flux-tunable transmon machines.
+
 Author: Arthur Strauss
 Date: 2026-07-12
 """

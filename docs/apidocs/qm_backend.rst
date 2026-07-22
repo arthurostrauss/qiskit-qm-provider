@@ -34,6 +34,15 @@ For the measurement-output locality model, see :doc:`Measurement outputs </measu
 
    MeasurementRegisterField
 
+.. currentmodule:: qiskit_qm_provider.quam_macros.superconducting
+
+.. rubric:: QuAM macros
+
+.. autosummary::
+   :toctree: stubs/
+
+   add_basic_macros
+
 .. currentmodule:: qiskit_qm_provider.backend.backend_utils
 
 .. rubric:: Functions
@@ -41,7 +50,6 @@ For the measurement-output locality model, see :doc:`Measurement outputs </measu
 .. autosummary::
    :toctree: stubs/
 
-   add_basic_macros
    assign_struct_with_table
    get_measurement_outcomes
    get_qua_script
@@ -59,6 +67,11 @@ For the measurement-output locality model, see :doc:`Measurement outputs </measu
    :no-special-members:
 
 .. automodule:: qiskit_qm_provider.backend.measurement_field
+   :no-members:
+   :no-inherited-members:
+   :no-special-members:
+
+.. automodule:: qiskit_qm_provider.quam_macros.superconducting
    :no-members:
    :no-inherited-members:
    :no-special-members:

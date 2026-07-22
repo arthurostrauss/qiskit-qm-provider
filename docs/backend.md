@@ -122,9 +122,9 @@ Unlike typical Qiskit backends, parameters need not be bound at compile time. Us
 
 ## Utilities
 
-### [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.add_basic_macros.rst)
+### [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.quam_macros.superconducting.add_basic_macros.rst)
 
-Seeds standard gate macros on a QuAM machine. **Flux-tunable transmon defaults** tied to `FluxTunableQuam` — see [Providers guide](providers.md#seeding-gate-macros-with-add-basic-macros). Override freely for other platforms.
+Seeds standard gate macros on a QuAM machine. **Flux-tunable transmon defaults** tied to `FluxTunableQuam` — see [Providers guide](providers.md#seeding-gate-macros-with-add-basic-macros). Override freely for other platforms. Canonical import: `from qiskit_qm_provider import add_basic_macros` (also re-exported from `backend.backend_utils`).
 
 ### `get_qua_script` / `dump_qua_script`
 

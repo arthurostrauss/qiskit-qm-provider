@@ -14,6 +14,9 @@
 
 """Backend utilities: circuit-to-QUA translation, calibration handling, measurement outcomes.
 
+``add_basic_macros`` is re-exported here for backward compatibility; its canonical
+home is :mod:`qiskit_qm_provider.quam_macros.superconducting`.
+
 Author: Arthur Strauss
 Date: 2026-02-08
 """

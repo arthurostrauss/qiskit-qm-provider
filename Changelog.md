@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`QUAArray.push_to_opx` / `QUA2DArray.push_to_opx`** — signatures now match the base `Parameter` API: `job` may be a `RunningQmJob` or `JobApi` (optional), and an optional `QuantumMachine` (`qm`) can be passed through for job resolution.
+- **`QUAArray.push_to_opx` / `QUA2DArray.push_to_opx`** — signatures now match the base `Parameter` API: `job` may be a `RunningQmJob` or `JobApi` (optional). The optional `qm` argument is retained only for legacy back-compat; current QUA drives IO through the job interface.
 
 ## [0.3.1] - 2026-07-02
 

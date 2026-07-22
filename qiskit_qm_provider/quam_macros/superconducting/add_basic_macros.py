@@ -34,24 +34,40 @@ def add_basic_macros(
     reset_type: Literal["active", "thermalize"] = "thermalize",
     **reset_macro_kwargs,
 ):
-    """Populate a QuAM machine with standard gate-level macros.
+    """Populate a QuAM machine with standard superconducting gate-level macros.
+
+    Canonical location: ``qiskit_qm_provider.quam_macros.superconducting``.
+    Also re-exported from :mod:`qiskit_qm_provider` and
+    :mod:`qiskit_qm_provider.backend.backend_utils` for backward compatibility.
 
     Adds ``x``, ``sx``, ``rz``, ``sy``, ``sydg``, ``measure``, ``reset``, ``delay``,
     ``id``, and ``cz`` macros. These definitions are **tailored to flux-tunable
     transmon** hardware and assume pulse naming from ``FluxTunableQuam`` /
     quam-builder (e.g. ``x180``, ``x90``, readout pulses, ``CZGate`` on pairs).
-    One can either pass a BaseQuam instance or a QMBackend instance.
-    If the latter is passed, the target will be updated accordingly.
-    Warning: This macro assumes that no other macros are already defined for the qubits.
+
+    Single-qubit macros are imported from ``quam-builder`` when available; otherwise
+    the provider falls back to local copies under
+    :mod:`qiskit_qm_provider.quam_macros.superconducting.single_qubit_macros`
+    (with a :class:`UserWarning`).
+
+    Pass a :class:`~quam.core.QuamRoot` or a :class:`~qiskit_qm_provider.backend.QMBackend`.
+    When a backend is passed, its Qiskit target is updated after macros are seeded.
+
+    .. warning::
+       Only seeds qubits whose ``macros`` dict is empty. Existing macros are left
+       unchanged. Prefer calling this once on a freshly loaded machine.
 
     This is a convenience starting point, not a universal hardware definition.
     Override macros on your own ``QuamRoot`` for other platforms; coordinate with
     the Quantum Machines team for quam-builder extensions as needed.
 
     Args:
-        backend: A :class:`~.QMBackend` or :class:`~quam.core.QuamRoot` instance.
+        backend: A :class:`~qiskit_qm_provider.backend.QMBackend` or
+            :class:`~quam.core.QuamRoot` instance.
         reset_type: Reset macro variant, ``"active"`` or ``"thermalize"``.
-        **reset_macro_kwargs: Keyword arguments for the reset macro.
+        **reset_macro_kwargs: Extra keyword arguments forwarded to ``ResetMacro``
+            (alongside ``reset_type``, ``pi_pulse="x180"``, and
+            ``readout_pulse="readout"``).
     """
     try:
         from quam_builder.architecture.superconducting.custom_gates.single_qubit_gates import (

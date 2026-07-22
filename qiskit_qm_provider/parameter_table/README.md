@@ -331,6 +331,12 @@ Slicing with fewer than N indices returns an **_QUAArrayView** that represents a
 
 You can put `QUAArray` instances in a `ParameterTable` like any other `Parameter`. Declaration and streaming are inherited; indexing and assignment use the QUAArray API above.
 
+### Python-side
+
+- **`push_to_opx(value, job=None, qm=None, verbosity=1, time_out=30)`**
+  **value** must be a numpy array or nested list whose shape equals `self.shape`; it is flattened row-major and pushed via the base `Parameter.push_to_opx`.
+  `job` may be a `RunningQmJob` or `JobApi`. Prefer `JobApi` — current QUA drives IO through the job interface. `qm` is optional legacy back-compat for older job objects that still routed IO via the machine (same contract as `Parameter`).
+
 ---
 
 ## QUA2DArray
@@ -413,8 +419,9 @@ arr.assign(0, other_qua_array)
 
 ### Python-side
 
-- **push_to_opx(value, job, verbosity=1, time_out=30)**  
+- **`push_to_opx(value, job=None, qm=None, verbosity=1, time_out=30)`**
   **value** must be a 2D array or list of lists of shape `(n_rows, n_cols)`; it is flattened and pushed via the base Parameter’s `push_to_opx`.
+  `job` may be a `RunningQmJob` or `JobApi`. Prefer `JobApi` — current QUA drives IO through the job interface. `qm` is optional legacy back-compat for older job objects that still routed IO via the machine (same contract as `Parameter`).
 
 ---
 

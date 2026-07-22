@@ -52,7 +52,7 @@ We support different integrations available through three different providers. U
 It is also possible to populate the machine with standard operations (like `x`, `sx`, `rz`, `measure`, `reset`, `cz`) using the `add_basic_macros` utility.
 
 ```python
-from qiskit_qm_provider.backend.backend_utils import add_basic_macros
+from qiskit_qm_provider import add_basic_macros
 # After getting backend:
 # add_basic_macros(backend)
 ```
@@ -271,8 +271,8 @@ Below is an example of an error correction workflow where data handling is criti
 
 ```python
 from qm.qua import *
-from qiskit_qm_provider import Parameter, ParameterTable, ParameterPool, Direction, InputType, QUA2DArray
-from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes, add_basic_macros
+from qiskit_qm_provider import Parameter, ParameterTable, ParameterPool, Direction, InputType, QUA2DArray, add_basic_macros
+from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes
 from qiskit import transpile
 
 # ... (Assume backend, syndrome_circuit, recovery_circuit, encoding_circuit are defined) ...

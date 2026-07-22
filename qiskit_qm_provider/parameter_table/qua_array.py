@@ -282,23 +282,30 @@ class QUAArray(Parameter):
         verbosity: int = 1,
         time_out: int = 30,
     ):
-        """
-        Push an N-D array of values into the OPX at runtime.
+        """Push an N-D array of values into the OPX at runtime.
 
         ``value`` is validated against ``self.shape``, flattened to a 1-D list in
-        row-major order, and forwarded to ``Parameter.push_to_opx``.  This mirrors
-        exactly what ``QUA2DArray.push_to_opx`` does for the 2-D case, generalised
-        to arbitrary rank.
+        row-major order, and forwarded to :meth:`Parameter.push_to_opx`. This mirrors
+        :meth:`QUA2DArray.push_to_opx` for the 2-D case, generalised to arbitrary rank.
+
+        The ``job`` / ``qm`` arguments match the base :class:`Parameter` API: pass a
+        :class:`~qm.jobs.running_qm_job.RunningQmJob` or
+        :class:`~qm.api.v2.job_api.job_api.JobApi`. Current QUA drives IO through the
+        job interface; ``qm`` is kept only for older call sites.
 
         Args:
-            value:     A numpy array or (possibly nested) Python list whose shape
-                       must equal ``self.shape``.
-            job:       The ``RunningQmJob`` instance returned by ``qm.execute()``.
-            verbosity: Verbosity level forwarded to ``Parameter.push_to_opx``.
-            time_out:  Timeout in seconds forwarded to ``Parameter.push_to_opx``.
+            value: A numpy array or (possibly nested) Python list whose shape must
+                equal ``self.shape``.
+            job: Running job or job API handle used for input-stream / IO pushes.
+                Optional; required when ``input_type`` needs a live job.
+            qm: Optional :class:`~qm.QuantumMachine`. Unused with modern
+                :class:`~qm.api.v2.job_api.job_api.JobApi` IO (legacy back-compat
+                when an older job object still routed IO via the machine).
+            verbosity: Verbosity level forwarded to :meth:`Parameter.push_to_opx`.
+            time_out: Timeout in seconds forwarded to :meth:`Parameter.push_to_opx`.
 
         Raises:
-            TypeError:  ``value`` is not a numpy array or list.
+            TypeError: ``value`` is not a numpy array or list.
             ValueError: ``value`` shape does not match ``self.shape``.
         """
         if not isinstance(value, (np.ndarray, list)):
