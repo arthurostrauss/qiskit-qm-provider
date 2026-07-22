@@ -45,7 +45,7 @@ Both `ParameterTable` and `Parameter` share **the same canonical verb names**, s
 
 **Python side:**
 
-- `push_to_opx(param_dict, job, qm)` — send values to the OPX.
+- `push_to_opx(param_dict, job=..., qm=...)` — send values to the OPX (`qm` is optional legacy; prefer `JobApi` for IO).
 - `fetch_from_opx(job, ...)` — retrieve streamed results.
 
 ## Constructing a `ParameterTable`
@@ -411,7 +411,7 @@ Enum for input mechanisms:
 - `INPUT_STREAM`: Standard QOP Input Stream.
 - `IO1`, `IO2`: GPIO inputs.
 - **[`ParameterPool`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterPool.rst)** — coordinate multiple tables in one program.
-- **[`QUA2DArray`](apidocs/stubs/qiskit_qm_provider.parameter_table.QUA2DArray.rst) / `QUAArray`** — multi-index parameter memory (flattened QUA arrays).
+- **[`QUA2DArray`](apidocs/stubs/qiskit_qm_provider.parameter_table.QUA2DArray.rst) / [`QUAArray`](apidocs/stubs/qiskit_qm_provider.parameter_table.QUAArray.rst)** — multi-index parameter memory (flattened QUA arrays).
 - **`ParameterVector` note:** OpenQASM 3 exports `ParameterVector` elements as individual parameters; `from_qiskit` handles this transparently.
 
 ## Related

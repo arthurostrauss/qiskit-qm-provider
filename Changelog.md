@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-07-22
+
+### Changed
+
+- **`add_basic_macros` relocated** to `qiskit_qm_provider.quam_macros.superconducting` (re-exported from `qiskit_qm_provider` and `backend_utils` for backward compatibility). Prefers single-qubit macros from `quam-builder`, with a fallback to the provider’s local copies, and accepts `**reset_macro_kwargs` for `ResetMacro`.
+
+### Fixed
+
+- **`QUAArray.push_to_opx` / `QUA2DArray.push_to_opx`** — signatures now match the base `Parameter` API: `job` may be a `RunningQmJob` or `JobApi` (optional). The optional `qm` argument is retained only for legacy back-compat; current QUA drives IO through the job interface.
+
+## [0.3.1] - 2026-07-02
+
+### Fixed
+
+- **Duplicate `INPUT_STREAM` declarations** — `Parameter.declare()` reuses an existing same-named stream in the current QUA program scope when type/length match (emits `UserWarning`), instead of raising “Variable already declared”. Common with chunked estimator/sampler plans that share streamed field names. Incompatible collisions still raise `ValueError`.
+- **`estimator_program` `obs_length_var`** — declared once at program scope and only `rcv()`’d per plan, avoiding per-plan re-declaration in multi-plan programs.
+
 ## [0.3.0] - 2026-07-02
 
 ### Added

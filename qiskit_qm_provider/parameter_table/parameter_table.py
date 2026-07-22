@@ -809,8 +809,11 @@ class ParameterTable(QuaFieldTable):
 
         Args:
             param_dict: Optional dictionary of the form ``{parameter_name: parameter_value}``. If None, the values of the parameters are used.
-            job: ``RunningQmJob`` (only needed for IO/input-stream parameters).
-            qm: ``QuantumMachine`` (only needed for IO parameters).
+            job: ``RunningQmJob`` or ``JobApi`` (only needed for IO/input-stream parameters).
+                Prefer ``JobApi``: current QUA drives IO through the job interface.
+            qm: Optional ``QuantumMachine``. Not required for IO with modern ``JobApi``;
+                kept for backwards compatibility with older job objects that routed IO
+                via the machine.
             verbosity: Verbosity level of the pushing process.
         """
         if self.input_type != InputType.OPNIC:
@@ -898,11 +901,16 @@ class ParameterTable(QuaFieldTable):
         Client function: Fetch the values of the parameters from the OPX (Client/server side).
         The values are returned in a dictionary of the form {parameter_name: parameter_value}.
 
-        Args: job: RunningQmJob object to fetch the values from (input stream).
-                qm: QuantumMachine object to fetch the values from (IO variables).
-                verbosity: Verbosity level of the fetching process.
+        Args:
+            job: ``RunningQmJob`` or ``JobApi`` used to read result handles / IO
+                (prefer ``JobApi``; current QUA exposes IO through the job interface).
+            fetching_index: Starting index when fetching a slice of streamed values.
+            fetching_size: Number of values to fetch.
+            verbosity: Verbosity level of the fetching process.
+            time_out: Seconds to wait for values / job pause.
 
-        Returns: Dictionary of the form {parameter_name: parameter_value}.
+        Returns:
+            Dictionary of the form ``{parameter_name: parameter_value}``.
         """
         param_dict: Dict[str, Any] = {}
         if self.input_type == InputType.OPNIC:

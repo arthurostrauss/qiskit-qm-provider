@@ -14,6 +14,9 @@
 
 """Backend utilities: circuit-to-QUA translation, calibration handling, measurement outcomes.
 
+``add_basic_macros`` is re-exported here for backward compatibility; its canonical
+home is :mod:`qiskit_qm_provider.quam_macros.superconducting`.
+
 Author: Arthur Strauss
 Date: 2026-02-08
 """
@@ -21,7 +24,7 @@ Date: 2026-02-08
 from __future__ import annotations
 
 import warnings
-from typing import Any, List, TYPE_CHECKING, Dict, Literal, Type
+from typing import Any, List, TYPE_CHECKING, Dict, Type
 
 from qiskit.circuit import QuantumCircuit, Parameter
 from qiskit.circuit.controlflow import (
@@ -40,6 +43,8 @@ from quam.utils.qua_types import QuaVariableInt
 from qm import generate_qua_script
 from qm.qua import assign, Cast
 from ..additional_gates import CRGate, FSimGate, SYGate, SYdgGate
+# Re-exported for backward compatibility; canonical home is quam_macros.superconducting.
+from ..quam_macros.superconducting import add_basic_macros
 
 if TYPE_CHECKING:
     from qm_qasm import CompilationResult
@@ -329,71 +334,6 @@ def binary(val: int, num_bits: int = 0) -> str:
         Binary string without the ``0b`` prefix.
     """
     return bin(val)[2:].zfill(num_bits)
-
-
-def add_basic_macros(
-    backend: QuamRoot | QMBackend,
-    reset_type: Literal["active", "thermalize"] = "thermalize",
-):
-    """Populate a QuAM machine with standard gate-level macros.
-
-    Adds ``x``, ``sx``, ``rz``, ``sy``, ``sydg``, ``measure``, ``reset``, ``delay``,
-    ``id``, and ``cz`` macros. These definitions are **tailored to flux-tunable
-    transmon** hardware and assume pulse naming from ``FluxTunableQuam`` /
-    quam-builder (e.g. ``x180``, ``x90``, readout pulses, ``CZGate`` on pairs).
-    One can either pass a BaseQuam instance or a QMBackend instance.
-    If the latter is passed, the target will be updated accordingly.
-
-    This is a convenience starting point, not a universal hardware definition.
-    Override macros on your own ``QuamRoot`` for other platforms; coordinate with
-    the Quantum Machines team for quam-builder extensions as needed.
-
-    Args:
-        backend: A :class:`~.QMBackend` or :class:`~quam.core.QuamRoot` instance.
-        reset_type: Reset macro variant, ``"active"`` or ``"thermalize"``.
-    """
-
-    from qiskit_qm_provider.quam_macros.superconducting.single_qubit_macros import (
-        ResetMacro,
-        VirtualZMacro,
-        MeasureMacro,
-        DelayMacro,
-        IdMacro,
-    )
-    from quam.components.macro import PulseMacro
-    from quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates import (
-        CZGate,
-    )
-    from .qm_backend import QMBackend
-
-    if not isinstance(backend, (QuamRoot, QMBackend)):
-        raise ValueError("Backend should be a QuamRoot or QMBackend instance")
-    machine = backend.machine if isinstance(backend, QMBackend) else backend
-
-    for qubit in machine.active_qubits:
-        if not qubit.macros:
-
-            qubit.macros["x"] = PulseMacro(pulse="x180")
-            qubit.macros["rz"] = VirtualZMacro()
-            qubit.macros["sx"] = PulseMacro(pulse="x90")
-            qubit.macros["sy"] = PulseMacro(pulse="y90")
-            qubit.macros["sydg"] = PulseMacro(pulse="-y90")
-            qubit.macros["measure"] = MeasureMacro(pulse="readout")
-            qubit.macros["reset"] = ResetMacro(reset_type=reset_type, pi_pulse="x180", readout_pulse="readout")
-            qubit.macros["delay"] = DelayMacro()
-            qubit.macros["id"] = IdMacro()
-
-    for qubit_pair in machine.active_qubit_pairs:
-        if "cz" not in qubit_pair.macros:
-            try:
-                qubit_pair.macros["cz"] = None
-                qubit_pair.macros["cz"] = CZGate(
-                    flux_pulse_control=qubit_pair.qubit_control.z.operations["const"].get_reference(),
-                )
-            except ValueError as e:
-                warnings.warn(f"Could not add default two qubit gates. Add it manually if necessary. Error: {e}")
-    if isinstance(backend, QMBackend):
-        backend.update_target()
 
 
 def _require_qua_struct_handle(struct: Any) -> Any:

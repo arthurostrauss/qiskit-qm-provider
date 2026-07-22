@@ -133,3 +133,5 @@ qiskit_qm_provider/.DS_Store
 .vscode/settings.json
 
 pyrightconfig.json
+
+.cursor/

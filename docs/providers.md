@@ -12,11 +12,10 @@ The default QuAM class when none is supplied is **`FluxTunableQuam`** from [quam
 
 ## Seeding gate macros with add_basic_macros
 
-After obtaining a backend, populate standard operations with [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.add_basic_macros.rst):
+After obtaining a backend, populate standard operations with [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.quam_macros.superconducting.add_basic_macros.rst):
 
 ```python
-from qiskit_qm_provider import QMProvider
-from qiskit_qm_provider.backend.backend_utils import add_basic_macros
+from qiskit_qm_provider import QMProvider, add_basic_macros
 
 provider = QMProvider(state_folder_path="/path/to/quam/state")
 backend = provider.get_backend()
@@ -24,6 +23,8 @@ add_basic_macros(backend)
 ```
 
 **Important:** these macros (`x`, `sx`, `rz`, `sy`, `sydg`, `measure`, `reset`, `delay`, `id`, `cz`) are **currently tailored to flux-tunable transmon** topology. They assume pulse and macro naming conventions from `FluxTunableQuam` / quam-builder (e.g. `x180`, `x90`, readout pulses, `CZGate` on pairs). They are a **starting point**, not a universal hardware definition. Users on other platforms should override or replace macros on their own `QuamRoot`, and coordinate with the **Quantum Machines team** for appropriate [quam-builder](https://github.com/Quantum-Machines/quam-builder) extensions for their architecture.
+
+The function lives under `qiskit_qm_provider.quam_macros.superconducting` and is also re-exported from the top-level package and `qiskit_qm_provider.backend.backend_utils`. Extra keyword arguments are forwarded to `ResetMacro` via `**reset_macro_kwargs`.
 
 ## [`QMProvider`](apidocs/stubs/qiskit_qm_provider.providers.QMProvider.rst) — local QOP
 

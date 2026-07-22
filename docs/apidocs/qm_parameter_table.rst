@@ -18,6 +18,7 @@ Measurement outputs (``comp.outputs``) use a separate namespace — see :doc:`Me
    ParameterPool
    InputType
    Direction
+   QUAArray
    QUA2DArray
 
 .. currentmodule:: qiskit_qm_provider.parameter_table._mixins
