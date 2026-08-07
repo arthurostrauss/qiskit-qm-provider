@@ -39,7 +39,9 @@ def test_redeclare_in_new_program_is_clean_and_silent():
     with program():
         assert p.is_declared is False
         with warnings.catch_warnings():
-            warnings.simplefilter("error")  # any stale-stream warning becomes an error
+            # Only stale-stream UserWarnings are in scope; third-party DeprecationWarnings
+            # (e.g. qm-qua declare_stream → declare_output_stream) must not fail this check.
+            warnings.simplefilter("error", UserWarning)
             t.declare()
         assert p.is_declared is True
 
