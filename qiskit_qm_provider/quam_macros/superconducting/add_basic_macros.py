@@ -116,7 +116,7 @@ def add_basic_macros(
             try:
                 qubit_pair.macros["cz"] = None
                 qubit_pair.macros["cz"] = CZGate(
-                    flux_pulse_control=qubit_pair.qubit_control.z.operations["const"].get_reference(),
+                    flux_pulse_qubit=qubit_pair.qubit_control.z.operations["const"].get_reference(),
                 )
             except ValueError as e:
                 warnings.warn(f"Could not add default two qubit gates. Add it manually if necessary. Error: {e}")
