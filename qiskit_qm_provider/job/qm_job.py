@@ -52,6 +52,12 @@ from qiskit_qm_provider.backend.backend_utils import (
     experiment_result_header,
 )
 from .iqcc_job_mixin import IQCCJobMixin, result_handles_from_qm_job, aggregate_job_statuses
+from .qm_execution_options import (
+    compile_kwargs_for_qmm,
+    execute_kwargs_for_qmm,
+    is_cloud_quantum_machines_manager,
+    simulate_kwargs_for_qmm,
+)
 from .stream_assembly import bit_array_from_stream
 
 if TYPE_CHECKING:
@@ -361,29 +367,38 @@ class QMJob(JobV1):
 
         Simulation is handled separately (no queue used).
         """
-        compiler_options = self.metadata.get("compiler_options", None)
-        simulate = self.metadata.get("simulate", None)
+        qmm = self._backend.qmm
+        metadata = self.metadata
+        simulate = metadata.get("simulate", None)
+        execute_kwargs = execute_kwargs_for_qmm(qmm, metadata)
         if isinstance(simulate, SimulationConfig):
-            self._qm_jobs = [
-                self.qm.simulate(
-                    prog, simulate=simulate, compiler_options=compiler_options
+            if is_cloud_quantum_machines_manager(qmm):
+                raise ValueError(
+                    "SimulationConfig is not supported for CloudQuantumMachinesManager backends"
                 )
+            simulate_kwargs = simulate_kwargs_for_qmm(qmm, metadata)
+            self._qm_jobs = [
+                self.qm.simulate(prog, simulate=simulate, **simulate_kwargs)
                 for prog in self.programs
             ]
             self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
+        elif is_cloud_quantum_machines_manager(qmm):
+            self._qm_jobs = [
+                self.qm.execute(prog, **execute_kwargs) for prog in self.programs
+            ]
+            self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs).strip(",")
         else:
+            compile_kwargs = compile_kwargs_for_qmm(qmm, metadata)
             if len(self.programs) > 1:
                 program_ids = [
-                    self.qm.compile(prog, compiler_options=compiler_options)
-                    for prog in self.programs
+                    self.qm.compile(prog, **compile_kwargs) for prog in self.programs
                 ]
                 self._qm_jobs = [
                     self.qm.queue.add_compiled(pid) for pid in program_ids
                 ]
             else:
                 self._qm_jobs = [
-                    self.qm.execute(prog, compiler_options=compiler_options)
-                    for prog in self.programs
+                    self.qm.execute(prog, **execute_kwargs) for prog in self.programs
                 ]
             self._job_id = ",".join(
                 getattr(j, "id", "") for j in self._qm_jobs

@@ -35,7 +35,6 @@ from qiskit.result.models import MeasLevel
 
 from qm import (
     SimulationConfig,
-    CompilerOptionArguments,
     QuantumMachinesManager,
     generate_qua_script,
 )
@@ -45,6 +44,12 @@ from ..backend import QMBackend
 from ..backend.backend_utils import measurement_output_bit_sizes, require_classified_meas_level
 from ..parameter_table import InputType, ParameterPool, ParameterTable
 from .iqcc_job_mixin import IQCCJobMixin
+from .qm_execution_options import (
+    compile_kwargs_for_qmm,
+    execute_kwargs_for_qmm,
+    is_cloud_quantum_machines_manager,
+    simulate_kwargs_for_qmm,
+)
 from .qua_programs import plan_sampler_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
 from .stream_assembly import bit_array_from_measurement_stream
@@ -134,26 +139,33 @@ class QMSamplerJob(QMPrimitiveJob):
         """
         if self._qm_jobs is not None:
             raise RuntimeError("QM job has already been submitted")
-        compiler_options: Optional[CompilerOptionArguments] = self.metadata.get("compiler_options", None)
-        simulate: Optional[SimulationConfig] = self.metadata.get("simulate", None)
-
+        qmm = self._backend.qmm
+        metadata = self.metadata
+        simulate: Optional[SimulationConfig] = metadata.get("simulate", None)
         programs = self._programs
+        simulate_kwargs = simulate_kwargs_for_qmm(qmm, metadata)
+        compile_kwargs = compile_kwargs_for_qmm(qmm, metadata)
+        execute_kwargs = execute_kwargs_for_qmm(qmm, metadata)
 
-        if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
+        if simulate is not None and isinstance(qmm, QuantumMachinesManager):
             self._qm_jobs = [
-                self._backend.qmm.simulate(
+                qmm.simulate(
                     self._backend.qm_config,
                     prog,
                     simulate=simulate,
-                    compiler_options=compiler_options,
+                    **simulate_kwargs,
                 )
                 for prog in programs
             ]
             self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
+        elif is_cloud_quantum_machines_manager(qmm):
+            self._qm_jobs = [
+                self._backend.qm.execute(prog, **execute_kwargs) for prog in programs
+            ]
+            self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
         else:
             program_ids = [
-                self._backend.qm.compile(prog, compiler_options=compiler_options)
-                for prog in programs
+                self._backend.qm.compile(prog, **compile_kwargs) for prog in programs
             ]
             pending_jobs = [
                 self._backend.qm.queue.add_compiled(pid) for pid in program_ids

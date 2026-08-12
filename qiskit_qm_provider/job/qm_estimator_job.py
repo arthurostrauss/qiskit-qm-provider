@@ -31,7 +31,7 @@ from qiskit.primitives.containers import DataBin, BitArray
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit.primitives.containers import PubResult
 from qiskit.result import Counts
-from qm import SimulationConfig, CompilerOptionArguments, QuantumMachinesManager
+from qm import SimulationConfig, QuantumMachinesManager
 from qm.jobs.running_qm_job import RunningQmJob
 from typing import Optional, Union, List, Dict, Tuple, TYPE_CHECKING
 from ..backend import QMBackend
@@ -42,6 +42,12 @@ from ..parameter_table import (
     Parameter as QuaParameter,
 )
 from .iqcc_job_mixin import IQCCJobMixin
+from .qm_execution_options import (
+    compile_kwargs_for_qmm,
+    execute_kwargs_for_qmm,
+    is_cloud_quantum_machines_manager,
+    simulate_kwargs_for_qmm,
+)
 from .qua_programs import plan_estimator_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
 from ..primitives.qm_estimator import QMEstimatorOptions
@@ -403,18 +409,21 @@ class QMEstimatorJob(QMPrimitiveJob):
         """
         if self._qm_jobs is not None:
             raise RuntimeError("Job has already been submitted.")
-        compiler_options = self.metadata.get("compiler_options", None)
-        simulate = self.metadata.get("simulate", None)
-
+        qmm = self._backend.qmm
+        metadata = self.metadata
+        simulate = metadata.get("simulate", None)
         programs = self._programs
+        simulate_kwargs = simulate_kwargs_for_qmm(qmm, metadata)
+        compile_kwargs = compile_kwargs_for_qmm(qmm, metadata)
+        execute_kwargs = execute_kwargs_for_qmm(qmm, metadata)
 
-        if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
+        if simulate is not None and isinstance(qmm, QuantumMachinesManager):
             self._qm_jobs = [
-                self._backend.qmm.simulate(
+                qmm.simulate(
                     self._backend.qm_config,
                     prog,
                     simulate=simulate,
-                    compiler_options=compiler_options,
+                    **simulate_kwargs,
                 )
                 for prog in programs
             ]
@@ -422,10 +431,17 @@ class QMEstimatorJob(QMPrimitiveJob):
             for job, chunk in zip(self._qm_jobs, self._chunk_layout):
                 for global_idx in chunk:
                     self._push_plan_data(job, self._execution_plans[global_idx])
+        elif is_cloud_quantum_machines_manager(qmm):
+            self._qm_jobs = [
+                self._backend.qm.execute(prog, **execute_kwargs) for prog in programs
+            ]
+            self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
+            for job, chunk in zip(self._qm_jobs, self._chunk_layout):
+                for global_idx in chunk:
+                    self._push_plan_data(job, self._execution_plans[global_idx])
         else:
             program_ids = [
-                self._backend.qm.compile(prog, compiler_options=compiler_options)
-                for prog in programs
+                self._backend.qm.compile(prog, **compile_kwargs) for prog in programs
             ]
             pending_jobs = [
                 self._backend.qm.queue.add_compiled(pid) for pid in program_ids
