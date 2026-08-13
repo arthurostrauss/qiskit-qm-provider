@@ -64,10 +64,16 @@ def _execute_kwargs(qmm: Any, metadata: Mapping[str, Any]) -> dict[str, Any]:
 
 def enqueue_program(qm: Any, program: Program, **queue_kwargs: Any) -> Any:
     """Add *program* to the OPX queue (OPX1000 ``add_to_queue``, else OPX+ ``queue.add``)."""
-    try:
-        return qm.add_to_queue(program, **queue_kwargs)
-    except AttributeError:
-        return qm.queue.add(program, **queue_kwargs)
+    add_to_queue = getattr(qm, "add_to_queue", None)
+    if callable(add_to_queue):
+        return add_to_queue(program, **queue_kwargs)
+
+    queue = getattr(qm, "queue", None)
+    queue_add = getattr(queue, "add", None) if queue is not None else None
+    if not callable(queue_add):
+        raise AttributeError("Quantum machine does not support add_to_queue or queue.add")
+
+    return queue_add(program, **queue_kwargs)
 
 
 def submit_qua_programs(
