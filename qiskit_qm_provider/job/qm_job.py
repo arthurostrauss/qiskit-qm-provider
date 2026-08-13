@@ -38,7 +38,6 @@ from qiskit.result.models import (
 from qm import (
     QuantumMachine,
     Program,
-    SimulationConfig,
     StreamingResultFetcher,
     QuantumMachinesManager,
 )
@@ -52,12 +51,7 @@ from qiskit_qm_provider.backend.backend_utils import (
     experiment_result_header,
 )
 from .iqcc_job_mixin import IQCCJobMixin, result_handles_from_qm_job, aggregate_job_statuses
-from .qm_execution_options import (
-    compile_kwargs_for_qmm,
-    execute_kwargs_for_qmm,
-    is_cloud_quantum_machines_manager,
-    simulate_kwargs_for_qmm,
-)
+from .qm_execution_options import ensure_job_running, submit_qua_programs
 from .stream_assembly import bit_array_from_stream
 
 if TYPE_CHECKING:
@@ -205,10 +199,7 @@ class QMJob(JobV1):
             if CloudResultHandles is not None:
                 result_handle_types = (StreamingResultFetcher, CloudResultHandles)
 
-            running_jobs = [
-                job.wait_for_execution() if isinstance(job, QmPendingJob) else job
-                for job in qm_jobs
-            ]
+            running_jobs = [ensure_job_running(job) for job in qm_jobs]
             results_handles = [job.result_handles for job in running_jobs]
             for handle in results_handles:
                 if isinstance(handle, result_handle_types):
@@ -357,52 +348,20 @@ class QMJob(JobV1):
         return aggregate_job_statuses(self._qm_jobs)
 
     def submit(self):
-        """Compile and queue all QUA programs on the Quantum Machine.
+        """Submit all QUA programs on the Quantum Machine.
 
-        For local QM backends, all programs are first compiled via
-        ``qm.compile()`` and then added to the OPX queue via
-        ``qm.queue.add_compiled()``.  Separating compilation from execution
-        means all programs are compiled upfront so the OPX can execute them
-        back-to-back without recompilation stalls between chunks.
-
-        Simulation is handled separately (no queue used).
+        Cloud and simulation runs call ``qm.execute`` (with kwargs trimmed per
+        QMM type; simulation uses ``simulate=SimulationConfig``). Real hardware
+        enqueues every program via OPX1000 ``add_to_queue`` with OPX+
+        ``queue.add`` as fallback — looping ``execute`` would clear the queue
+        between chunks.
         """
-        qmm = self._backend.qmm
-        metadata = self.metadata
-        simulate = metadata.get("simulate", None)
-        execute_kwargs = execute_kwargs_for_qmm(qmm, metadata)
-        if isinstance(simulate, SimulationConfig):
-            if is_cloud_quantum_machines_manager(qmm):
-                raise ValueError(
-                    "SimulationConfig is not supported for CloudQuantumMachinesManager backends"
-                )
-            simulate_kwargs = simulate_kwargs_for_qmm(qmm, metadata)
-            self._qm_jobs = [
-                self.qm.simulate(prog, simulate=simulate, **simulate_kwargs)
-                for prog in self.programs
-            ]
-            self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
-        elif is_cloud_quantum_machines_manager(qmm):
-            self._qm_jobs = [
-                self.qm.execute(prog, **execute_kwargs) for prog in self.programs
-            ]
-            self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs).strip(",")
-        else:
-            compile_kwargs = compile_kwargs_for_qmm(qmm, metadata)
-            if len(self.programs) > 1:
-                program_ids = [
-                    self.qm.compile(prog, **compile_kwargs) for prog in self.programs
-                ]
-                self._qm_jobs = [
-                    self.qm.queue.add_compiled(pid) for pid in program_ids
-                ]
-            else:
-                self._qm_jobs = [
-                    self.qm.execute(prog, **execute_kwargs) for prog in self.programs
-                ]
-            self._job_id = ",".join(
-                getattr(j, "id", "") for j in self._qm_jobs
-            ).strip(",")
+        self._qm_jobs = submit_qua_programs(
+            self.qm, self._backend.qmm, self.programs, self.metadata
+        )
+        self._job_id = ",".join(
+            getattr(j, "id", "") for j in self._qm_jobs
+        ).strip(",")
 
     def cancel(self):
         """Cancel all underlying QM job(s)."""

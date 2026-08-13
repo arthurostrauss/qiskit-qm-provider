@@ -27,19 +27,29 @@ def aggregate_job_statuses(qm_jobs: Any) -> "JobStatus":
 
     Aggregates via worst-case priority: ERROR > CANCELLED > VALIDATING > QUEUED >
     RUNNING > DONE.  DONE is only returned when every job has completed.
+
+    Accepts both OPX+ status strings (``pending`` / ``completed`` / …) and
+    OPX1000 :meth:`~qm.api.v2.job_api.job_api.JobApi.get_status` values
+    (``In queue`` / ``Done`` / …).
     """
     from qiskit.providers import JobStatus
+
+    from .qm_execution_options import job_status_string
 
     mapping = {
         "unknown": JobStatus.ERROR,
         "pending": JobStatus.QUEUED,
+        "in queue": JobStatus.QUEUED,
         "running": JobStatus.RUNNING,
+        "processing": JobStatus.RUNNING,
         "completed": JobStatus.DONE,
+        "done": JobStatus.DONE,
         "canceled": JobStatus.CANCELLED,
+        "cancelled": JobStatus.CANCELLED,
         "loading": JobStatus.VALIDATING,
         "error": JobStatus.ERROR,
     }
-    statuses = [mapping.get(getattr(j, "status", "unknown"), JobStatus.ERROR) for j in qm_jobs]
+    statuses = [mapping.get(job_status_string(j), JobStatus.ERROR) for j in qm_jobs]
     for state in (JobStatus.ERROR, JobStatus.CANCELLED, JobStatus.VALIDATING, JobStatus.QUEUED, JobStatus.RUNNING):
         if state in statuses:
             return state

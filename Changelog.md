@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Unified QM program submission** — cloud and simulation always use ``qm.execute`` (simulation via ``simulate=SimulationConfig``); real hardware enqueues via OPX1000 ``add_to_queue`` with OPX+ ``queue.add`` fallback, replacing ``compile`` + ``queue.add_compiled``. Shared helpers live in ``qm_execution_options``.
+
 ### Fixed
 
 - **`QMJob.submit()` cloud execution** — trim `compiler_options` (and route through `CloudQuantumMachine.execute(options=…)`) when the backend uses `CloudQuantumMachinesManager`, matching the IQCC cloud client API and avoiding `TypeError` on every cloud job submission.
