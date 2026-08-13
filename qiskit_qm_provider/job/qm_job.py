@@ -262,12 +262,13 @@ class QMJob(JobV1):
         """Factory that mirrors the original ``QMBackend.run`` logic.
 
         This method performs:
+
         - circuit validation and optional reset insertion,
         - target / calibration updates,
         - QUA program generation via ``plan_run_programs``,
         - result object construction from streamed data,
-        - and submission via :meth:`QMJob.submit` (``CloudQuantumMachine.execute``
-          on IQCC cloud backends).
+        - and submission via :meth:`QMJob.submit`
+          (``CloudQuantumMachine.execute`` on IQCC cloud backends).
         """
         from .qua_programs import plan_run_programs, compute_locator
 
