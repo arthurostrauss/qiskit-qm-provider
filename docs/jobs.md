@@ -9,7 +9,7 @@ For method signatures, see the [Jobs API reference](apidocs/qm_job.rst).
 | Class | Returned by | `result()` type |
 |-------|-------------|-----------------|
 | [`QMJob`](apidocs/stubs/qiskit_qm_provider.job.QMJob.rst) | `backend.run()` (local / SaaS QMM) | [`qiskit.result.Result`](https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.result.Result) |
-| [`IQCCJob`](apidocs/stubs/qiskit_qm_provider.job.qm_job.IQCCJob.rst) | `backend.run()` (IQCC cloud) | Same as `QMJob`; cloud failures surface via [`run_data`](apidocs/stubs/qiskit_qm_provider.job.iqcc_job_mixin.IQCCJobMixin.rst) |
+| [`CloudQMJob`](apidocs/stubs/qiskit_qm_provider.job.qm_job.CloudQMJob.rst) | `backend.run()` (IQCC `CloudQuantumMachine`) | Same as `QMJob`; cloud failures surface via [`run_data`](apidocs/stubs/qiskit_qm_provider.job.iqcc_job_mixin.IQCCJobMixin.rst) |
 | [`QMSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.QMSamplerJob.rst) | `QMSamplerV2.run()` | [`PrimitiveResult`](https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.primitives.PrimitiveResult) of [`SamplerPubResult`](https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.primitives.SamplerPubResult) |
 | [`QMEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.QMEstimatorJob.rst) | `QMEstimatorV2.run()` | [`PrimitiveResult`](https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.primitives.PrimitiveResult) of estimator pub results |
 | [`IQCCSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.qm_sampler_job.IQCCSamplerJob.rst) | `QMSamplerV2.run()` on IQCC | Same as `QMSamplerJob` |
@@ -40,9 +40,7 @@ result = job.result()                      # blocks until streams are complete
 | `get_program(idx)` | ✓ | ✓ | Return the compiled `Program` at *idx* (default: `0`) |
 | `get_result_handles(idx)` | ✓ | ✓ | Return the result-handles fetcher at *idx* (default: `0`) |
 
-[`IQCCJob`](apidocs/stubs/qiskit_qm_provider.job.qm_job.IQCCJob.rst) does **not** implement `status()` — poll via IQCC cloud APIs or inspect [`run_data`](apidocs/stubs/qiskit_qm_provider.job.iqcc_job_mixin.IQCCJobMixin.rst).
-
-`IQCCSamplerJob` and `IQCCEstimatorJob` **do** implement `status()` via `IQCCJobMixin`, but with important caveats:
+[`CloudQMJob`](apidocs/stubs/qiskit_qm_provider.job.qm_job.CloudQMJob.rst), `IQCCSamplerJob`, and `IQCCEstimatorJob` implement `status()` via `IQCCJobMixin`, with important caveats:
 
 > IQCC execution is **synchronous** — `submit()` blocks until the remote OPX program completes, so `CloudJob.status` is unconditionally `"completed"` and carries no failure information.  `status()` therefore ignores `CloudJob.status` entirely and inspects `_run_data["stderr"]` instead: it returns `JobStatus.ERROR` when the cloud runtime's stderr contains a Python traceback, `JobStatus.DONE` otherwise.  Call `result()` to get the full [`IQCCCloudExecutionError`](apidocs/stubs/qiskit_qm_provider.job.iqcc_job_mixin.IQCCCloudExecutionError.rst) with the traceback text.
 
@@ -180,7 +178,7 @@ On IQCC, streamed jobs auto-generate a **sync hook** script that performs this p
 
 1. **Print the QUA** — `print(generate_qua_script(job.get_program()))` (or iterate `job.programs` for chunked jobs)
 2. **Check job id** — `job.job_id` after submit
-3. **Poll status** — `job.status()` (not on `IQCCJob`; on `IQCCSamplerJob` / `IQCCEstimatorJob` this checks stderr, not the QM SDK status property)
+3. **Poll status** — `job.status()` (on `CloudQMJob` / `IQCCSamplerJob` / `IQCCEstimatorJob` this checks cloud stderr, not the QM SDK status property)
 4. **IQCC failures** — `job.run_data` before trusting `result()`
 5. **Stream keys** — `job.get_result_handles()` for the active stream fetcher
 

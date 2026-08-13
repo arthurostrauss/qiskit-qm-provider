@@ -27,23 +27,44 @@ def aggregate_job_statuses(qm_jobs: Any) -> "JobStatus":
 
     Aggregates via worst-case priority: ERROR > CANCELLED > VALIDATING > QUEUED >
     RUNNING > DONE.  DONE is only returned when every job has completed.
+
+    Accepts both OPX+ status strings (``pending`` / ``completed`` / …) and
+    OPX1000 :meth:`~qm.api.v2.job_api.job_api.JobApi.get_status` values
+    (``In queue`` / ``Done`` / …).
     """
     from qiskit.providers import JobStatus
 
     mapping = {
         "unknown": JobStatus.ERROR,
         "pending": JobStatus.QUEUED,
+        "in queue": JobStatus.QUEUED,
         "running": JobStatus.RUNNING,
+        "processing": JobStatus.RUNNING,
         "completed": JobStatus.DONE,
+        "done": JobStatus.DONE,
         "canceled": JobStatus.CANCELLED,
+        "cancelled": JobStatus.CANCELLED,
         "loading": JobStatus.VALIDATING,
         "error": JobStatus.ERROR,
     }
-    statuses = [mapping.get(getattr(j, "status", "unknown"), JobStatus.ERROR) for j in qm_jobs]
+    statuses = [mapping.get(_job_status_string(j), JobStatus.ERROR) for j in qm_jobs]
     for state in (JobStatus.ERROR, JobStatus.CANCELLED, JobStatus.VALIDATING, JobStatus.QUEUED, JobStatus.RUNNING):
         if state in statuses:
             return state
     return JobStatus.DONE
+
+
+def _job_status_string(job: Any) -> str:
+    """Normalize a QM SDK job status to a lowercase string for Qiskit mapping."""
+    status = getattr(job, "status", None)
+    if callable(status):
+        status = status()
+    elif status is None:
+        get_status = getattr(job, "get_status", None)
+        status = get_status() if callable(get_status) else "unknown"
+    if status is None:
+        return "unknown"
+    return str(status).strip().lower()
 
 
 def result_handles_from_qm_job(qm_jobs: Any) -> Any:
@@ -95,7 +116,7 @@ def raise_if_iqcc_cloud_failed(qm_job: Any) -> None:
 
 
 class IQCCJobMixin:
-    """Mixin for IQCC wrapper jobs (:class:`IQCCJob`, primitive IQCC variants).
+    """Mixin for IQCC cloud jobs (:class:`CloudQMJob`, primitive IQCC variants).
 
     Exposes the raw IQCC cloud execution record and re-raises remote failures
     instead of surfacing misleading local ``KeyError``s on missing stream keys.

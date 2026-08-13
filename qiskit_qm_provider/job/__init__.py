@@ -25,14 +25,14 @@ Author: Arthur Strauss
 Date: 2026-02-08
 """
 
-from .qm_job import QMJob, IQCCJob
+from .qm_job import QMJob, CloudQMJob
 from .qm_sampler_job import QMSamplerJob
 from .qm_estimator_job import QMEstimatorJob
 from .iqcc_job_mixin import IQCCCloudExecutionError, IQCCJobMixin
 
 __all__ = [
     "QMJob",
-    "IQCCJob",
+    "CloudQMJob",
     "QMSamplerJob",
     "QMEstimatorJob",
     "IQCCCloudExecutionError",

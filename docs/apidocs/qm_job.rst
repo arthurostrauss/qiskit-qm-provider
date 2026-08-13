@@ -14,6 +14,7 @@ User guide: :doc:`../jobs` (job types, lifecycle, inspecting ``job.program``, IQ
    :toctree: stubs/
 
    QMJob
+   CloudQMJob
    QMSamplerJob
    QMEstimatorJob
    IQCCCloudExecutionError

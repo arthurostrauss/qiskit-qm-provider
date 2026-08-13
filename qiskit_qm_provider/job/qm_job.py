@@ -38,9 +38,7 @@ from qiskit.result.models import (
 from qm import (
     QuantumMachine,
     Program,
-    SimulationConfig,
     StreamingResultFetcher,
-    QuantumMachinesManager,
 )
 from qm.jobs.running_qm_job import RunningQmJob
 from qm.jobs.pending_job import QmPendingJob
@@ -52,11 +50,16 @@ from qiskit_qm_provider.backend.backend_utils import (
     experiment_result_header,
 )
 from .iqcc_job_mixin import IQCCJobMixin, result_handles_from_qm_job, aggregate_job_statuses
+from .qm_execution_options import (
+    ensure_job_running,
+    is_cloud_quantum_machines_manager,
+    join_job_ids,
+    submit_qua_programs,
+)
 from .stream_assembly import bit_array_from_stream
 
 if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import CloudJob, CloudQuantumMachine
-    from iqcc_cloud_client import IQCC_Cloud
 
 
 try:
@@ -199,10 +202,7 @@ class QMJob(JobV1):
             if CloudResultHandles is not None:
                 result_handle_types = (StreamingResultFetcher, CloudResultHandles)
 
-            running_jobs = [
-                job.wait_for_execution() if isinstance(job, QmPendingJob) else job
-                for job in qm_jobs
-            ]
+            running_jobs = [ensure_job_running(job) for job in qm_jobs]
             results_handles = [job.result_handles for job in running_jobs]
             for handle in results_handles:
                 if isinstance(handle, result_handle_types):
@@ -266,12 +266,9 @@ class QMJob(JobV1):
         - target / calibration updates,
         - QUA program generation via ``plan_run_programs``,
         - result object construction from streamed data,
-        - and submission of either a local ``QMJob`` or cloud ``IQCCJob``.
+        - and submission via :meth:`QMJob.submit` (``CloudQuantumMachine.execute``
+          on IQCC cloud backends).
         """
-        try:
-            from iqcc_cloud_client.qmm_cloud import CloudQuantumMachinesManager  # type: ignore[import]
-        except ImportError:
-            CloudQuantumMachinesManager = None
         from .qua_programs import plan_run_programs, compute_locator
 
         # Merge explicit options into backend defaults (preserving current behaviour)
@@ -318,14 +315,11 @@ class QMJob(JobV1):
             chunk_layout=chunk_layout,
         )
 
-        # Decide between local QM job and IQCCCloud job
-        qmm_types = (QuantumMachinesManager,)
-        if CloudQuantumMachinesManager is not None:
-            qmm_types = (QuantumMachinesManager, CloudQuantumMachinesManager)
-        if isinstance(backend.qmm, qmm_types):
-            job_cls: type[QMJob] = QMJob
-        else:
-            job_cls = IQCCJob
+        # Cloud backends (CloudQuantumMachinesManager → CloudQuantumMachine) use
+        # the same QMJob submit path; CloudQMJob only adds IQCC stderr diagnostics.
+        job_cls: type[QMJob] = (
+            CloudQMJob if is_cloud_quantum_machines_manager(backend.qmm) else QMJob
+        )
 
         job = job_cls(
             backend,
@@ -351,43 +345,18 @@ class QMJob(JobV1):
         return aggregate_job_statuses(self._qm_jobs)
 
     def submit(self):
-        """Compile and queue all QUA programs on the Quantum Machine.
+        """Submit all QUA programs on the Quantum Machine.
 
-        For local QM backends, all programs are first compiled via
-        ``qm.compile()`` and then added to the OPX queue via
-        ``qm.queue.add_compiled()``.  Separating compilation from execution
-        means all programs are compiled upfront so the OPX can execute them
-        back-to-back without recompilation stalls between chunks.
-
-        Simulation is handled separately (no queue used).
+        Cloud and simulation runs call ``qm.execute`` (with kwargs trimmed per
+        QMM type; simulation uses ``simulate=SimulationConfig``). Real hardware
+        enqueues every program via OPX1000 ``add_to_queue`` with OPX+
+        ``queue.add`` as fallback — looping ``execute`` would clear the queue
+        between chunks.
         """
-        compiler_options = self.metadata.get("compiler_options", None)
-        simulate = self.metadata.get("simulate", None)
-        if isinstance(simulate, SimulationConfig):
-            self._qm_jobs = [
-                self.qm.simulate(
-                    prog, simulate=simulate, compiler_options=compiler_options
-                )
-                for prog in self.programs
-            ]
-            self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
-        else:
-            if len(self.programs) > 1:
-                program_ids = [
-                    self.qm.compile(prog, compiler_options=compiler_options)
-                    for prog in self.programs
-                ]
-                self._qm_jobs = [
-                    self.qm.queue.add_compiled(pid) for pid in program_ids
-                ]
-            else:
-                self._qm_jobs = [
-                    self.qm.execute(prog, compiler_options=compiler_options)
-                    for prog in self.programs
-                ]
-            self._job_id = ",".join(
-                getattr(j, "id", "") for j in self._qm_jobs
-            ).strip(",")
+        self._qm_jobs = submit_qua_programs(
+            self.qm, self._backend.qmm, self.programs, self.metadata
+        )
+        self._job_id = join_job_ids(self._qm_jobs)
 
     def cancel(self):
         """Cancel all underlying QM job(s)."""
@@ -425,49 +394,14 @@ class QMJob(JobV1):
         return result_handles_from_qm_job(self._qm_jobs)[0 if idx is None else idx]
 
 
-class IQCCJob(IQCCJobMixin, QMJob):
-    """Job handle for IQCC cloud execution via :class:`~qiskit_qm_provider.providers.IQCCProvider`.
+class CloudQMJob(IQCCJobMixin, QMJob):
+    """:class:`QMJob` for IQCC :class:`~iqcc_cloud_client.qmm_cloud.CloudQuantumMachine` backends.
 
-    Submits programs through the IQCC cloud client. Job status is not available via
-    :meth:`status`; use IQCC cloud APIs to poll execution instead.
+    Submission uses the same :func:`~.submit_qua_programs` path as :class:`QMJob`
+    (``CloudQuantumMachine.execute``). This subclass only mixes in
+    :class:`~.IQCCJobMixin` for cloud ``run_data`` / stderr diagnostics.
 
-    Inspect cloud-side logs and failures via :attr:`run_data`. When the remote runtime
-    failed, :meth:`result` raises :class:`~qiskit_qm_provider.job.IQCCCloudExecutionError`
-    with the cloud ``stderr`` instead of a misleading local stream error.
+    Prefer constructing backends via :class:`~qiskit_qm_provider.providers.IQCCProvider`
+    so ``machine.connect()`` yields a :class:`~iqcc_cloud_client.qmm_cloud.CloudQuantumMachinesManager`
+    and ``backend.qm`` is a :class:`~iqcc_cloud_client.qmm_cloud.CloudQuantumMachine`.
     """
-
-    def __init__(
-        self,
-        backend: QMBackend,
-        job_id: str,
-        qm: IQCC_Cloud,
-        program: Program,
-        result_function: Callable[[List[Union[RunningQmJob, QmPendingJob]]], Result],
-        **kwargs,
-    ):
-        super().__init__(backend, job_id, qm, program, result_function, **kwargs)
-
-    def status(self) -> JobStatus:
-        raise NotImplementedError("IQCCJob does not support status method. Use IQCC_Cloud methods to check job status.")
-
-    def submit(self):
-        """Submit the job to the IQCC backend."""
-        if self._qm_jobs is not None:
-            raise RuntimeError("IQCC job has already been submitted")
-        try:
-            config = self.metadata["config"]
-        except KeyError:
-            raise ValueError("Job metadata must contain 'config' key for IQCC job submission")
-
-        qm: IQCC_Cloud = self.qm
-        timeout = self.metadata.get("timeout", None)
-
-        self._qm_jobs = [
-            qm.execute(
-                prog,
-                config,
-                options={"timeout": timeout} if timeout is not None else {},
-            )
-            for prog in self.programs
-        ]
-        self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)

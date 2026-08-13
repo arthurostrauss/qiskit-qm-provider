@@ -31,7 +31,6 @@ from qiskit.primitives.containers import DataBin, BitArray
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit.primitives.containers import PubResult
 from qiskit.result import Counts
-from qm import SimulationConfig, CompilerOptionArguments, QuantumMachinesManager
 from qm.jobs.running_qm_job import RunningQmJob
 from typing import Optional, Union, List, Dict, Tuple, TYPE_CHECKING
 from ..backend import QMBackend
@@ -42,6 +41,11 @@ from ..parameter_table import (
     Parameter as QuaParameter,
 )
 from .iqcc_job_mixin import IQCCJobMixin
+from .qm_execution_options import (
+    await_running_jobs,
+    join_job_ids,
+    submit_qua_programs,
+)
 from .qua_programs import plan_estimator_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
 from ..primitives.qm_estimator import QMEstimatorOptions
@@ -391,58 +395,28 @@ class QMEstimatorJob(QMPrimitiveJob):
     def submit(self):
         """Submit the job to the backend.
 
-        All QUA programs are first compiled via ``qm.compile()``, then added to
-        the OPX queue via ``qm.queue.add_compiled()``.  Separating compilation
-        from execution means the queue never stalls waiting for recompilation of
-        later chunks — all programs are compiled upfront so the OPX can start
-        executing them as soon as the queue is free.
-
-        For simulation runs, programs are submitted directly to the simulator
-        (no queue).  Results from all chunks are stitched back in
-        :meth:`_result_function` using the locator built at construction time.
+        Programs are submitted via :func:`~.submit_qua_programs` (``qm.execute``
+        for simulation; OPX1000 ``add_to_queue`` / OPX+ ``queue.add`` for real
+        hardware). Each chunk is waited on until running, then plan data is
+        streamed. IQCC sync-hook submission is handled by
+        :class:`IQCCEstimatorJob`.
         """
         if self._qm_jobs is not None:
             raise RuntimeError("Job has already been submitted.")
-        compiler_options = self.metadata.get("compiler_options", None)
-        simulate = self.metadata.get("simulate", None)
 
-        programs = self._programs
-
-        if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
-            self._qm_jobs = [
-                self._backend.qmm.simulate(
-                    self._backend.qm_config,
-                    prog,
-                    simulate=simulate,
-                    compiler_options=compiler_options,
-                )
-                for prog in programs
-            ]
-            self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
-            for job, chunk in zip(self._qm_jobs, self._chunk_layout):
-                for global_idx in chunk:
-                    self._push_plan_data(job, self._execution_plans[global_idx])
-        else:
-            program_ids = [
-                self._backend.qm.compile(prog, compiler_options=compiler_options)
-                for prog in programs
-            ]
-            pending_jobs = [
-                self._backend.qm.queue.add_compiled(pid) for pid in program_ids
-            ]
-            self._job_id = ",".join(j.id for j in pending_jobs)
-            self._qm_jobs = []
-            for i, (pending, chunk) in enumerate(zip(pending_jobs, self._chunk_layout)):
-                try:
-                    running = pending.wait_for_execution()
-                except Exception as exc:
-                    raise RuntimeError(
-                        f"Chunk {i} of {len(pending_jobs)} (PUB indices {chunk}) "
-                        f"failed to start execution"
-                    ) from exc
-                self._qm_jobs.append(running)
-                for global_idx in chunk:
-                    self._push_plan_data(running, self._execution_plans[global_idx])
+        pending_jobs = submit_qua_programs(
+            self._backend.qm,
+            self._backend.qmm,
+            self._programs,
+            self.metadata,
+        )
+        self._job_id = join_job_ids(pending_jobs)
+        self._qm_jobs = await_running_jobs(
+            pending_jobs, self._chunk_layout, entity="PUB indices"
+        )
+        for job, chunk in zip(self._qm_jobs, self._chunk_layout):
+            for global_idx in chunk:
+                self._push_plan_data(job, self._execution_plans[global_idx])
 
     def _calc_expval_map(
         self,
@@ -642,4 +616,4 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
                 if sync_hook_path is not None:
                     os.unlink(sync_hook_path)
 
-        self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
+        self._job_id = join_job_ids(self._qm_jobs)

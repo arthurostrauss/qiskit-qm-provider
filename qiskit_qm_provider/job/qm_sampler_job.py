@@ -33,18 +33,17 @@ from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit.providers import JobStatus
 from qiskit.result.models import MeasLevel
 
-from qm import (
-    SimulationConfig,
-    CompilerOptionArguments,
-    QuantumMachinesManager,
-    generate_qua_script,
-)
 from qm.jobs.running_qm_job import RunningQmJob
 
 from ..backend import QMBackend
 from ..backend.backend_utils import measurement_output_bit_sizes, require_classified_meas_level
 from ..parameter_table import InputType, ParameterPool, ParameterTable
 from .iqcc_job_mixin import IQCCJobMixin
+from .qm_execution_options import (
+    await_running_jobs,
+    join_job_ids,
+    submit_qua_programs,
+)
 from .qua_programs import plan_sampler_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
 from .stream_assembly import bit_array_from_measurement_stream
@@ -122,54 +121,27 @@ class QMSamplerJob(QMPrimitiveJob):
     def submit(self):
         """Submit the job to the backend.
 
-        All QUA programs are first compiled via ``qm.compile()``, then added to
-        the OPX queue via ``qm.queue.add_compiled()``.  Separating compilation
-        from execution means the queue never stalls waiting for recompilation of
-        later chunks — all programs are compiled upfront so the OPX can start
-        executing them as soon as the queue is free.
-
-        For simulation runs, programs are submitted directly to the simulator
-        (no queue).  Results from all chunks are stitched back in
-        :meth:`_result_function` using the locator built at construction time.
+        Programs are submitted via :func:`~.submit_qua_programs` (``qm.execute``
+        for simulation; OPX1000 ``add_to_queue`` / OPX+ ``queue.add`` for real
+        hardware). Each chunk is waited on until running, then parameters are
+        streamed. IQCC sync-hook submission is handled by
+        :class:`IQCCSamplerJob`.
         """
         if self._qm_jobs is not None:
             raise RuntimeError("QM job has already been submitted")
-        compiler_options: Optional[CompilerOptionArguments] = self.metadata.get("compiler_options", None)
-        simulate: Optional[SimulationConfig] = self.metadata.get("simulate", None)
 
-        programs = self._programs
-
-        if simulate is not None and isinstance(self._backend.qmm, QuantumMachinesManager):
-            self._qm_jobs = [
-                self._backend.qmm.simulate(
-                    self._backend.qm_config,
-                    prog,
-                    simulate=simulate,
-                    compiler_options=compiler_options,
-                )
-                for prog in programs
-            ]
-            self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
-        else:
-            program_ids = [
-                self._backend.qm.compile(prog, compiler_options=compiler_options)
-                for prog in programs
-            ]
-            pending_jobs = [
-                self._backend.qm.queue.add_compiled(pid) for pid in program_ids
-            ]
-            self._job_id = ",".join(j.id for j in pending_jobs)
-            self._qm_jobs = []
-            for i, (pending, chunk) in enumerate(zip(pending_jobs, self._chunk_layout)):
-                try:
-                    running = pending.wait_for_execution()
-                except Exception as exc:
-                    raise RuntimeError(
-                        f"Chunk {i} of {len(pending_jobs)} (circuit indices {chunk}) "
-                        f"failed to start execution"
-                    ) from exc
-                self._qm_jobs.append(running)
-                self._push_parameters(running, chunk)
+        pending_jobs = submit_qua_programs(
+            self._backend.qm,
+            self._backend.qmm,
+            self._programs,
+            self.metadata,
+        )
+        self._job_id = join_job_ids(pending_jobs)
+        self._qm_jobs = await_running_jobs(
+            pending_jobs, self._chunk_layout, entity="circuit indices"
+        )
+        for job, chunk in zip(self._qm_jobs, self._chunk_layout):
+            self._push_parameters(job, chunk)
 
     def _push_parameters(self, qm_job, chunk: List[int]) -> None:
         """Stream circuit parameters to the OPX for the given chunk of pub indices."""
@@ -252,5 +224,5 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
                 if sync_hook_path is not None:
                     os.unlink(sync_hook_path)
 
-        self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
+        self._job_id = join_job_ids(self._qm_jobs)
 

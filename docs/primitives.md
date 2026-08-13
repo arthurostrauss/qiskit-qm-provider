@@ -121,7 +121,7 @@ QMSamplerV2(backend=backend, options=QMSamplerOptions(input_type=InputType.OPNIC
 
 Cloud-side failures (config validation, `open_qm` errors, etc.) often surface locally as a misleading `KeyError` on a measurement stream (for example `KeyError: '__c_0'`) because the QUA program never reached the streaming stage.
 
-All IQCC wrapper jobs — [`IQCCJob`](apidocs/stubs/qiskit_qm_provider.job.qm_job.IQCCJob.rst), [`IQCCSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.qm_sampler_job.IQCCSamplerJob.rst), and [`IQCCEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.qm_estimator_job.IQCCEstimatorJob.rst) — expose the raw IQCC execution record on **`job.run_data`** (backed by `job.get_qm_job()._run_data`). Typical keys:
+All IQCC wrapper jobs — [`CloudQMJob`](apidocs/stubs/qiskit_qm_provider.job.qm_job.CloudQMJob.rst), [`IQCCSamplerJob`](apidocs/stubs/qiskit_qm_provider.job.qm_sampler_job.IQCCSamplerJob.rst), and [`IQCCEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.qm_estimator_job.IQCCEstimatorJob.rst) — expose the raw IQCC execution record on **`job.run_data`** (backed by `job.get_qm_job()._run_data`). Typical keys:
 
 | Key | Content |
 |-----|---------|
