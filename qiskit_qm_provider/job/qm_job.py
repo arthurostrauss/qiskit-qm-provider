@@ -51,7 +51,7 @@ from qiskit_qm_provider.backend.backend_utils import (
     experiment_result_header,
 )
 from .iqcc_job_mixin import IQCCJobMixin, result_handles_from_qm_job, aggregate_job_statuses
-from .qm_execution_options import ensure_job_running, submit_qua_programs
+from .qm_execution_options import ensure_job_running, join_job_ids, submit_qua_programs
 from .stream_assembly import bit_array_from_stream
 
 if TYPE_CHECKING:
@@ -359,9 +359,7 @@ class QMJob(JobV1):
         self._qm_jobs = submit_qua_programs(
             self.qm, self._backend.qmm, self.programs, self.metadata
         )
-        self._job_id = ",".join(
-            getattr(j, "id", "") for j in self._qm_jobs
-        ).strip(",")
+        self._job_id = join_job_ids(self._qm_jobs)
 
     def cancel(self):
         """Cancel all underlying QM job(s)."""
@@ -444,4 +442,4 @@ class IQCCJob(IQCCJobMixin, QMJob):
             )
             for prog in self.programs
         ]
-        self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
+        self._job_id = join_job_ids(self._qm_jobs)

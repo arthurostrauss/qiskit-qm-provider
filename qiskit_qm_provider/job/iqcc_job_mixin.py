@@ -34,8 +34,6 @@ def aggregate_job_statuses(qm_jobs: Any) -> "JobStatus":
     """
     from qiskit.providers import JobStatus
 
-    from .qm_execution_options import job_status_string
-
     mapping = {
         "unknown": JobStatus.ERROR,
         "pending": JobStatus.QUEUED,
@@ -49,11 +47,24 @@ def aggregate_job_statuses(qm_jobs: Any) -> "JobStatus":
         "loading": JobStatus.VALIDATING,
         "error": JobStatus.ERROR,
     }
-    statuses = [mapping.get(job_status_string(j), JobStatus.ERROR) for j in qm_jobs]
+    statuses = [mapping.get(_job_status_string(j), JobStatus.ERROR) for j in qm_jobs]
     for state in (JobStatus.ERROR, JobStatus.CANCELLED, JobStatus.VALIDATING, JobStatus.QUEUED, JobStatus.RUNNING):
         if state in statuses:
             return state
     return JobStatus.DONE
+
+
+def _job_status_string(job: Any) -> str:
+    """Normalize a QM SDK job status to a lowercase string for Qiskit mapping."""
+    status = getattr(job, "status", None)
+    if callable(status):
+        status = status()
+    elif status is None:
+        get_status = getattr(job, "get_status", None)
+        status = get_status() if callable(get_status) else "unknown"
+    if status is None:
+        return "unknown"
+    return str(status).strip().lower()
 
 
 def result_handles_from_qm_job(qm_jobs: Any) -> Any:

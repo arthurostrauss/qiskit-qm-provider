@@ -41,7 +41,11 @@ from ..parameter_table import (
     Parameter as QuaParameter,
 )
 from .iqcc_job_mixin import IQCCJobMixin
-from .qm_execution_options import ensure_job_running, submit_qua_programs
+from .qm_execution_options import (
+    await_running_jobs,
+    join_job_ids,
+    submit_qua_programs,
+)
 from .qua_programs import plan_estimator_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
 from ..primitives.qm_estimator import QMEstimatorOptions
@@ -406,19 +410,13 @@ class QMEstimatorJob(QMPrimitiveJob):
             self._programs,
             self.metadata,
         )
-        self._job_id = ",".join(getattr(j, "id", "") for j in pending_jobs)
-        self._qm_jobs = []
-        for i, (pending, chunk) in enumerate(zip(pending_jobs, self._chunk_layout)):
-            try:
-                running = ensure_job_running(pending)
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Chunk {i} of {len(pending_jobs)} (PUB indices {chunk}) "
-                    f"failed to start execution"
-                ) from exc
-            self._qm_jobs.append(running)
+        self._job_id = join_job_ids(pending_jobs)
+        self._qm_jobs = await_running_jobs(
+            pending_jobs, self._chunk_layout, entity="PUB indices"
+        )
+        for job, chunk in zip(self._qm_jobs, self._chunk_layout):
             for global_idx in chunk:
-                self._push_plan_data(running, self._execution_plans[global_idx])
+                self._push_plan_data(job, self._execution_plans[global_idx])
 
     def _calc_expval_map(
         self,
@@ -618,4 +616,4 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
                 if sync_hook_path is not None:
                     os.unlink(sync_hook_path)
 
-        self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
+        self._job_id = join_job_ids(self._qm_jobs)

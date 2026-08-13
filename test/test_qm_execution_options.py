@@ -6,15 +6,13 @@ import pytest
 
 from qm import QuantumMachinesManager, SimulationConfig
 
+from qiskit_qm_provider.job.iqcc_job_mixin import aggregate_job_statuses
 from qiskit_qm_provider.job.qm_execution_options import (
-    cloud_execute_options,
+    await_running_jobs,
     enqueue_program,
     ensure_job_running,
-    execute_kwargs_for_qmm,
     is_cloud_quantum_machines_manager,
-    job_status_string,
-    queue_kwargs_for_qmm,
-    should_execute_programs,
+    join_job_ids,
     submit_qua_programs,
 )
 
@@ -31,53 +29,75 @@ def local_qmm():
     return MagicMock(spec=QuantumMachinesManager)
 
 
-class TestQmExecutionOptions:
-    def test_is_cloud_quantum_machines_manager(self, cloud_qmm, local_qmm):
+class TestSubmitQuaPrograms:
+    def test_cloud_uses_execute_without_compiler_options(self, cloud_qmm):
+        qm = MagicMock()
+        qm.execute.return_value = MagicMock(id="c1")
+        programs = [MagicMock(), MagicMock()]
+        jobs = submit_qua_programs(
+            qm, cloud_qmm, programs, {"compiler_options": {"x": 1}, "timeout": 9}
+        )
+        assert len(jobs) == 2
+        assert qm.execute.call_args_list == [
+            call(programs[0], options={"timeout": 9}),
+            call(programs[1], options={"timeout": 9}),
+        ]
+
+    def test_cloud_omits_empty_options(self, cloud_qmm):
+        qm = MagicMock()
+        program = MagicMock()
+        submit_qua_programs(qm, cloud_qmm, [program], {"compiler_options": {"x": 1}})
+        qm.execute.assert_called_once_with(program)
+
+    def test_simulate_uses_execute(self, local_qmm):
+        qm = MagicMock()
+        simulate = SimulationConfig(duration=10)
+        program = MagicMock()
+        submit_qua_programs(
+            qm,
+            local_qmm,
+            [program],
+            {"simulate": simulate, "compiler_options": None},
+        )
+        qm.execute.assert_called_once_with(
+            program, compiler_options=None, simulate=simulate
+        )
+        qm.add_to_queue.assert_not_called()
+
+    def test_real_hardware_queues_with_compiler_options(self, local_qmm):
+        qm = MagicMock()
+        programs = [MagicMock(), MagicMock()]
+        jobs = submit_qua_programs(
+            qm, local_qmm, programs, {"simulate": None, "compiler_options": {"c": 1}}
+        )
+        assert len(jobs) == 2
+        assert qm.add_to_queue.call_count == 2
+        qm.add_to_queue.assert_any_call(programs[0], compiler_options={"c": 1})
+        qm.execute.assert_not_called()
+
+    def test_real_hardware_omits_none_compiler_options(self, local_qmm):
+        qm = MagicMock()
+        program = MagicMock()
+        submit_qua_programs(
+            qm, local_qmm, [program], {"simulate": None, "compiler_options": None}
+        )
+        qm.add_to_queue.assert_called_once_with(program)
+
+    def test_cloud_rejects_simulate(self, cloud_qmm):
+        with pytest.raises(ValueError, match="SimulationConfig"):
+            submit_qua_programs(
+                MagicMock(),
+                cloud_qmm,
+                [MagicMock()],
+                {"simulate": SimulationConfig(duration=1)},
+            )
+
+    def test_is_cloud_detection(self, cloud_qmm, local_qmm):
         assert is_cloud_quantum_machines_manager(cloud_qmm)
         assert not is_cloud_quantum_machines_manager(local_qmm)
 
-    def test_execute_kwargs_local_with_simulate(self, local_qmm):
-        simulate = SimulationConfig(duration=100)
-        metadata = {"compiler_options": {"foo": "bar"}, "simulate": simulate, "timeout": 60}
-        assert execute_kwargs_for_qmm(local_qmm, metadata) == {
-            "compiler_options": {"foo": "bar"},
-            "simulate": simulate,
-        }
 
-    def test_execute_kwargs_local_without_simulate(self, local_qmm):
-        metadata = {"compiler_options": None, "timeout": 60}
-        assert execute_kwargs_for_qmm(local_qmm, metadata) == {
-            "compiler_options": None,
-        }
-
-    def test_execute_kwargs_cloud_uses_options_dict(self, cloud_qmm):
-        metadata = {"compiler_options": {"foo": "bar"}, "timeout": 120}
-        assert execute_kwargs_for_qmm(cloud_qmm, metadata) == {
-            "options": {"timeout": 120},
-        }
-
-    def test_execute_kwargs_cloud_omits_empty_options(self, cloud_qmm):
-        metadata = {"compiler_options": {"foo": "bar"}}
-        assert execute_kwargs_for_qmm(cloud_qmm, metadata) == {}
-
-    def test_queue_kwargs_omit_none_compiler_options(self, local_qmm, cloud_qmm):
-        assert queue_kwargs_for_qmm(local_qmm, {"compiler_options": None}) == {}
-        assert queue_kwargs_for_qmm(cloud_qmm, {"compiler_options": {"x": 1}}) == {}
-        assert queue_kwargs_for_qmm(local_qmm, {"compiler_options": {"x": 1}}) == {
-            "compiler_options": {"x": 1},
-        }
-
-    def test_cloud_execute_options_timeout_only(self):
-        assert cloud_execute_options({"timeout": 30}) == {"timeout": 30}
-        assert cloud_execute_options({}) == {}
-
-    def test_should_execute_programs(self, cloud_qmm, local_qmm):
-        assert should_execute_programs(cloud_qmm, {})
-        assert should_execute_programs(local_qmm, {"simulate": SimulationConfig(duration=1)})
-        assert not should_execute_programs(local_qmm, {"simulate": None})
-
-
-class TestEnqueueAndSubmit:
+class TestEnqueueAndAwait:
     def test_enqueue_prefers_add_to_queue(self):
         qm = MagicMock()
         qm.add_to_queue.return_value = "opx1000-job"
@@ -93,57 +113,6 @@ class TestEnqueueAndSubmit:
         assert enqueue_program(qm, program, compiler_options={"a": 1}) == "opx-plus-job"
         qm.queue.add.assert_called_once_with(program, compiler_options={"a": 1})
 
-    def test_submit_cloud_uses_execute(self, cloud_qmm):
-        qm = MagicMock()
-        qm.execute.return_value = MagicMock(id="c1")
-        programs = [MagicMock(), MagicMock()]
-        jobs = submit_qua_programs(
-            qm, cloud_qmm, programs, {"compiler_options": {"x": 1}, "timeout": 9}
-        )
-        assert len(jobs) == 2
-        assert qm.execute.call_args_list == [
-            call(programs[0], options={"timeout": 9}),
-            call(programs[1], options={"timeout": 9}),
-        ]
-
-    def test_submit_simulate_uses_execute(self, local_qmm):
-        qm = MagicMock()
-        simulate = SimulationConfig(duration=10)
-        program = MagicMock()
-        submit_qua_programs(
-            qm,
-            local_qmm,
-            [program],
-            {"simulate": simulate, "compiler_options": None},
-        )
-        qm.execute.assert_called_once_with(
-            program, compiler_options=None, simulate=simulate
-        )
-        qm.add_to_queue.assert_not_called()
-        qm.queue.add.assert_not_called()
-
-    def test_submit_real_hardware_queues(self, local_qmm):
-        qm = MagicMock()
-        qm.add_to_queue.side_effect = lambda prog, **kw: MagicMock(id=f"q-{id(prog)}")
-        programs = [MagicMock(), MagicMock()]
-        jobs = submit_qua_programs(
-            qm, local_qmm, programs, {"simulate": None, "compiler_options": {"c": 1}}
-        )
-        assert len(jobs) == 2
-        assert qm.add_to_queue.call_count == 2
-        qm.execute.assert_not_called()
-
-    def test_submit_cloud_rejects_simulate(self, cloud_qmm):
-        with pytest.raises(ValueError, match="SimulationConfig"):
-            submit_qua_programs(
-                MagicMock(),
-                cloud_qmm,
-                [MagicMock()],
-                {"simulate": SimulationConfig(duration=1)},
-            )
-
-
-class TestEnsureJobRunningAndStatus:
     def test_ensure_job_running_pending(self):
         pending = MagicMock()
         running = MagicMock()
@@ -155,10 +124,27 @@ class TestEnsureJobRunningAndStatus:
         assert ensure_job_running(job) is job
         job.wait_until.assert_called_once_with("Running")
 
-    def test_job_status_string_from_get_status(self):
+    def test_await_running_jobs_wraps_chunk_errors(self):
+        pending = MagicMock()
+        pending.wait_for_execution.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="Chunk 0 of 1 \\(PUB indices \\[3\\]\\)"):
+            await_running_jobs([pending], [[3]], entity="PUB indices")
+
+    def test_join_job_ids(self):
+        assert join_job_ids([MagicMock(id="a"), MagicMock(id="b")]) == "a,b"
+        assert join_job_ids([MagicMock(spec=[]), MagicMock(id="b")]) == "b"
+
+
+class TestStatusAggregation:
+    def test_opx1000_status_strings(self):
+        from qiskit.providers import JobStatus
+
         job = MagicMock(spec=["get_status"])
         job.get_status.return_value = "In queue"
-        assert job_status_string(job) == "in queue"
+        assert aggregate_job_statuses([job]) == JobStatus.QUEUED
+
+        job.get_status.return_value = "Done"
+        assert aggregate_job_statuses([job]) == JobStatus.DONE
 
 
 class TestQMJobSubmit:
@@ -185,6 +171,7 @@ class TestQMJobSubmit:
         cloud_qm.execute.assert_called_once_with(
             job.programs[0], options={"timeout": 90}
         )
+        assert job.job_id() == "cloud-job-1"
 
     def test_submit_real_hardware_uses_queue(self, local_qmm):
         from qiskit_qm_provider.job.qm_job import QMJob

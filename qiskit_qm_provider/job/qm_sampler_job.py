@@ -39,7 +39,11 @@ from ..backend import QMBackend
 from ..backend.backend_utils import measurement_output_bit_sizes, require_classified_meas_level
 from ..parameter_table import InputType, ParameterPool, ParameterTable
 from .iqcc_job_mixin import IQCCJobMixin
-from .qm_execution_options import ensure_job_running, submit_qua_programs
+from .qm_execution_options import (
+    await_running_jobs,
+    join_job_ids,
+    submit_qua_programs,
+)
 from .qua_programs import plan_sampler_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
 from .stream_assembly import bit_array_from_measurement_stream
@@ -132,18 +136,12 @@ class QMSamplerJob(QMPrimitiveJob):
             self._programs,
             self.metadata,
         )
-        self._job_id = ",".join(getattr(j, "id", "") for j in pending_jobs)
-        self._qm_jobs = []
-        for i, (pending, chunk) in enumerate(zip(pending_jobs, self._chunk_layout)):
-            try:
-                running = ensure_job_running(pending)
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Chunk {i} of {len(pending_jobs)} (circuit indices {chunk}) "
-                    f"failed to start execution"
-                ) from exc
-            self._qm_jobs.append(running)
-            self._push_parameters(running, chunk)
+        self._job_id = join_job_ids(pending_jobs)
+        self._qm_jobs = await_running_jobs(
+            pending_jobs, self._chunk_layout, entity="circuit indices"
+        )
+        for job, chunk in zip(self._qm_jobs, self._chunk_layout):
+            self._push_parameters(job, chunk)
 
     def _push_parameters(self, qm_job, chunk: List[int]) -> None:
         """Stream circuit parameters to the OPX for the given chunk of pub indices."""
@@ -226,5 +224,5 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
                 if sync_hook_path is not None:
                     os.unlink(sync_hook_path)
 
-        self._job_id = ",".join(getattr(j, "id", "") for j in self._qm_jobs)
+        self._job_id = join_job_ids(self._qm_jobs)
 
