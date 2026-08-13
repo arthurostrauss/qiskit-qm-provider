@@ -27,7 +27,7 @@ classifiers=[
 dependencies = [
     "qiskit",
     "qualang-tools>=0.16.0",
-    "quam >=0.4.1",
+    "quam >=0.4.2",
     "sympy>=1.14.0",
     "qm-qua >=1.2.3",
     "openqasm3",
