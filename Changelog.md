@@ -5,12 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.4] - 2026-08-13
 
 ### Changed
 
 - **Canonical IQCC cloud path** — `backend.run()` on IQCC backends always uses `CloudQuantumMachine.execute` via `QMJob` / `CloudQMJob`. Removed the undocumented legacy `IQCCJob` path that treated `IQCC_Cloud` itself as the quantum machine. Prefer `IQCCProvider.get_backend()` so QuAM `connect()` yields `CloudQuantumMachinesManager`.
 - **Unified QM program submission** — cloud and simulation always use ``qm.execute`` (simulation via ``simulate=SimulationConfig``); real hardware enqueues via OPX1000 ``add_to_queue`` with OPX+ ``queue.add`` fallback, replacing ``compile`` + ``queue.add_compiled``. Shared helpers live in ``qm_execution_options``.
+- **`quam` lower bound** raised to `>=0.4.2` so the provider stays importable with current `qm-qua` (0.4.1 imported a removed `AmpValuesType`).
 
 ### Fixed
 
