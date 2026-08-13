@@ -14,16 +14,15 @@ The core entry point is `QMBackend.quantum_circuit_to_qua()` (Qiskit circuit →
   need to reinstall anything.
 
 ### Non-obvious dependency gotchas (important)
-- **The committed `uv.lock` is internally inconsistent.** It pins `quam==0.4.1` together with
-  `qm-qua==1.2.6`, but `quam` 0.4.1 imports `AmpValuesType` from `qm.qua._dsl`, which `qm-qua`
-  1.2.6 removed — so a plain `uv sync` yields an env that **cannot import the package**. The fix
-  (applied by the update script) is to install `quam==0.6.0` (allowed by the provider's
-  `quam>=0.4.1` and quam-builder's `quam>=0.4.0`). Do not "fix" this by downgrading `qm-qua`.
+- **`quam` must stay `>=0.4.2`.** `quam` 0.4.1 imports `AmpValuesType` from `qm.qua._dsl`, which
+  `qm-qua` 1.2.6 removed, so 0.4.1 + current `qm-qua` cannot import the package. `pyproject.toml`
+  pins `quam>=0.4.2` and `uv.lock` resolves `quam==0.6.0`, so a plain `uv sync` gives a working
+  env. Do not lower this bound or "fix" import errors by downgrading `qm-qua`.
 - **`quam-builder` and `pytest` are not in `uv.lock`.** `quam-builder` is not on PyPI and is
   installed from git at `v0.4.0` (see `README.md` / `docs/installation.md`). `pytest` is a dev
   tool installed on top of the sync.
 - Installing `quam-builder` upgrades `qualang-tools` to `0.23.0` (it requires `>=0.22.0`); this is
-  expected and correct, even though the lock pins `0.19.5`.
+  expected and correct.
 
 ### quarc / hardware caveats
 - `quarc` (Open Acceleration Stack / QUARC) is a **private-alpha package, not on PyPI**, so
