@@ -136,6 +136,11 @@ def await_running_jobs(
     entity: str,
 ) -> List[Any]:
     """Wait until each pending chunk job is running; raise on per-chunk failure."""
+    if len(pending_jobs) != len(chunk_layout):
+        raise ValueError(
+            f"Expected one chunk entry per pending job; got {len(pending_jobs)} jobs and {len(chunk_layout)} {entity} chunks"
+        )
+
     running_jobs: List[Any] = []
     for i, (pending, chunk) in enumerate(zip(pending_jobs, chunk_layout)):
         try:
