@@ -627,7 +627,7 @@ class QMBackend(Backend):
             options: Backend run options (shots, simulate, compiler options, etc.).
 
         Returns:
-            A :class:`QMJob` (or :class:`IQCCJob` for cloud backends) instance.
+            A :class:`QMJob` (or :class:`CloudQMJob` for IQCC cloud backends) instance.
         """
         from ..job.qm_job import QMJob
 

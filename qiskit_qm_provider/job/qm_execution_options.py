@@ -24,7 +24,8 @@ Execution always goes through the quantum-machine instance:
   :meth:`~qm.jobs.job_queue_old_api.QmQueue.add`.
 
 IQCC sync-hook submission is **not** handled here — see ``IQCCSamplerJob`` /
-``IQCCEstimatorJob`` / ``IQCCJob``.
+``IQCCEstimatorJob``. Cloud ``backend.run()`` uses :class:`CloudQMJob` /
+:meth:`CloudQuantumMachine.execute` via this module.
 """
 
 from __future__ import annotations

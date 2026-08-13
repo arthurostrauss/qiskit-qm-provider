@@ -150,7 +150,7 @@ class TestStatusAggregation:
 class TestQMJobSubmit:
     def test_submit_cloud_execute_without_compiler_options(self):
         from iqcc_cloud_client.qmm_cloud import CloudQuantumMachinesManager
-        from qiskit_qm_provider.job.qm_job import QMJob
+        from qiskit_qm_provider.job.qm_job import CloudQMJob, QMJob
 
         cloud_qm = MagicMock()
         cloud_qm.execute.return_value = MagicMock(id="cloud-job-1")
@@ -158,7 +158,7 @@ class TestQMJobSubmit:
         class FakeBackend:
             qmm = object.__new__(CloudQuantumMachinesManager)
 
-        job = QMJob(
+        job = CloudQMJob(
             FakeBackend(),
             "pending",
             cloud_qm,
@@ -167,11 +167,20 @@ class TestQMJobSubmit:
             compiler_options={"should_not_pass": True},
             timeout=90,
         )
+        assert isinstance(job, QMJob)
         job.submit()
         cloud_qm.execute.assert_called_once_with(
             job.programs[0], options={"timeout": 90}
         )
         assert job.job_id() == "cloud-job-1"
+
+    def test_from_circuits_selects_cloud_qm_job(self):
+        from iqcc_cloud_client.qmm_cloud import CloudQuantumMachinesManager
+        from qiskit_qm_provider.job.qm_job import CloudQMJob, QMJob
+        from qiskit_qm_provider.job.qm_execution_options import is_cloud_quantum_machines_manager
+
+        assert is_cloud_quantum_machines_manager(object.__new__(CloudQuantumMachinesManager))
+        assert issubclass(CloudQMJob, QMJob)
 
     def test_submit_real_hardware_uses_queue(self, local_qmm):
         from qiskit_qm_provider.job.qm_job import QMJob

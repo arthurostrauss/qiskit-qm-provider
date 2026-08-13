@@ -37,7 +37,6 @@ from ..backend.backend_utils import validate_circuits, require_classified_meas_l
 from ..parameter_table import InputType
 from ..backend.qm_backend import QMBackend
 from qiskit.result.models import MeasLevel, MeasReturnType
-from qm import QuantumMachinesManager
 
 meas_level_dict = {
     "classified": MeasLevel.CLASSIFIED,
@@ -129,7 +128,13 @@ class QMSamplerV2(BaseSamplerV2):
             shots = self._options.default_shots
         coerced_pubs = [SamplerPub.coerce(pub, shots) for pub in pubs]
         coerced_pubs = self._validate_pubs(coerced_pubs)
-        job_obj = QMSamplerJob if isinstance(self.backend.qmm, QuantumMachinesManager) else IQCCSamplerJob
+        from ..job.qm_execution_options import is_cloud_quantum_machines_manager
+
+        job_obj = (
+            IQCCSamplerJob
+            if is_cloud_quantum_machines_manager(self.backend.qmm)
+            else QMSamplerJob
+        )
         if self.options.input_type == InputType.OPNIC and issubclass(job_obj, IQCCSamplerJob):
             raise NotImplementedError(
                 "OPNIC input_type is not yet supported for IQCC cloud jobs; use INPUT_STREAM or IO1/IO2."

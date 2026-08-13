@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Canonical IQCC cloud path** — `backend.run()` on IQCC backends always uses `CloudQuantumMachine.execute` via `QMJob` / `CloudQMJob`. Removed the undocumented legacy `IQCCJob` path that treated `IQCC_Cloud` itself as the quantum machine. Prefer `IQCCProvider.get_backend()` so QuAM `connect()` yields `CloudQuantumMachinesManager`.
 - **Unified QM program submission** — cloud and simulation always use ``qm.execute`` (simulation via ``simulate=SimulationConfig``); real hardware enqueues via OPX1000 ``add_to_queue`` with OPX+ ``queue.add`` fallback, replacing ``compile`` + ``queue.add_compiled``. Shared helpers live in ``qm_execution_options``.
 
 ### Fixed

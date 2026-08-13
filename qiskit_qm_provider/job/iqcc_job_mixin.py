@@ -116,7 +116,7 @@ def raise_if_iqcc_cloud_failed(qm_job: Any) -> None:
 
 
 class IQCCJobMixin:
-    """Mixin for IQCC wrapper jobs (:class:`IQCCJob`, primitive IQCC variants).
+    """Mixin for IQCC cloud jobs (:class:`CloudQMJob`, primitive IQCC variants).
 
     Exposes the raw IQCC cloud execution record and re-raises remote failures
     instead of surfacing misleading local ``KeyError``s on missing stream keys.
