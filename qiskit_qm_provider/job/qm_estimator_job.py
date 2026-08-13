@@ -41,11 +41,7 @@ from ..parameter_table import (
     Parameter as QuaParameter,
 )
 from .iqcc_job_mixin import IQCCJobMixin
-from .qm_execution_options import (
-    ensure_job_running,
-    should_execute_programs,
-    submit_qua_programs,
-)
+from .qm_execution_options import ensure_job_running, submit_qua_programs
 from .qua_programs import plan_estimator_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
 from ..primitives.qm_estimator import QMEstimatorOptions
@@ -395,33 +391,22 @@ class QMEstimatorJob(QMPrimitiveJob):
     def submit(self):
         """Submit the job to the backend.
 
-        Cloud and simulation runs call ``qm.execute`` (simulation via
-        ``simulate=SimulationConfig``). Real hardware enqueues every program
-        via OPX1000 ``add_to_queue`` with OPX+ ``queue.add`` as fallback, then
-        waits until each chunk is running before streaming plan data.
-
-        Results from all chunks are stitched back in :meth:`_result_function`
-        using the locator built at construction time.
+        Programs are submitted via :func:`~.submit_qua_programs` (``qm.execute``
+        for simulation; OPX1000 ``add_to_queue`` / OPX+ ``queue.add`` for real
+        hardware). Each chunk is waited on until running, then plan data is
+        streamed. IQCC sync-hook submission is handled by
+        :class:`IQCCEstimatorJob`.
         """
         if self._qm_jobs is not None:
             raise RuntimeError("Job has already been submitted.")
 
-        qmm = self._backend.qmm
         pending_jobs = submit_qua_programs(
             self._backend.qm,
-            qmm,
+            self._backend.qmm,
             self._programs,
             self.metadata,
         )
         self._job_id = ",".join(getattr(j, "id", "") for j in pending_jobs)
-
-        if should_execute_programs(qmm, self.metadata):
-            self._qm_jobs = list(pending_jobs)
-            for job, chunk in zip(self._qm_jobs, self._chunk_layout):
-                for global_idx in chunk:
-                    self._push_plan_data(job, self._execution_plans[global_idx])
-            return
-
         self._qm_jobs = []
         for i, (pending, chunk) in enumerate(zip(pending_jobs, self._chunk_layout)):
             try:

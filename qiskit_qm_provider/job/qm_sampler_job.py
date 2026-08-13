@@ -39,11 +39,7 @@ from ..backend import QMBackend
 from ..backend.backend_utils import measurement_output_bit_sizes, require_classified_meas_level
 from ..parameter_table import InputType, ParameterPool, ParameterTable
 from .iqcc_job_mixin import IQCCJobMixin
-from .qm_execution_options import (
-    ensure_job_running,
-    should_execute_programs,
-    submit_qua_programs,
-)
+from .qm_execution_options import ensure_job_running, submit_qua_programs
 from .qua_programs import plan_sampler_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
 from .stream_assembly import bit_array_from_measurement_stream
@@ -121,32 +117,22 @@ class QMSamplerJob(QMPrimitiveJob):
     def submit(self):
         """Submit the job to the backend.
 
-        Cloud and simulation runs call ``qm.execute`` (simulation via
-        ``simulate=SimulationConfig``). Real hardware enqueues every program
-        via OPX1000 ``add_to_queue`` with OPX+ ``queue.add`` as fallback, then
-        waits until each chunk is running before streaming parameters.
-
-        Results from all chunks are stitched back in :meth:`_result_function`
-        using the locator built at construction time.
+        Programs are submitted via :func:`~.submit_qua_programs` (``qm.execute``
+        for simulation; OPX1000 ``add_to_queue`` / OPX+ ``queue.add`` for real
+        hardware). Each chunk is waited on until running, then parameters are
+        streamed. IQCC sync-hook submission is handled by
+        :class:`IQCCSamplerJob`.
         """
         if self._qm_jobs is not None:
             raise RuntimeError("QM job has already been submitted")
 
-        qmm = self._backend.qmm
         pending_jobs = submit_qua_programs(
             self._backend.qm,
-            qmm,
+            self._backend.qmm,
             self._programs,
             self.metadata,
         )
         self._job_id = ",".join(getattr(j, "id", "") for j in pending_jobs)
-
-        # Cloud / simulation execute paths return already-started jobs; parameter
-        # streaming for those backends is handled elsewhere (or not required).
-        if should_execute_programs(qmm, self.metadata):
-            self._qm_jobs = list(pending_jobs)
-            return
-
         self._qm_jobs = []
         for i, (pending, chunk) in enumerate(zip(pending_jobs, self._chunk_layout)):
             try:
