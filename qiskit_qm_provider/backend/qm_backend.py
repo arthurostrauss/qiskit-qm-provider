@@ -19,8 +19,10 @@ Date: 2026-02-08
 """
 
 from __future__ import annotations
+import importlib.util
 import warnings
 from typing import (
+    Any,
     Iterable,
     List,
     Dict,
@@ -71,35 +73,20 @@ if TYPE_CHECKING:
     )
     from qm_qasm import QubitsMapping, Compiler
     from quam.utils.qua_types import Scalar
+    from qiskit.pulse import Schedule, ScheduleBlock
+    from qiskit.pulse.channels import Channel as QiskitChannel
     from ..job.qm_job import QMJob
     from .qua_circuit_compilation import QuaCircuitCompilation
+else:
+    # Inspectable stand-in so ``channel_mapping`` type hints work without qiskit.pulse.
+    QiskitChannel = Any
 
 __all__ = ["QMBackend", "QISKIT_PULSE_AVAILABLE"]
 
-try:  # Importing Qiskit Pulse components
-    from qiskit.pulse import (
-        DriveChannel,
-        MeasureChannel,
-        AcquireChannel,
-        ControlChannel,
-        Schedule,
-        ScheduleBlock,
-        Play,
-        Waveform,
-        SymbolicPulse,
-    )
-    from qiskit.pulse.channels import Channel as QiskitChannel
-
-    QISKIT_PULSE_AVAILABLE = True
-except ImportError:
-    warnings.warn(
-        "Qiskit Pulse is not available, some features of the QM backend will not be available",
-        ImportWarning,
-    )
-    QISKIT_PULSE_AVAILABLE = False
-    QiskitChannel = DriveChannel = MeasureChannel = AcquireChannel = ControlChannel = Schedule = ScheduleBlock = (
-        Play
-    ) = Waveform = SymbolicPulse = None
+# Probe without importing Pulse objects (removed in Qiskit 2.x). No warning:
+# circuit-only usage is the default path, and Pulse-gated APIs still raise via
+# :func:`requires_qiskit_pulse`.
+QISKIT_PULSE_AVAILABLE = importlib.util.find_spec("qiskit.pulse") is not None
 
 
 def requires_qiskit_pulse(func):
@@ -138,9 +125,9 @@ class QMBackend(Backend):
             machine: The QuAM instance to wrap.
             channel_mapping: Optional mapping from Qiskit Pulse channels
                 (``DriveChannel``, ``ControlChannel``, ``MeasureChannel``, …) to
-                QuAM channels. Required for converting Pulse schedules into
-                parametric QUA macros (Qiskit < 2.0; schedules must have fixed
-                durations).
+                QuAM channels. Used only when Qiskit Pulse is installed
+                (Qiskit < 2.0) to convert Pulse schedules into parametric QUA
+                macros (schedules must have fixed durations).
             init_macro: Optional QUA macro invoked at the start of each program to
                 initialize the QPU.
             qmm: Optional ``QuantumMachinesManager`` or
@@ -570,14 +557,20 @@ class QMBackend(Backend):
         """
         Get the drive channel for a given qubit (should be mapped to a quantum element in configuration)
         """
+        from qiskit.pulse import DriveChannel
+
         return DriveChannel(qubit)
 
     @requires_qiskit_pulse
     def measure_channel(self, qubit: int):
+        from qiskit.pulse import MeasureChannel
+
         return MeasureChannel(qubit)
 
     @requires_qiskit_pulse
     def acquire_channel(self, qubit: int):
+        from qiskit.pulse import AcquireChannel
+
         return AcquireChannel(qubit)
 
     @requires_qiskit_pulse
@@ -601,6 +594,8 @@ class QMBackend(Backend):
             NotImplementedError: if the backend doesn't support querying the
                 measurement mapping
         """
+        from qiskit.pulse import ControlChannel
+
         channels = []
         qubits = list(qubits)
         if len(qubits) != 2:
@@ -686,6 +681,7 @@ class QMBackend(Backend):
                 :class:`~qiskit.pulse.ScheduleBlock`, each ``Play`` instruction
                 is stored as ``"{name}_{i}"``; for a single pulse, ``"{name}"``.
         """
+        from qiskit.pulse import Play, SymbolicPulse, Waveform
         from ..pulse import validate_schedule, QuAMQiskitPulse
 
         pulse_input = validate_schedule(pulse_input)
@@ -778,7 +774,11 @@ class QMBackend(Backend):
                     # Overwrite existing entry if present (Target takes precedence over machine macros)
                     self._operation_mapping_QUA[op_id] = sched
 
-                elif isinstance(properties, InstructionProperties) and hasattr(properties, "calibration"):
+                elif (
+                    QISKIT_PULSE_AVAILABLE
+                    and isinstance(properties, InstructionProperties)
+                    and hasattr(properties, "calibration")
+                ):
                     from ..pulse.pulse_support_utils import validate_schedule
 
                     sched = validate_schedule(properties.calibration)

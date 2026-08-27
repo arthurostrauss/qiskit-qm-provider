@@ -230,7 +230,9 @@ qm-qasm receives this as an ordinary provider operation call. Its registered per
 
 ## Pulse support (Qiskit 1.x legacy)
 
-When `QISKIT_PULSE_AVAILABLE`, [`schedule_to_qua_macro`](apidocs/stubs/qiskit_qm_provider.pulse.schedule_to_qua_macro.rst) converts **gate pulse schedules** to QUA.
+## Pulse support (Qiskit 1.x legacy)
+
+When `QISKIT_PULSE_AVAILABLE` (probed silently at import — Qiskit 2.x does not warn), [`schedule_to_qua_macro`](apidocs/stubs/qiskit_qm_provider.pulse.schedule_to_qua_macro.rst) converts **gate pulse schedules** to QUA. Pulse types are imported only from Pulse-gated APIs; the default circuit-to-QUA path does not load `qiskit.pulse`.
 
 | Supported | Not supported |
 |-----------|---------------|

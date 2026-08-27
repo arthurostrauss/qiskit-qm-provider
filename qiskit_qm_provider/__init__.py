@@ -40,8 +40,6 @@ if not QUARC_AVAILABLE:
         ImportWarning,
     )
 
-if QISKIT_PULSE_AVAILABLE:
-    from .pulse.quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
 from .fixed_point import FixedPoint
 from .parameter_table import *
 from .additional_gates import *
@@ -94,12 +92,7 @@ if QUARC_AVAILABLE:
     __all__.append("QiskitQMModule")
 
 if QISKIT_PULSE_AVAILABLE:
-    try:
-        from .pulse.quam_qiskit_pulse import QuAMQiskitPulse, FluxChannel
-    except ImportError:
-        pass
-    else:
-        __all__.extend(["QuAMQiskitPulse", "FluxChannel"])
+    __all__.extend(["QuAMQiskitPulse", "FluxChannel"])
 
 try:
     from .providers.qm_saas_provider import QmSaasProvider
@@ -117,7 +110,7 @@ except ImportError:
 
 
 def __getattr__(name: str):
-    """Lazy-load Quarc-backed symbols so ``import qiskit_qm_provider`` stays quarc-free."""
+    """Lazy-load optional symbols so ``import qiskit_qm_provider`` stays quarc- and pulse-free."""
     if name == "QiskitQMModule":
         if not QUARC_AVAILABLE:
             raise ImportError("QiskitQMModule requires the `quarc` package. Install `quarc` to use it.") from None
@@ -125,4 +118,14 @@ def __getattr__(name: str):
 
         globals()["QiskitQMModule"] = QiskitQMModule
         return QiskitQMModule
+    if name in {"QuAMQiskitPulse", "FluxChannel"}:
+        if not QISKIT_PULSE_AVAILABLE:
+            raise ImportError(
+                "Current Qiskit version does not have Qiskit Pulse, lower it to 1.x to use this feature."
+            ) from None
+        from .pulse.quam_qiskit_pulse import FluxChannel, QuAMQiskitPulse
+
+        globals()["QuAMQiskitPulse"] = QuAMQiskitPulse
+        globals()["FluxChannel"] = FluxChannel
+        return globals()[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
