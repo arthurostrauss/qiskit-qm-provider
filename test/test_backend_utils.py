@@ -5,10 +5,14 @@ import numpy as np
 from qiskit.circuit import QuantumCircuit, ClassicalRegister, Clbit
 from qiskit.quantum_info import Pauli, PauliList
 
+from types import SimpleNamespace
+
 from qiskit_qm_provider.backend.backend_utils import (
     look_for_standard_op,
     get_extended_gate_name_mapping,
     has_reset_at_boundary,
+    has_conflicting_calibrations,
+    operation_key,
     validate_circuits,
     measurement_output_bit_sizes,
     experiment_result_header,
@@ -496,3 +500,91 @@ class TestGetNonTrivialObservables:
         active_indices = [0, 2, 4]
         result = get_non_trivial_observables(observables, active_indices)
         assert len(result) == 1
+
+
+class TestOperationKey:
+    """``operation_key`` is the value-hashable stand-in used everywhere the
+    provider used to key a dict/set with a raw ``qm_qasm.OperationIdentifier``
+    directly -- that class has no ``__eq__``/``__hash__`` override, so it falls
+    back to Python's default identity comparison (verified against
+    qm-qasm 1.7.7: two separately-constructed, field-identical instances are
+    neither ``==`` nor hash-equal). Using it as a dict key meant a later
+    "overwrite" for the same logical operation silently added a second, inert
+    duplicate entry instead -- see ``has_conflicting_calibrations`` below and
+    ``QMBackend._populate_target``/``update_target``/``compiler``.
+    """
+
+    def test_same_arguments_produce_an_equal_key(self):
+        a = operation_key("rz", 1, (0,))
+        b = operation_key("rz", 1, (0,))
+        assert a == b
+        assert hash(a) == hash(b)
+
+    def test_qubits_are_normalised_to_a_tuple(self):
+        """A list of qubits (as calibration dict keys carry) must key the same
+        as the equivalent tuple, or the same operation gets two entries purely
+        because of the container type used to describe its qubits."""
+        assert operation_key("cz", 0, [0, 1]) == operation_key("cz", 0, (0, 1))
+
+    def test_different_operations_produce_different_keys(self):
+        assert operation_key("rz", 1, (0,)) != operation_key("rx", 1, (0,))
+        assert operation_key("rz", 1, (0,)) != operation_key("rz", 1, (1,))
+        assert operation_key("rz", 1, (0,)) != operation_key("rz", 2, (0,))
+
+
+class TestHasConflictingCalibrations:
+    """Regression coverage for the identity-equality bug: before
+    ``operation_key``, this function was keying a ``set`` by raw
+    ``OperationIdentifier`` instances, so ``op_id not in custom_gates`` was
+    unconditionally ``True`` and a real conflict could never be detected --
+    the function always returned ``False``, silently.
+
+    ``QuantumCircuit`` no longer exposes ``.calibrations`` on the Qiskit
+    version this repo targets (pulse API removed), so a plain duck-typed
+    stand-in is used here -- ``has_conflicting_calibrations`` only ever reads
+    ``hasattr(qc, "calibrations")`` and ``qc.calibrations.items()``, nothing
+    else about a real ``QuantumCircuit``.
+    """
+
+    @staticmethod
+    def _circuit_with_calibrations(calibrations):
+        return SimpleNamespace(calibrations=calibrations)
+
+    def test_no_calibrations_is_not_a_conflict(self):
+        circuits = [self._circuit_with_calibrations({})]
+        assert has_conflicting_calibrations(circuits) is False
+
+    def test_distinct_calibrations_are_not_a_conflict(self):
+        circuits = [
+            self._circuit_with_calibrations(
+                {
+                    "my_gate": {
+                        ((0,), (1.0,)): "sched_a",
+                        ((1,), (1.0,)): "sched_b",  # different qubits
+                    }
+                }
+            )
+        ]
+        assert has_conflicting_calibrations(circuits) is False
+
+    def test_repeated_operation_within_one_circuit_is_a_conflict(self):
+        """Two calibration entries for the same (gate, qubits, arity) inside
+        one circuit's ``calibrations`` dict -- the exact shape this function
+        exists to catch."""
+        circuits = [
+            self._circuit_with_calibrations(
+                {
+                    "my_gate": {
+                        ((0,), (1.0,)): "sched_a",
+                    }
+                },
+            ),
+            self._circuit_with_calibrations(
+                {
+                    "my_gate": {
+                        ((0,), (2.0,)): "sched_b",  # same (name, qubits, #params)
+                    }
+                },
+            ),
+        ]
+        assert has_conflicting_calibrations(circuits) is True

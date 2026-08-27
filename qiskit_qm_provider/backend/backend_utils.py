@@ -214,6 +214,30 @@ def experiment_result_header(qc: QuantumCircuit) -> dict[str, Any]:
     }
 
 
+def operation_key(name: str, number_of_params: int, qubits) -> tuple:
+    """A plain, value-hashable stand-in key for ``qm_qasm.OperationIdentifier``.
+
+    ``OperationIdentifier`` defines neither ``__eq__`` nor ``__hash__``, so it
+    falls back to Python's default: identity. Two separately-constructed
+    ``OperationIdentifier("rz", 1, (0,))`` instances therefore compare unequal
+    and hash differently, even though they are logically the same operation
+    (verified directly against qm-qasm 1.7.7: ``a == b`` is ``False``,
+    ``hash(a) == hash(b)`` is ``False``). Using ``OperationIdentifier``
+    instances directly as ``dict``/``set`` keys means a later insertion for
+    what looks like the same operation never overwrites/dedupes the earlier
+    one -- it silently adds a second, functionally duplicate entry instead.
+    That is a real, previously-unnoticed bug (see ``has_conflicting_calibrations``
+    and ``QMBackend``'s ``_operation_mapping_QUA``/``_calibration_operation_mapping_QUA``
+    below, both fixed by keying on this instead).
+
+    This tuple has ordinary Python value equality, so the same logical
+    operation always produces the same key. Build the real
+    ``OperationIdentifier`` objects ``HardwareConfig`` needs from this key only
+    once, right before compiling -- see ``QMBackend.compiler``.
+    """
+    return (name, number_of_params, tuple(qubits))
+
+
 def has_conflicting_calibrations(circuits: List[QuantumCircuit]) -> bool:
     """Check whether circuits define conflicting custom calibrations.
 
@@ -223,14 +247,12 @@ def has_conflicting_calibrations(circuits: List[QuantumCircuit]) -> bool:
     Returns:
         ``True`` if the same operation identifier appears more than once.
     """
-    from qm_qasm import OperationIdentifier
-
     custom_gates = set()
     for qc in circuits:
         if hasattr(qc, "calibrations") and qc.calibrations:
             for gate_name, cal_info in qc.calibrations.items():
                 for qubits, parameters in cal_info.keys():
-                    op_id = OperationIdentifier(gate_name, len(parameters), qubits)
+                    op_id = operation_key(gate_name, len(parameters), qubits)
                     if op_id not in custom_gates:
                         custom_gates.add(op_id)
                     else:

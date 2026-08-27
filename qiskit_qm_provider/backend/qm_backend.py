@@ -59,6 +59,7 @@ from .backend_utils import (
     get_extended_gate_name_mapping,
     control_flow_name_mapping,
     qasm3_keyword_instructions,
+    operation_key,
 )
 from .qm_instruction_properties import QMInstructionProperties
 
@@ -423,9 +424,15 @@ class QMBackend(Backend):
         """
         Populate the target instructions with the QOP configuration from machine macros.
         Updates both Target and operation_mapping_QUA incrementally (does not clear existing entries).
-        """
-        from qm_qasm import OperationIdentifier
 
+        Keys into ``operations_qua_dict`` are built via :func:`operation_key`, not
+        a raw ``OperationIdentifier(...)`` call -- see that function's docstring
+        for why: ``OperationIdentifier`` has no value equality, so re-populating
+        an operation that already has an entry (e.g. after installing a new
+        macro under an existing name and calling ``update_target()``) would
+        otherwise add a second, functionally duplicate entry instead of
+        overwriting the first.
+        """
         gate_map = get_extended_gate_name_mapping()
 
         operations_dict = {}
@@ -442,7 +449,7 @@ class QMBackend(Backend):
                     gate_op = gate_map[op_]
                     num_params = len(gate_op.params)
                     operations_dict.setdefault(op_, {})[(q,)] = prop
-                    operations_qua_dict[OperationIdentifier(op_, num_params, (q,))] = func.apply
+                    operations_qua_dict[operation_key(op_, num_params, (q,))] = func.apply
                     name_to_op_dict[op_] = gate_op
                 else:
                     # Create custom gate
@@ -460,7 +467,7 @@ class QMBackend(Backend):
                         raise ValueError(f"Return type {return_type} not yet supported for custom gate {op_}")
                     gate_op = Instruction(op_, 1, 0, params)
                     operations_dict.setdefault(op_, {})[(q,)] = prop
-                    operations_qua_dict[OperationIdentifier(op_, len(params), (q,))] = func.apply
+                    operations_qua_dict[operation_key(op_, len(params), (q,))] = func.apply
                     name_to_op_dict[op_] = gate_op
                     self._custom_instructions[op_] = gate_op
 
@@ -480,7 +487,7 @@ class QMBackend(Backend):
                     gate_op = gate_map[op_]
                     num_params = len(gate_op.params)
                     operations_dict.setdefault(op_, {})[(q_ctrl, q_tgt)] = prop
-                    operations_qua_dict[OperationIdentifier(op_, num_params, (q_ctrl, q_tgt))] = func.apply
+                    operations_qua_dict[operation_key(op_, num_params, (q_ctrl, q_tgt))] = func.apply
                     name_to_op_dict[op_] = gate_op
                 else:
                     # Create custom gate
@@ -498,7 +505,7 @@ class QMBackend(Backend):
                         raise ValueError(f"Return type {return_type} not yet supported for custom gate {op_}")
                     gate_op = Instruction(op_, 2, 0, params)
                     operations_dict.setdefault(op_, {})[(q_ctrl, q_tgt)] = prop
-                    operations_qua_dict[OperationIdentifier(op_, len(params), (q_ctrl, q_tgt))] = func.apply
+                    operations_qua_dict[operation_key(op_, len(params), (q_ctrl, q_tgt))] = func.apply
                     name_to_op_dict[op_] = gate_op
                     self._custom_instructions[op_] = gate_op
 
@@ -723,7 +730,7 @@ class QMBackend(Backend):
 
         1. Updates ``_operation_mapping_QUA`` from machine macros (incrementally).
         2. Syncs operations from Target to ``_operation_mapping_QUA``, overwriting
-           entries for the same ``OperationIdentifier``.
+           entries for the same operation (name, arity, qargs).
         3. Updates the calibration mapping.
 
         The sync is additive (never removes operations) and Target entries take
@@ -734,8 +741,6 @@ class QMBackend(Backend):
                 QUA variables. Required when the Target contains parameterized
                 pulse schedules.
         """
-        from qm_qasm import OperationIdentifier
-
         # Step 1: Update from machine macros (incremental - doesn't clear, additive only)
         self._populate_target()
 
@@ -767,7 +772,7 @@ class QMBackend(Backend):
                         if param.kind in (sigParam.POSITIONAL_OR_KEYWORD, sigParam.POSITIONAL_ONLY)
                     ]
                     num_params = len(positional_params)
-                    op_id = OperationIdentifier(op_name, num_params, qubits)
+                    op_id = operation_key(op_name, num_params, qubits)
                     # Overwrite existing entry if present (Target takes precedence over machine macros)
                     self._operation_mapping_QUA[op_id] = sched
 
@@ -783,7 +788,7 @@ class QMBackend(Backend):
                         if gate is not None and getattr(gate, "params", None):
                             num_params = len(gate.params)
                             gate_param_names = [getattr(p, "name", f"param_{i}") for i, p in enumerate(gate.params)]
-                    op_id = OperationIdentifier(op_name, num_params, qubits)
+                    op_id = operation_key(op_name, num_params, qubits)
 
                     if num_params > 0 and sched.is_parameterized():
                         param_table = ParameterTable.from_qiskit(
@@ -813,8 +818,6 @@ class QMBackend(Backend):
                 QUA variables when the circuit or its calibrations are
                 parameterized.
         """
-        from qm_qasm import OperationIdentifier
-
         if hasattr(qc, "calibrations") and qc.calibrations:  # Check for custom calibrations
             from ..pulse.pulse_support_utils import (
                 validate_schedule,
@@ -847,11 +850,7 @@ class QMBackend(Backend):
 
                     gate_param_names = [getattr(p, "name", f"param_{i}") for i, p in enumerate(parameters)]
                     self._calibration_operation_mapping_QUA[
-                        OperationIdentifier(
-                            gate_name,
-                            len(parameters),
-                            qubits,
-                        )
+                        operation_key(gate_name, len(parameters), qubits)
                     ] = self.schedule_to_qua_macro(schedule, param_table, gate_param_names=gate_param_names)
 
                     self.add_pulse_operations(schedule, name=schedule.name)
@@ -926,12 +925,24 @@ class QMBackend(Backend):
     def compiler(self) -> Compiler:
         """
         The OpenQASM to QUA compiler.
-        """
-        from qm_qasm import Compiler, HardwareConfig
 
+        ``_calibration_operation_mapping_QUA`` is keyed by :func:`operation_key`
+        (a plain, value-equal tuple), not by ``OperationIdentifier`` -- see that
+        function's docstring for why building the mapping with real
+        ``OperationIdentifier`` keys throughout would silently duplicate rather
+        than overwrite an existing operation. ``HardwareConfig`` itself does
+        require real ``OperationIdentifier`` keys, so they are built fresh, once,
+        right here -- after the mapping is known to be correctly deduplicated,
+        never before.
+        """
+        from qm_qasm import Compiler, HardwareConfig, OperationIdentifier
+
+        operations_db = {
+            OperationIdentifier(*key): value for key, value in self._calibration_operation_mapping_QUA.items()
+        }
         return Compiler(
             hardware_config=HardwareConfig(
-                quantum_operations_db=self._calibration_operation_mapping_QUA,
+                quantum_operations_db=operations_db,
                 physical_qubits=self.qubit_mapping,
             )
         )
