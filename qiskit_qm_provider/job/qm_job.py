@@ -43,7 +43,7 @@ from qm import (
 from qm.jobs.running_qm_job import RunningQmJob
 from qm.jobs.pending_job import QmPendingJob
 
-from qiskit_qm_provider.backend.qm_backend import QMBackend
+from qiskit_qm_provider.backend.qm_backend import QMBackend, QISKIT_PULSE_AVAILABLE
 from qiskit_qm_provider.backend.backend_utils import (
     validate_circuits,
     measurement_output_bit_sizes,
@@ -60,15 +60,6 @@ from .stream_assembly import bit_array_from_stream
 
 if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import CloudJob, CloudQuantumMachine
-
-
-try:
-    # Optional Qiskit Pulse import – mirrors backend behaviour but kept local
-    from qiskit.pulse import DriveChannel  # type: ignore[unused-import]
-
-    _QISKIT_PULSE_AVAILABLE = True
-except ImportError:  # pragma: no cover - environment without Pulse
-    _QISKIT_PULSE_AVAILABLE = False
 
 
 class QMJob(JobV1):
@@ -290,7 +281,7 @@ class QMJob(JobV1):
 
         # Synchronize backend target and (optionally) pulse calibrations
         backend.update_target()
-        if _QISKIT_PULSE_AVAILABLE:
+        if QISKIT_PULSE_AVAILABLE:
             for qc in new_circuits:
                 backend.update_calibrations(qc)
 
