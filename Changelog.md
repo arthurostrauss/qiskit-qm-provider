@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Optional Qiskit Pulse** — `QISKIT_PULSE_AVAILABLE` is probed with `importlib.util.find_spec` and no longer emits an `ImportWarning` on Qiskit 2.x (where Pulse was removed). Pulse classes are imported only inside Pulse-gated methods; `QiskitChannel` is a type hint (`Any` at runtime) for `channel_mapping`. Circuit-only import and `backend.run()` paths no longer load `qiskit.pulse`. `requires_qiskit_pulse` is unchanged.
+
 ## [0.3.4] - 2026-08-13
 
 ### Changed

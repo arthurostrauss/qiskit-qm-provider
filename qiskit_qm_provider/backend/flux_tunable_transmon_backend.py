@@ -20,7 +20,7 @@ Date: 2026-02-08
 
 from __future__ import annotations
 
-from .qm_backend import QMBackend, requires_qiskit_pulse
+from .qm_backend import QMBackend, requires_qiskit_pulse, QISKIT_PULSE_AVAILABLE
 from typing import Iterable, Optional, List, Union, TYPE_CHECKING, Tuple
 
 if TYPE_CHECKING:
@@ -65,7 +65,8 @@ class FluxTunableTransmonBackend(QMBackend):
         """
         if not hasattr(machine, "qubits") or not hasattr(machine, "qubit_pairs"):
             raise ValueError("Invalid QuAM instance provided, should have qubits and qubit_pairs attributes")
-        try:
+        channel_mapping = {}
+        if QISKIT_PULSE_AVAILABLE:
             from qiskit.pulse import DriveChannel, MeasureChannel, ControlChannel
 
             drive_channel_mapping = {DriveChannel(i): qubit.xy for i, qubit in enumerate(machine.active_qubits)}
@@ -85,11 +86,6 @@ class FluxTunableTransmonBackend(QMBackend):
                 **control_channel_mapping,
                 **readout_channel_mapping,
             }
-        except ImportError:
-            import logging
-
-            logging.info("qiskit.pulse is not available, channel mapping will not be set.")
-            channel_mapping = {}
         super().__init__(
             machine,
             channel_mapping=channel_mapping,
