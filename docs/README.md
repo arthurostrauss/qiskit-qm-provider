@@ -34,6 +34,7 @@ Open `docs/_build/html/index.html` in your browser.
 - [Workflows](workflows.md) — routing guide for main use paths.
 - [Providers](providers.md) — local, SaaS, and IQCC providers.
 - [Backend](backend.md) — `QMBackend`, embedding, utilities.
+- [Classical-effect instructions](classical_effect_instructions.md) — future design note for controller-side random values and typed classical writes.
 - [Measurement outputs](measurement_outputs.md) — `comp.outputs`, compilation-local handles.
 - [Primitives](primitives.md) — QOP-aware Sampler and Estimator.
 - [Parameter Table](parameter_table.md) — hybrid classical–quantum data flow.
