@@ -5,8 +5,9 @@ from qiskit.circuit import QuantumCircuit
 from qiskit.circuit.classical import expr
 from qiskit_qm_provider import QMProvider
 
+from qm import generate_qua_script
 
-provider = QMProvider("/path/to/quam/state")
+provider = QMProvider()
 backend = provider.get_backend()
 
 # Register once before transpilation.  The pulse label must resolve uniquely on
@@ -19,3 +20,6 @@ qc.conditional_play("x180", condition, 0)
 
 transpiled = transpile(qc, backend)
 compilation = backend.quantum_circuit_to_qua(transpiled)
+
+
+print(generate_qua_script(compilation.qua_program))
