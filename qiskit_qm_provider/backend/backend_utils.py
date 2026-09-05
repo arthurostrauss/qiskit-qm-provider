@@ -271,6 +271,7 @@ def look_for_standard_op(op: str):
         "-y90": "sydg",
         "x/2": "sx",
         "x90": "sx",
+        "rx90": "sx",
         "x180": "x",
         "y180": "y",
         "y90": "sy",
