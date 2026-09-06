@@ -28,6 +28,7 @@ from .backend import (
     QMInstructionProperties,
 )
 from .providers.qm_provider import QMProvider
+from .conditional_play import ConditionalPlay
 
 # Probe availability without importing quarc (``qiskit_qm_module`` pulls quarc in).
 QUARC_AVAILABLE = importlib.util.find_spec("quarc") is not None
@@ -62,6 +63,7 @@ __all__ = [
     "QMBackend",
     "FluxTunableTransmonBackend",
     "QMInstructionProperties",
+    "ConditionalPlay",
     "FixedPoint",
     "ParameterTable",
     "Parameter",

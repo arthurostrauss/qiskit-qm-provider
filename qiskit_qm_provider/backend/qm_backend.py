@@ -46,7 +46,6 @@ from qiskit.providers import BackendV2 as Backend, QubitProperties, Options
 from qiskit.result.models import MeasLevel, MeasReturnType
 
 from qiskit.transpiler import Target, InstructionProperties, CouplingMap
-from qiskit.qasm3 import Exporter
 
 # QUA and Quam imports
 from qm import QuantumMachinesManager, DictQuaConfig, QuantumMachine
@@ -64,6 +63,8 @@ from .backend_utils import (
     operation_key,
 )
 from .qm_instruction_properties import QMInstructionProperties
+from ..conditional_play import ConditionalPlay, _conditional_play_macro, conditional_play_operation_name
+from ..qasm3_exporter import QMOpenQASM3Exporter
 
 if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import (
@@ -177,6 +178,7 @@ class QMBackend(Backend):
         # Calibration mapping: working copy for circuit-specific pulse calibrations
         self._calibration_operation_mapping_QUA = self._operation_mapping_QUA.copy()
         self._qasm3_custom_gates = []
+        self._conditional_play_operations: Dict[str, str] = {}
         self._init_macro = init_macro if init_macro is not None else lambda: None
 
     def __deepcopy__(self, memo):
@@ -806,6 +808,59 @@ class QMBackend(Backend):
         # Step 3: Update calibration mapping
         self._calibration_operation_mapping_QUA = self._operation_mapping_QUA.copy()
 
+    def register_conditional_play(self, pulse_name: str) -> None:
+        """Register a direct conditional play for ``pulse_name`` on every active qubit.
+
+        The pulse is resolved using :meth:`quam.components.Qubit.get_pulse`,
+        which intentionally propagates QuAM's missing-pulse and ambiguity errors.
+        The generated QUA macro receives one Boolean argument and forwards it to
+        :meth:`quam.components.pulses.Pulse.play` as ``condition``.
+
+        Call this before transpiling a circuit that uses
+        :meth:`qiskit.circuit.QuantumCircuit.conditional_play`.
+        """
+        operation_name = conditional_play_operation_name(pulse_name)
+        registered_pulse = self._conditional_play_operations.get(operation_name)
+        if self.target.instruction_supported(operation_name) and registered_pulse != pulse_name:
+            raise ValueError(
+                f"Cannot register conditional play for pulse {pulse_name!r}: "
+                f"the generated Target operation name {operation_name!r} is already in use."
+            )
+        properties = {}
+
+        # Resolve all pulses before mutating the Target so a QuAM lookup error
+        # leaves backend state unchanged.
+        resolved_pulses = [self.get_qubit(index).get_pulse(pulse_name) for index in range(self.num_qubits)]
+
+        for index, pulse in enumerate(resolved_pulses):
+            qubit = self.get_qubit(index)
+
+            properties[(index,)] = QMInstructionProperties(
+                duration=pulse.length * 1e-9,
+                qua_pulse_macro=_conditional_play_macro(qubit, pulse_name),
+            )
+
+        if self.target.instruction_supported(operation_name):
+            for qargs, property_ in properties.items():
+                self.target.update_instruction_properties(operation_name, qargs, property_)
+        else:
+            self.target.add_instruction(ConditionalPlay.target_operation(pulse_name), properties=properties)
+
+        self._conditional_play_operations[operation_name] = pulse_name
+        self.update_target()
+
+    def _validate_conditional_play(self, operation: ConditionalPlay, qargs: tuple[int, ...]) -> None:
+        """Check that a ConditionalPlay has a registered, physical Target mapping."""
+        if operation.name not in self._conditional_play_operations:
+            raise ValueError(
+                f"ConditionalPlay for pulse {operation.pulse_name!r} is not registered. "
+                f"Call backend.register_conditional_play({operation.pulse_name!r}) before compiling."
+            )
+        if not self.target.instruction_supported(operation.name, qargs):
+            raise ValueError(
+                f"ConditionalPlay for pulse {operation.pulse_name!r} is not supported on physical qubits {qargs}."
+            )
+
     @requires_qiskit_pulse
     def update_calibrations(self, qc: QuantumCircuit, input_type: Optional[InputType] = None):
         """Update the QUA operations mapping from circuit calibrations.
@@ -890,7 +945,12 @@ class QMBackend(Backend):
                         f"Custom calibration {gate_name} not in basis gates {basis_gates}",
                         f"Run update_calibrations() before compiling the circuit",
                     )
-        exporter = Exporter(includes=(), basis_gates=basis_gates, disable_constants=True)
+        exporter = QMOpenQASM3Exporter(
+            includes=(),
+            basis_gates=basis_gates,
+            disable_constants=True,
+            conditional_play_validator=self._validate_conditional_play,
+        )
         open_qasm_code = exporter.dumps(qc)
         open_qasm_code = "\n".join(
             line for line in open_qasm_code.splitlines() if not line.strip().startswith(("barrier",))
@@ -1000,12 +1060,13 @@ class QMBackend(Backend):
         return basis_gates
 
     @property
-    def qasm3_exporter(self) -> Exporter:
+    def qasm3_exporter(self) -> QMOpenQASM3Exporter:
         """
         Retrieve the OpenQASM 3 exporter for the backend
         """
-        return Exporter(
+        return QMOpenQASM3Exporter(
             includes=(),
             basis_gates=self.qm_qasm_basis_gates,
             disable_constants=True,
+            conditional_play_validator=self._validate_conditional_play,
         )
