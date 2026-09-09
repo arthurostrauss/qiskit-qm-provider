@@ -449,7 +449,8 @@ class Parameter:
                 assign_with_condition(self.var, value.var, value_cond.var if value_cond else None)
         else:
             if self.is_array:
-                if isinstance(value, QuaArrayVariable):
+                from .qua2darray import _QUA2DRow
+                if isinstance(value, (QuaArrayVariable,_QUA2DRow)):
                     with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
                         assign_with_condition(
                             self.var[self._ctr],
