@@ -975,6 +975,7 @@ class ParameterTable(QuaFieldTable):
 
         param_list = []
         param_vector_set = set()
+        qiskit_supports_array = hasattr(types, "Array")
         for parameter in qc.parameters:
             if isinstance(parameter, QiskitParameter):
                 if filter_function is not None and not filter_function(parameter):
@@ -985,15 +986,26 @@ class ParameterTable(QuaFieldTable):
                     param_vec = parameter.vector
                     if param_vec not in param_vector_set:
                         param_vector_set.add(param_vec)
-                        param_list.extend(
-                            Parameter(
-                                f"_{param_vec.name}_{i}_",
-                                qua_type=fixed,
-                                input_type=input_type,
-                                direction=Direction.INCOMING,
+                        if qiskit_supports_array:
+                            param_list.append(
+                                Parameter(
+                                    param_vec.name,
+                                    value=[0.0] * len(param_vec),
+                                    qua_type=fixed,
+                                    input_type=input_type,
+                                    direction=Direction.INCOMING,
+                                )
                             )
-                            for i in range(len(param_vec))
-                        )
+                        else:
+                            param_list.extend(
+                                Parameter(
+                                    f"_{param_vec.name}_{i}_",
+                                    qua_type=fixed,
+                                    input_type=input_type,
+                                    direction=Direction.INCOMING,
+                                )
+                                for i in range(len(param_vec))
+                            )
                         continue
                     else:
                         continue
@@ -1024,6 +1036,21 @@ class ParameterTable(QuaFieldTable):
                         Parameter(
                             var.name,
                             qua_type=bool,
+                            input_type=input_type,
+                            direction=Direction.INCOMING,
+                        )
+                    )
+                elif qiskit_supports_array and var.type.kind == types.Array:
+                    element_kind_map = {types.Uint: int, types.Bool: bool, types.Float: fixed}
+                    element_type = element_kind_map.get(var.type.element.kind)
+                    if element_type is None:
+                        raise ValueError(f"Unsupported element type: {var.type.element.kind}")
+                    value = [0.0 if element_type is fixed else element_type(0) for _ in range(var.type.size)]
+                    param_list.append(
+                        Parameter(
+                            var.name,
+                            value=value,
+                            qua_type=element_type,
                             input_type=input_type,
                             direction=Direction.INCOMING,
                         )
