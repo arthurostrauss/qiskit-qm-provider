@@ -958,6 +958,8 @@ class ParameterTable(QuaFieldTable):
         input_type: Optional[Literal["INPUT_STREAM", "OPNIC", "IO1", "IO2"] | InputType] = None,
         filter_function: Optional[Callable[[QiskitParameter | Var], bool]] = None,
         name: Optional[str] = None,
+        *,
+        qiskit_supports_array: bool = True,
     ) -> Optional["ParameterTable"]:
         """
         Create a ParameterTable object from a QuantumCircuit object (and stores it in circuit metadata).
@@ -968,6 +970,10 @@ class ParameterTable(QuaFieldTable):
             input_type: Input type of the parameters in the table.
             filter_function: Optional function to filter the parameters to be included in the table.
             name: Optional name for the parameter table.
+            qiskit_supports_array: When ``True`` (default), collapse ``ParameterVector`` s
+                and classical ``Array`` inputs to one array QuaParameter when Qiskit
+                exposes ``types.Array``. Set ``False`` to always emit unrolled scalar
+                fields (``_name_i_``), e.g. on hosts without array support.
         """
         from qiskit.circuit import QuantumCircuit, Parameter as QiskitParameter
         from qiskit.circuit.parametervector import ParameterVectorElement
@@ -975,7 +981,7 @@ class ParameterTable(QuaFieldTable):
 
         param_list = []
         param_vector_set = set()
-        qiskit_supports_array = hasattr(types, "Array")
+        qiskit_supports_array = bool(qiskit_supports_array) and hasattr(types, "Array")
         for parameter in qc.parameters:
             if isinstance(parameter, QiskitParameter):
                 if filter_function is not None and not filter_function(parameter):
