@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.5] - 2026-09-23
 
 ### Added
 
@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`look_for_standard_op` gate-name aliases** — `"rx90"` now maps to `"sx"`, alongside the existing `"x90"` / `"x/2"` aliases.
 - **`QuantumCircuit.sy()` / `sydg()` / `cr()` / `fsim()` / `gpi()` / `gpi2()`** — all now accept an optional `label` argument, forwarded to the underlying gate's constructor.
 - **Optional Qiskit Pulse** — `QISKIT_PULSE_AVAILABLE` is probed with `importlib.util.find_spec` and no longer emits an `ImportWarning` on Qiskit 2.x (where Pulse was removed). Pulse classes are imported only inside Pulse-gated methods; `QiskitChannel` is a type hint (`Any` at runtime) for `channel_mapping`. Circuit-only import and `backend.run()` paths no longer load `qiskit.pulse`. `requires_qiskit_pulse` is unchanged.
+
+### Fixed
+
+- **Value-hashable `operation_key`** — `qm_qasm.OperationIdentifier` has no `__eq__`/`__hash__`, so using it directly as a `dict`/`set` key treated logically identical operations as distinct and silently duplicated them. Introduced `operation_key(name, number_of_params, qubits)` — a plain, value-equal tuple — used across backend operation mappings and `has_conflicting_calibrations` for correct deduplication/overwriting. Real `OperationIdentifier` instances are now built only once, when constructing the `Compiler`/`HardwareConfig`. No public API changes.
 
 ## [0.3.4] - 2026-08-13
 
