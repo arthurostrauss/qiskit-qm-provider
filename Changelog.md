@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`GPIGate` / `GPI2Gate`** — IonQ-native single-qubit gates (matching Qibo's `GPI`/`GPI2` convention) added to `additional_gates.py` alongside the existing `SY`/`SYdg`/`CR`/`FSim` gates, with `QuantumCircuit.gpi()` / `QuantumCircuit.gpi2()` convenience methods and `"gpi"` / `"gpi2"` entries in `get_extended_gate_name_mapping()`.
+
 ### Changed
 
+- **`look_for_standard_op` gate-name aliases** — `"rx90"` now maps to `"sx"`, alongside the existing `"x90"` / `"x/2"` aliases.
+- **`QuantumCircuit.sy()` / `sydg()` / `cr()` / `fsim()` / `gpi()` / `gpi2()`** — all now accept an optional `label` argument, forwarded to the underlying gate's constructor.
 - **Optional Qiskit Pulse** — `QISKIT_PULSE_AVAILABLE` is probed with `importlib.util.find_spec` and no longer emits an `ImportWarning` on Qiskit 2.x (where Pulse was removed). Pulse classes are imported only inside Pulse-gated methods; `QiskitChannel` is a type hint (`Any` at runtime) for `channel_mapping`. Circuit-only import and `backend.run()` paths no longer load `qiskit.pulse`. `requires_qiskit_pulse` is unchanged.
 
 ## [0.3.4] - 2026-08-13

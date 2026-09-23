@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Additional gates (SY, SYdg, CR, fSim) for Qiskit circuits targeting QM backends.
+"""Additional gates (SY, SYdg, CR, fSim, GPI, GPI2) for Qiskit circuits targeting QM backends.
 
 Author: Arthur Strauss
 Date: 2026-02-08
@@ -20,16 +20,19 @@ Date: 2026-02-08
 
 from qiskit.circuit import QuantumCircuit, Gate
 from qiskit.circuit.parameterexpression import ParameterValueType
-import numpy as np
 from qiskit.circuit.library.standard_gates import (
     get_standard_gate_name_mapping as gate_map,
 )
+import numpy as np
+
 
 __all__ = [
     "SYGate",
     "SYdgGate",
     "CRGate",
     "FSimGate",
+    "GPIGate",
+    "GPI2Gate",
 ]
 
 
@@ -219,10 +222,63 @@ class FSimGate(Gate):
         """
         return FSimGate(exponent * self.params[0], exponent * self.params[1])
 
+class GPIGate(Gate):
+    r"""Qibo's ``GPI`` gate: :math:`\begin{pmatrix} 0 & e^{-i\phi} \\
+    e^{i\phi} & 0 \end{pmatrix}`.
+
+    An IonQ-native gate with no Qiskit standard-library equivalent.
+    """
+
+    def __init__(self, phi: ParameterValueType, label: str | None = None):
+        super().__init__("gpi", 1, [phi], label=label)
+
+    def _define(self) -> None:
+        # Qibo's own qasm_label body: u3(pi, phi - pi/2, pi/2 - phi)
+        phi = self.params[0]
+        qc = QuantumCircuit(1, name=self.name)
+        qc.u(np.pi, phi - np.pi / 2, np.pi / 2 - phi, 0)
+        self.definition = qc
+
+    def __array__(self, dtype=complex, copy=None):
+        if copy is False:
+            raise ValueError("unable to avoid copy while creating an array as requested")
+        phi = complex(self.params[0])
+        return np.array([[0, np.exp(-1j * phi)], [np.exp(1j * phi), 0]], dtype=dtype)
+
+
+class GPI2Gate(Gate):
+    r"""Qibo's ``GPI2`` gate: :math:`\frac{1}{\sqrt2}\begin{pmatrix}
+    1 & -i e^{-i\phi} \\ -i e^{i\phi} & 1 \end{pmatrix}`.
+
+    An IonQ-native gate with no Qiskit standard-library equivalent.
+    """
+
+    def __init__(self, phi: ParameterValueType, label: str | None = None):
+        super().__init__("gpi2", 1, [phi], label=label)
+
+    def _define(self) -> None:
+        # Qibo's own qasm_label body: u3(pi/2, phi - pi/2, pi/2 - phi)
+        phi = self.params[0]
+        qc = QuantumCircuit(1, name=self.name)
+        qc.u(np.pi / 2, phi - np.pi / 2, np.pi / 2 - phi, 0)
+        self.definition = qc
+
+    def __array__(self, dtype=complex, copy=None):
+        if copy is False:
+            raise ValueError("unable to avoid copy while creating an array as requested")
+        phi = complex(self.params[0])
+        return np.array(
+            [[1, -1j * np.exp(-1j * phi)], [-1j * np.exp(1j * phi), 1]],
+            dtype=dtype,
+        ) / np.sqrt(2)
+
+
 
 # Do monkey patching to QuantumCircuit to add the custom gates
 # Add a method to QuantumCircuit to add the custom gates (qc.sy(q) == qc.append(SYGate(), [q]))
-QuantumCircuit.sy = lambda self, q: self.append(SYGate(), [q])
-QuantumCircuit.sydg = lambda self, q: self.append(SYdgGate(), [q])
-QuantumCircuit.cr = lambda self, q1, q2: self.append(CRGate(), [q1, q2])
-QuantumCircuit.fsim = lambda self, theta, phi, q1, q2: self.append(FSimGate(theta, phi), [q1, q2])
+QuantumCircuit.sy = lambda self, q, label=None: self.append(SYGate(label), [q])
+QuantumCircuit.sydg = lambda self, q, label=None: self.append(SYdgGate(label), [q])
+QuantumCircuit.cr = lambda self, q1, q2, label=None: self.append(CRGate(label), [q1, q2])
+QuantumCircuit.fsim = lambda self, theta, phi, q1, q2, label=None: self.append(FSimGate(theta, phi, label), [q1, q2])
+QuantumCircuit.gpi = lambda self, phi, q, label=None: self.append(GPIGate(phi, label), [q])
+QuantumCircuit.gpi2 = lambda self, phi, q, label=None: self.append(GPI2Gate(phi, label), [q])
