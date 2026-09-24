@@ -42,7 +42,7 @@ from quam.core import QuamRoot
 from quam.utils.qua_types import QuaVariableInt
 from qm import generate_qua_script
 from qm.qua import assign, Cast
-from ..additional_gates import CRGate, FSimGate, SYGate, SYdgGate
+from ..additional_gates import CRGate, FSimGate, SYGate, SYdgGate, GPIGate, GPI2Gate
 # Re-exported for backward compatibility; canonical home is quam_macros.superconducting.
 from ..quam_macros.superconducting import add_basic_macros
 
@@ -271,6 +271,7 @@ def look_for_standard_op(op: str):
         "-y90": "sydg",
         "x/2": "sx",
         "x90": "sx",
+        "rx90": "sx",
         "x180": "x",
         "y180": "y",
         "y90": "sy",
@@ -310,6 +311,8 @@ def get_extended_gate_name_mapping():
     gate_map["cr"] = CRGate()
     gate_map["sydg"] = SYdgGate()
     gate_map["fsim"] = FSimGate(Parameter("θ"), Parameter("ϕ"))
+    gate_map["gpi"] = GPIGate(Parameter("φ"))
+    gate_map["gpi2"] = GPI2Gate(Parameter("φ"))
 
     return gate_map
 
