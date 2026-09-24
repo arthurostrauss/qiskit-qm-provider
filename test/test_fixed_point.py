@@ -159,6 +159,15 @@ class TestFixedPointConversions:
         fp = FixedPoint(0.375)
         assert abs(fp.to_float() - 0.375) < 1e-7
 
+    @pytest.mark.parametrize("value", [0.1, -0.2, 0.3, 0.05, 0.9999999, -1.3333333])
+    def test_rounds_to_nearest_like_qua(self, value):
+        # QUA's declare(fixed, value=...) rounds to nearest (checked on hardware).
+        assert FixedPoint(value).value == round(value * (1 << 28))
+
+    def test_float_builtin(self):
+        fp = FixedPoint(-1.625)
+        assert float(fp) == fp.to_float()
+
     def test_from_int(self):
         raw = 1 << 27  # represents 0.5 with 28 fractional bits
         fp = FixedPoint.from_int(raw)

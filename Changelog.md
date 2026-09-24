@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`qiskit_qm_provider.random`** — Python counterpart of QUA's `random` library. `Random` mirrors `qm.qua.Random` (`set_seed`, `rand_int`, `rand_fixed`), reproducing the controller's draws on the host when they are made in the same number and order. It adds `rand_int_sequence` / `rand_fixed_sequence`, `skip(n)` jump-ahead, `state` / `draws` inspection, and `declare_qua()` to create a QUA `Random` from the current Python state inside a program. `rand_fixed()` returns a `FixedPoint`.
+- **Box-Muller Gaussian sampling** — a utility that turns uniform `rand_fixed()` draws into samples from a Gaussian distribution: `rand_gauss_box_muller` (QUA macro) and `box_muller_pair` (host replay), sharing lookup values through `BoxMullerTables`.
+- **`FixedPoint.__float__`** — `float(x)` now delegates to `to_float()`.
+- **Docs** — new "Random numbers" guide and API page; the classical-effect instructions design note gains a section on the host mirror as an entry point for Qiskit integration.
+
+### Changed
+
+- **`FixedPoint(value)` rounds to nearest** instead of truncating toward zero, matching QUA's `declare(fixed, value=...)` (checked on hardware). Results of `FixedPoint` arithmetic are unchanged; only float-to-fixed conversion can move by one LSB (2⁻²⁸). Host code that replicates controller computations from float inputs previously disagreed with the controller by one LSB on some values.
+
 ## [0.3.5] - 2026-09-23
 
 ### Added

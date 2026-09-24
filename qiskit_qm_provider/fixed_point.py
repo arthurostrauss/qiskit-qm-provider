@@ -29,6 +29,9 @@ class FixedPoint:
     def __init__(self, value, fractional_bits=28, bit_width=32):
         """Create a fixed-point value from a float or integer scale.
 
+        The value is rounded to the nearest representable fixed-point number, as
+        QUA does for ``declare(fixed, value=...)`` (verified on hardware).
+
         Args:
             value: Initial value (float interpreted in fixed-point units).
             fractional_bits: Number of fractional bits in the representation.
@@ -39,7 +42,7 @@ class FixedPoint:
         self.bit_width = bit_width
         self.max_value = (1 << (bit_width - 1)) - 1
         self.min_value = -(1 << (bit_width - 1))
-        self.value = self._saturate(int(value * self.scale))
+        self.value = self._saturate(round(value * self.scale))
 
     def _saturate(self, value):
         if value > self.max_value:
@@ -125,6 +128,10 @@ class FixedPoint:
     def to_float(self) -> float:
         """Return the value as a Python float."""
         return self.value / self.scale
+
+    def __float__(self) -> float:
+        """Support ``float(fixed_point)`` by delegating to :meth:`to_float`."""
+        return self.to_float()
 
     @classmethod
     def from_int(cls, int_value, fractional_bits=28, bit_width=32):

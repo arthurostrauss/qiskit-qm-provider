@@ -196,6 +196,51 @@ helpers, per-module seed-timing overrides, and any upstream Qiskit
 - Should `RandBit` / measure-like variants, if added later, share the same
   module namespace?
 
+### Host-side mirror: `qiskit_qm_provider.random` as an entry point
+
+This subsection is exploratory and does not commit an API. The provider now ships
+[`qiskit_qm_provider.random.Random`](random.md), a Python mirror of QUA's `Random`
+that reproduces its draws on the host when the number and order of draws is fixed.
+It can create its QUA twin with `declare_qua()` inside a program. This suggests
+several connections with the circuit-level design above:
+
+- **A candidate for the module key.** The open question above considers "a small
+  dedicated `RandomModule` marker type". The Python `Random`, which could later gain
+  an optional `name`, is a natural candidate: a handle with a stable name (what
+  OpenQASM sees, e.g. `qm_rand_int("rb", 24)`) and a seed known on the host. The
+  per-compilation registry would then become
+  `rngs[rng.name] = rng.declare_qua()`, reusing a declaration that is already guarded
+  against use outside a QUA program scope.
+- **No invisible seeds.** The mirror always holds its seed on the host, even when it
+  draws one itself, so every generator in a compilation would have a known seed. This
+  removes the unseeded-module ambiguity noted above, where QUA captures a seed at
+  program creation that the host never sees.
+- **Runtime seeds through existing inputs.** A `SetRandomSeed` fed by
+  `qc.add_input("seed", ...)` or a `ParameterTable` input carries a value the host
+  sends itself. Applying the same `set_seed` to the mirror keeps reseeding
+  user-driven and replayable.
+- **Host prediction of circuit draws.** For a circuit whose draws are statically
+  ordered, a host evaluator could replay `RandInt` / `RandFixed` to know which
+  Clifford or branch the controller took, without streaming the value back.
+- **A draw-order analysis pass.** A provider analysis pass could flag random
+  classical-effect instructions nested under measurement-dependent `if_test`,
+  `switch` or `while_loop` blocks, and report whether a circuit is host-replayable.
+  This would turn the replication contract of the [Random numbers guide](random.md)
+  into a static check.
+- **Local testing and simulation.** The mirror can supply concrete values when
+  evaluating circuits with random classical effects off-hardware, for example in unit
+  tests of `ConditionalPlay` conditions driven by `RandInt`.
+
+Open questions this raises:
+
+- Is the circuit handle the Python `Random` itself, or a lighter marker built from it
+  (so circuits do not carry mutable generator state)?
+- How is the mirror exposed per compiled program? For example,
+  `QuaCircuitCompilation` could return the `name -> Random` registry used for
+  lowering, positioned at the start of the program.
+- What are the copy semantics of a handle when a circuit carrying it is copied,
+  transpiled, or composed into another circuit?
+
 ## Intended OpenQASM and QUA lowering
 
 The preferred exported form is a classical assignment whose right-hand side is
