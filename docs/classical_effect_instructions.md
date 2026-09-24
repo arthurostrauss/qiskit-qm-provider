@@ -1,414 +1,393 @@
-# Design note: classical-effect instructions and controller-side random values
+# Design note: controller-side random draws in Qiskit circuits
 
-:::{important}
-This is a future implementation note, not a public API commitment. It records
-the intended semantics and compiler boundaries for provider instructions that
-produce controller-side classical values.
-:::
+```{important}
+This is a future implementation note, not a public API commitment. Code that uses the
+proposed API is marked **(proposed)**; every other snippet runs against the current
+provider, Qiskit and qm-qasm. It records the chosen semantics, the evidence behind them, and
+the alternatives that were rejected.
+```
 
 ## Motivation
 
-`ConditionalPlay` established a useful provider pattern: a Qiskit instruction
-can expose a deterministic QUA capability without pretending that it is a
-unitary gate or a Qiskit control-flow operation. Its Boolean condition is an
-input to an instruction and can be represented by Qiskit's typed classical
-expression system.
+A QUA program can draw pseudorandom numbers on the controller with `qm.qua.Random`. A
+circuit could then use those values for random Clifford selection, dithering, or a
+randomized feedback policy, without a host round-trip. Qiskit has no notion of such a
+value. Its classical expressions (`qiskit.circuit.classical.expr`) are pure, whereas a
+random draw advances the state of a generator.
 
-Controller-side random-number generation is a different case. A QUA `Random`
-generator has mutable state and each draw produces a value that must be usable
-by later circuit operations. It therefore cannot be faithfully represented as
-a pure `expr.Expr`: copying, substituting, or evaluating a pure expression is
-not supposed to change program state, while a random draw must advance an RNG
-state.
+The provider already ships [`qiskit_qm_provider.random.Random`](random.md), a host mirror
+of QUA's generator that reproduces its draws when their number and order are known. The
+goal is for that one object to play two roles:
 
-The proposed family is consequently made of **classical-effect instructions**:
-ordered circuit operations that write into a declared Qiskit classical
-variable. The variable, rather than the instruction itself, is reused in
-subsequent Qiskit expressions.
+- **authoring**: the circuit obtains its random values from it;
+- **host twin**: it replays those same values on the host.
 
-## Proposed circuit model
+## The model: a draw is a read of a random token
 
-The first family would be deliberately small:
-
-| Provider operation | Inputs | Output effect | QUA operation |
-|---|---|---|---|
-| `SetRandomSeed` | typed unsigned-integer expression; optional RNG name | updates the selected RNG state | `rngs[name].set_seed(seed)` |
-| `RandInt` | maximum typed integer expression; optional RNG name | writes a `uint` variable | `assign(target, rngs[name].rand_int(maximum))` |
-| `RandFixed` | optional RNG name | writes a floating-point variable | `assign(target, rngs[name].rand_fixed())` |
-
-The public helpers should operate on Qiskit `expr.Var` values. A helper may
-return the destination variable for convenience, but the underlying operation
-is still a write, not a value-producing expression:
+A random draw is written as an ordinary Qiskit `Store` whose right-hand side is a
+**random token**. A token is a reserved input variable that the circuit declares but never
+gives a value to. Each execution of that `Store` makes one draw from the QUA generator
+the token names.
 
 ```python
 from qiskit.circuit import QuantumCircuit
 from qiskit.circuit.classical import expr, types
 
+qc = QuantumCircuit(1, 1)
+token = expr.Var.new("__qm_rand_int__rb__0__max_24", types.Uint(5))
+qc.add_input(token)
+clifford = qc.add_var("clifford", expr.lift(0, types.Uint(5)))
+
+qc.store(clifford, token)  # one draw in [0, 24) from the generator "rb"
+with qc.if_test(expr.equal(clifford, 3)):
+    qc.x(0)
+```
+
+This exports as plain OpenQASM 3:
+
+```
+input uint[5] __qm_rand_int__rb__0__max_24;
+uint[5] clifford;
+clifford = 0;
+clifford = __qm_rand_int__rb__0__max_24;
+if (clifford == 3) {
+  x q[0];
+}
+```
+
+Every stage handles only standard objects:
+
+- the circuit holds only a `Var` and `Store`s, with no new instruction and no new
+  expression node;
+- the transpiler sees ordinary `Store`s, which carry proper DAG wires;
+- the exporter emits an ordinary input declaration and an ordinary assignment.
+
+Only the final compilation to QUA knows that reading the token means "draw".
+
+### Token contract
+
+1. **Name grammar.** `__qm_rand_<kind>__<rng>__<n>__<spec>`, where:
+   - `<kind>` is `int` or `fixed`;
+   - `<rng>` is the name of the host `Random`. It is unique within a program and contains no `__`;
+   - `<n>` is a counter kept by that `Random`, so tokens stay unique across circuits and
+     after `compose`;
+   - `<spec>` is one of:
+
+     | `<spec>` | Meaning | QUA draw |
+     |---|---|---|
+     | `max_<k>` | integer in `[0, k)`, `k` a literal | `rng.rand_int(k)` |
+     | `max_v_<name>` | integer in `[0, name)`, `name` a circuit input | `rng.rand_int(<value of name>)` |
+     | `unit` | fixed-point number in `[0, 1)` (`kind` = `fixed`) | `rng.rand_fixed()` |
+
+   The name is self-describing. A circuit loaded from QPY, or read in another process,
+   can be compiled and replayed from the circuit and the seed alone.
+2. **Type.** The token has the type of its destination:
+   - `Uint(k)` with `1 <= k <= 31` and `2**k >= max`;
+   - `Float` for `fixed`.
+
+   qm-qasm maps `uint[k]` to a signed QUA `int` and restricts `k` to 31 bits, so `Uint(32)`
+   is not allowed. With matching types, the `Store` never needs a cast.
+3. **Use.** A token appears **only as the whole right-hand side of exactly one `Store`**,
+   and never as an lvalue. Draw sites are therefore exactly those `Store` sites, and no
+   Qiskit pass can duplicate or drop a draw by rewriting an expression. A provider check
+   enforces this before export.
+4. **Placement.** The draw `Store` may appear anywhere, including under
+   measurement-dependent control flow or inside loops. The draw is then made at run time
+   wherever that `Store` executes. Whether the host can *predict* the value is a separate
+   question (see [Host replay](#host-replay)).
+5. **Variable ranges.** In `max_v_<name>`, `name` must be a circuit input that the
+   circuit never writes. This is required for ordering (see
+   [Ordering and the DAG](#ordering-and-the-dag)). A range computed inside the circuit
+   must wait for a later milestone. A range given as an expression, such as `2*n + 1`,
+   is supplied as an input already holding that value.
+
+## Authoring API (proposed)
+
+The host `Random` gains a `name` and hands out tokens. Helpers append the `Store`, so
+users never spell token names:
+
+```python
+from qiskit_qm_provider.random import Random
+
+rng = Random(seed=1234, name="rb")                     # (proposed) name argument
+
 qc = QuantumCircuit(1)
-seed = qc.add_input("seed", types.Uint(32))
-sample = qc.add_var("sample", types.Uint(32), 0)
+nmax = qc.add_input("nmax", types.Uint(5))
+a = qc.add_var("a", expr.lift(0, types.Uint(5)))
+b = qc.add_var("b", expr.lift(0, types.Uint(5)))
+noise = qc.add_var("noise", expr.lift(0.0, types.Float()))
 
-qc.set_random_seed(seed)
-qc.rand_int(sample, maximum=16)
-
-condition = expr.equal(sample, expr.lift(3, types.Uint(32)))
-qc.conditional_play("x180", condition, 0)
+qc.rand_int(a, max=24, rng=rng)        # (proposed) __qm_rand_int__rb__0__max_24
+qc.rand_int(b, max=nmax, rng=rng)      # (proposed) __qm_rand_int__rb__1__max_v_nmax
+qc.rand_fixed(noise, rng=rng)          # (proposed) __qm_rand_fixed__rb__2__unit
 ```
 
-An `int` supplied by a user can be lifted into a provider-defined unsigned
-integer type, after range checking. Runtime values should already be typed
-Qiskit expressions. `RandFixed` should expose a Qiskit floating-point type,
-while its documentation must retain QUA's fixed-point execution semantics and
-range constraints.
+A helper takes a new token from `rng` and adds it with `qc.add_input` if the circuit does
+not already hold it. It then appends `qc.store(dest, token)`. The helper validates:
 
-### RNG lifetime is an explicit semantic choice
+- the destination type;
+- `max >= 1`;
+- the width bound;
+- that a variable range is a circuit input.
 
-QUA already allows multiple independent `Random` instances in one program.
-Each instance owns its own LCG state; draws and reseeds affect only that
-instance. Correlated default seeds across unseeded constructors are a known
-QUA footgun, so distinct user-facing generators should be seedable
-independently.
+Random values can be used wherever Qiskit accepts a `Var`: conditions, `switch` targets,
+`Store`s, indices, and
+[`ConditionalPlay`](backend.md) conditions. They cannot be gate angles directly, because
+Qiskit gate parameters are `Parameter`s, not `Var`s.
 
-The circuit model should therefore treat **named RNG modules** as first-class
-resources, not assume a single ambient generator. A convenience default
-(e.g. `"default"`) can still exist so simple circuits omit an explicit handle,
-but that default is one entry in a per-compilation registry, not a uniqueness
-constraint.
+## Compilation
 
-`SetRandomSeed` changes the selected generator; each later draw on that same
-handle advances that stream in circuit order. This avoids the misleading
-alternative of constructing `Random(seed)` at every `RandInt`, which can
-re-seed each draw.
+### The two execution modes
 
-The implementation and documentation must state whether a seed is applied at
-program entry, on every shot, or when an explicit `SetRandomSeed` instruction
-is reached inside a controller loop. Those choices have different
-reproducibility and sampling behaviour, and they apply **per named
-generator**.
+- **Embedded (primary).** The user writes the QUA program, owns its shot loop, and
+  calls `backend.quantum_circuit_to_qua(qc, ...)` inside it. The user also owns the QUA
+  generator and passes it in:
 
-### Insights: many RNG modules, one compilation
+  ```python
+  with program() as prog:
+      qua_rng = rng.declare_qua()                       # declared once; see below
+      with for_(n, 0, n < shots, n + 1):
+          backend.quantum_circuit_to_qua(tqc, inputs=..., random={rng: qua_rng})  # (proposed)
+  ```
 
-This subsection records design options and open questions for multi-generator
-support. It does not yet commit the public API.
+- **Standalone (visualisation).** Called outside a program, the provider opens
+  `with program():` itself, declares `rng.declare_qua()`, and compiles inside it.
+  Without this, qm-qasm would turn every unprovided input into an input stream, and the
+  draws would be lost. This mode is useful mainly to inspect the generated QUA.
 
-**Why multiple sources matter.** Realistic controller programs often need
-independent streams: Clifford selection vs. shot dither vs. a feedback-policy
-noise term, or separate RNGs for disjoint qubit groups so reseeding one
-experiment does not scramble another. Folding everything into one stream
-forces users to manually multiplex draws and destroys reproducibility
-isolation.
+### Binding tokens: the one qm-qasm change
 
-**Declaration vs. first use.** Two workable shapes:
+For every circuit input whose name starts with `__qm_rand_`, the provider:
 
-1. **Explicit declare** — a zero-qubit instruction such as
-   `DeclareRandomModule(name, seed=...)` (or a circuit helper
-   `qc.add_random_module("rb")`) that registers the name before any draw.
-2. **Lazy declare-on-first-use** — the first `RandInt`/`SetRandomSeed` that
-   mentions a name materializes that generator in the lowering context.
+1. decodes the name;
+2. finds the QUA generator in `random` by the `<rng>` field;
+3. binds the name to a factory that builds the draw expression.
 
-Explicit declare is clearer for OpenQASM export, Target preflight, and
-"unused name" diagnostics. Lazy declare is friendlier for small scripts but
-makes name typos create silent new streams. A hybrid is attractive: helpers
-may create on first use while export/lowering still require every used name to
-appear in a compile-time registry.
+`ParameterTable.from_qiskit` and the input-declaration path skip that prefix, so a
+token is never declared as a streamed parameter.
 
-**How the handle appears on operations.** Prefer an optional named argument on
-every random classical-effect instruction, defaulting to the built-in default
-module:
+qm-qasm needs one small, generic addition: an input bound to an expression that is
+evaluated **on every read**. Today, a value provided in `inputs` is copied into a newly
+declared variable once, where the input is declared
+(`code_generation_transformation.py`, `_declare_variable`). With that copy, a draw
+inside a loop would reuse the same value on every iteration. The proposed public marker is
+`qm_qasm.InputExpression(factory)`:
+
+- `_declare_variable` declares nothing for it. It registers a read-only entry in the
+  variables database whose `qua_value_exp` returns `factory(lookup)` each time it is
+  accessed. Every identifier read goes through that property
+  (`parse_expression.py`, `variables_db[signature].qua_value_exp`).
+- `lookup(name)` returns the QUA value of a circuit symbol. This is how `max_v_<name>`
+  reads its range at the moment of the draw.
+- A `Store` into the token fails, because the entry has no `assign`.
+
+This is about ten lines plus tests. It touches no grammar, no validator and no
+function-call dispatch, and nothing in it is specific to random numbers. The provider
+binds tokens as follows:
 
 ```python
-qc.set_random_seed(seed)                      # default module
-qc.rand_int(sample, maximum=16)               # default module
-qc.set_random_seed(seed_rb, rng="rb")
-qc.rand_int(clifford, maximum=24, rng="rb")
-qc.rand_fixed(noise, rng="dither")
+InputExpression(lambda lookup: qua_rng.rand_int(24))              # max_24
+InputExpression(lambda lookup: qua_rng.rand_int(lookup("nmax")))  # max_v_nmax
+InputExpression(lambda lookup: qua_rng.rand_fixed())              # unit
 ```
 
-Alternatives considered and currently disfavoured for the first milestone:
-
-- Separate instruction families per module (`RandIntRb`, …) — does not scale.
-- Passing a Python `RandomModule` object token through the circuit — harder to
-  serialize, copy, and remap through control-flow / QASM scopes than a stable
-  string (or interned symbol) name.
-- Encoding the module name only in the opaque OpenQASM function symbol
-  (`qm_rand_int_rb`) without a circuit-level handle — works for export but
-  weakens circuit IR clarity and makes Target registration combinatorial.
-
-**OpenQASM shape.** Keep assignment-form opaque calls, but thread the module
-identity into either the function name or a leading literal/identifier
-argument. Name-suffix form is closer to today's conditional-play naming
-discipline; argument form keeps one operation family and lets qm-qasm resolve
-a single hardware op that looks up the generator in the compile context:
-
-```
-qm_set_random_seed("rb", seed);
-clifford = qm_rand_int("rb", 24);
-noise = qm_rand_fixed("dither");
-```
-
-Either encoding is fine if the provider exporter and qm-qasm agree. The
-important invariant is: **function identity + module key select exactly one
-QUA `Random` instance from the per-compilation map**.
-
-**Lowering context.** Replace "own the one `Random` object" with "own a
-`dict[str, Random]` (or equivalent) created once in the intended outer QUA
-scope." Rules worth fixing early:
-
-- Names are compilation-scoped symbols (stable strings); circuit copies must
-  preserve them.
-- Declaring the same name twice is an error unless the second declare is a
-  no-op with identical seed policy.
-- Using an unknown name is a hard compile/export error.
-- Unseeded modules must document whether QUA's constructor-time Python seed
-  is captured once per compilation (reproducible across shots of that program
-  object) or re-drawn somehow — today QUA captures at program creation.
-- Independent modules must not share one underlying QUA `Random`; reseeding
-  `"rb"` must leave `"dither"` untouched.
-
-**Default module policy.** Keep a single well-known default name so the
-one-liner API in the examples above remains valid. Document that advanced
-users should name every stream they care about; relying on the default plus
-ad-hoc multiplexing is the anti-pattern this design is meant to avoid.
-
-**Interaction with seed timing.** Seed-at-entry, seed-per-shot, and
-seed-when-instruction-executes remain per-module choices. A program may mix
-policies across modules only if that is explicit; the first milestone can
-require one global seed-timing policy and still allow many modules.
-
-**Suggested first milestone without blocking multi-RNG.** Implement the
-registry and optional `rng=` handle from day one, even if examples only show
-the default module. Retrofitting names later would churn instruction payloads,
-QASM encodings, and qm-qasm context hooks. What can wait: rich declare
-helpers, per-module seed-timing overrides, and any upstream Qiskit
-"classical resource" abstraction beyond a string key.
-
-**Open questions to resolve before coding the API.**
-
-- Is the module key a free string, a provider `Enum`, or a small dedicated
-  `RandomModule` marker type that stringifies for QASM?
-- Must modules be declared in the circuit before use, or only registered with
-  the backend/Target?
-- Do we need a Qiskit-visible classical "resource" object (analogous to a
-  stretch or a typed var) so DAG/transpiler passes can see RNG dependencies,
-  or is instruction-carried `rng=` metadata enough?
-- Caps: is there a practical upper bound on concurrent QUA `Random` objects
-  we should document or enforce?
-- Should `RandBit` / measure-like variants, if added later, share the same
-  module namespace?
-
-### Host-side mirror: `qiskit_qm_provider.random` as an entry point
-
-This subsection is exploratory and does not commit an API. The provider now ships
-[`qiskit_qm_provider.random.Random`](random.md), a Python mirror of QUA's `Random`
-that reproduces its draws on the host when the number and order of draws is fixed.
-It can create its QUA twin with `declare_qua()` inside a program. This suggests
-several connections with the circuit-level design above:
-
-- **A candidate for the module key.** The open question above considers "a small
-  dedicated `RandomModule` marker type". The Python `Random`, which could later gain
-  an optional `name`, is a natural candidate: a handle with a stable name (what
-  OpenQASM sees, e.g. `qm_rand_int("rb", 24)`) and a seed known on the host. The
-  per-compilation registry would then become
-  `rngs[rng.name] = rng.declare_qua()`, reusing a declaration that is already guarded
-  against use outside a QUA program scope.
-- **No invisible seeds.** The mirror always holds its seed on the host, even when it
-  draws one itself, so every generator in a compilation would have a known seed. This
-  removes the unseeded-module ambiguity noted above, where QUA captures a seed at
-  program creation that the host never sees.
-- **Runtime seeds through existing inputs.** A `SetRandomSeed` fed by
-  `qc.add_input("seed", ...)` or a `ParameterTable` input carries a value the host
-  sends itself. Applying the same `set_seed` to the mirror keeps reseeding
-  user-driven and replayable.
-- **Host prediction of circuit draws.** For a circuit whose draws are statically
-  ordered, a host evaluator could replay `RandInt` / `RandFixed` to know which
-  Clifford or branch the controller took, without streaming the value back.
-- **A draw-order analysis pass.** A provider analysis pass could flag random
-  classical-effect instructions nested under measurement-dependent `if_test`,
-  `switch` or `while_loop` blocks, and report whether a circuit is host-replayable.
-  This would turn the replication contract of the [Random numbers guide](random.md)
-  into a static check.
-- **Local testing and simulation.** The mirror can supply concrete values when
-  evaluating circuits with random classical effects off-hardware, for example in unit
-  tests of `ConditionalPlay` conditions driven by `RandInt`.
-
-Open questions this raises:
-
-- Is the circuit handle the Python `Random` itself, or a lighter marker built from it
-  (so circuits do not carry mutable generator state)?
-- How is the mirror exposed per compiled program? For example,
-  `QuaCircuitCompilation` could return the `name -> Random` registry used for
-  lowering, positioned at the start of the program.
-- What are the copy semantics of a handle when a circuit carrying it is copied,
-  transpiled, or composed into another circuit?
-
-## Intended OpenQASM and QUA lowering
-
-The preferred exported form is a classical assignment whose right-hand side is
-an opaque provider function call, not a gate call and not an explicit `defcal`
-definition. The default-module spelling can omit the module key in user-facing
-helpers while still lowering through the same registry:
-
-```
-uint[32] sample;
-qm_set_random_seed(seed);       # default module
-sample = qm_rand_int(16);       # default module
-```
-
-At QUA lowering time, this becomes the equivalent of looking up (or creating)
-the named entry in the per-compilation map:
+A prototype of the marker was monkeypatched into qm-qasm, and the embedded example
+above then generated the QUA below. The token draws appear exactly where the circuit
+reads them. The token inside a measurement-dependent `if_` draws only when the branch is
+taken, and the token inside a loop draws on every iteration:
 
 ```python
-rngs = {}  # owned by the compilation context
-rngs["default"] = Random()
-rngs["default"].set_seed(seed)
-assign(sample, rngs["default"].rand_int(16))
+v1 = declare(int, value=1234)          # the user's generator state
+...
+with for_(v3, 0, v3 < 2, v3 + 1):      # the user's shot loop
+    assign(v4, v2)                     #   m (an ordinary input copy)
+    with if_(v4):
+        assign(v5, Random(v1).rand_int(24))
+    with for_(v6, 0, v6 <= 2, v6 + 1):
+        assign(v5, Random(v1).rand_int(24))
+        with if_(v5 == 3):
+            play('x180', 'q0')
 ```
 
-A second named stream is the same pattern with a different map key, not a
-second compilation-global singleton.
+`Random(v1)` adopts the existing variable `v1` as its state and declares nothing new, so
+all draws advance the same stream.
 
-The Qiskit provider exporter would recognize the provider instructions before
-normal instruction handling and build the assignment and function-call AST
-nodes directly. It should use Qiskit's typed-expression AST builder for all
-arguments and destinations, as `ConditionalPlay` does for its Boolean input.
+(randomness-ownership-and-seed-timing)=
+## Randomness ownership and seed timing
 
-## Why `DefcalInstruction` is not the primary representation
+The generator state never enters the circuit. It lives in the user's QUA program, and
+seed timing is simply wherever the user places `declare_qua()` and `set_seed()`.
 
-Qiskit's `DefcalInstruction` is exporter metadata, rather than a
-result-producing circuit instruction abstraction. Its current base exporter:
+- **Once per program, by default.** QUA hoists every `declare(..., value=v)` to the top of
+  the program and applies `v` once, even when the declaration sits inside a loop. So a
+  generator declared once with `rng.declare_qua()` persists across shots.
+- **One stream per program.** Passing the same `qua_rng` to several
+  `quantum_circuit_to_qua` calls makes all those circuits draw from one stream, in
+  execution order. The provider's own job builder (`job/qua_programs.py`) declares its
+  generators before its shot loop.
+- **Reseeding** is the user's `qua_rng.set_seed(...)`, mirrored by `rng.set_seed(...)` on
+  the host, exactly as in the [replication contract](random.md).
 
-- treats its parameters as angle-like;
-- accepts only `None` and `Bool` return types;
-- models a non-void result as exactly one output `Clbit`.
+This matters because qm-qasm lowers circuit-level initialisation into per-execution
+assignments:
 
-It could be useful for a narrow measure-like `RandBit` experiment, but it does
-not model a `uint` or floating-point result stored in an `expr.Var`.
-Subclassing it would not by itself extend the circuit IR. The provider would
-still need to override the QASM builder's defcal-call logic and invent an
-output-location convention. That is more coupling for less expressive power
-than a dedicated assignment-form exporter extension.
+- `uint[28] rb = 7;` becomes a hoisted declaration plus an `assign(rb, 7)` in the loop body;
+- a provided input is copied into a fresh variable on every execution.
 
-Making `expr.rand_int(...)` itself return a Qiskit expression is a separate,
-substantially larger upstream-Qiskit project. It would require an effectful
-classical-expression node, type rules, substitution and copy semantics,
-serialization, DAG dependencies, and transpiler preservation. It is not
-required for the explicit-destination design above.
+A generator state kept *inside* the circuit would be restarted, or silently copied, on every shot.
+
+(ordering-and-the-dag)=
+## Ordering and the DAG
+
+The only ordering information a `DAGCircuit` holds is its wires. Qiskit adds variable
+wires only for control-flow operations (their condition or target, and the variables their
+blocks capture) and for `Store` (its lvalue and rvalue), in `additional_wires`
+(`crates/circuit/src/dag_circuit.rs`). A custom `Instruction` whose `params` contain a
+`Var` gets **no** variable wire.
+
+Every transpilation, even at optimization level 0, converts the circuit to a DAG and
+back. The final circuit is materialised by `lexicographical_topological_sort` with the
+sort key `(qubits, clbits)`. So a node that touches no qubit or clbit has the smallest key
+and is emitted as early as its incoming edges allow.
+
+Random tokens are safe because a draw is a `Store`: it is wired on its destination and on
+the token. Two independent draws on the same generator share no wire and may be swapped by
+the transpiler. That changes nothing statistically, and host replay follows the order of
+the *transpiled* circuit (see [Host replay](#host-replay)). A variable range is read
+inside the qm-qasm binding, not by the `Store`, so the DAG cannot see that read. That is
+why the range must be an input the circuit never writes.
+
+The same analysis exposes an existing bug in `ConditionalPlay`. Its Boolean condition is
+held in `params`, so its reads are not wired. After a single
+`circuit_to_dag`/`dag_to_circuit` round-trip, a later `Store` to the condition variable
+moves ahead of the play, and the play then reads the overwritten value:
+
+```python
+from qiskit.converters import circuit_to_dag, dag_to_circuit
+import qiskit_qm_provider  # registers QuantumCircuit.conditional_play
+
+qc = QuantumCircuit(1)
+v = qc.add_var("v", expr.lift(False))
+qc.x(0)
+qc.store(v, expr.lift(True))
+qc.conditional_play("x180", v, 0)      # intended to read True
+qc.store(v, expr.lift(False))
+print([i.name for i in dag_to_circuit(circuit_to_dag(qc)).data])
+# ['store', 'store', 'store', 'x', 'qm_conditional_play_x180_…']  -> reads False
+```
+
+**Fix (planned):** `qc.conditional_play` wraps the instruction in a `box`. The control-flow
+builder captures the variables found in the instruction's parameters, so the box node is
+wired to the condition's variables and clbits as well as to its qubit. qm-qasm's
+`visit_Box` inlines the body, so the QUA output is unchanged.
+
+(host-replay)=
+## Host replay
+
+Host replay is a separate concern from the controller semantics above. A provider
+analysis pass walks the transpiled circuit, lists its draw sites in execution order, and
+classifies each one:
+
+- **replayable**: the site executes a number of times the host knows. This covers
+  straight-line code and loops with a known bound.
+- **not replayable**: the site sits under measurement-dependent control flow or inside a
+  loop whose length depends on data. The controller draws correctly; the host just cannot
+  know the value without streaming it back.
+
+For a replayable circuit, the host replays the draws from a copy of `rng` taken when
+`declare_qua()` was called:
+
+- a token `max_<k>` replays as `rand_int(k)`;
+- a token `max_v_<name>` replays as `rand_int(value of name)`;
+- a token `unit` replays as `rand_fixed()`.
+
+This gives, for example, the Clifford that each shot ran, without streaming anything back.
+It turns the [replication contract](random.md) into a static check.
 
 ## Required work by layer
 
-### 1. Provider circuit API and instruction model
+### qm-qasm
 
-- Define `SetRandomSeed`, `RandInt`, and `RandFixed` provider instructions
-  with typed expression validation, an optional named RNG handle, and clear
-  copy semantics.
-- Add `QuantumCircuit` helpers that accept or create a destination `expr.Var`
-  and optionally select an RNG module (defaulting to the built-in name).
-- Preserve the destination and all typed expressions through circuit copies,
-  control-flow block copies, and transpilation.
-- Register the operations as zero-qubit `Target` instructions. Qiskit's
-  `Target` supports zero-qubit instructions, but the provider must test this
-  through the exact transpilation passes it supports.
-- Treat these instructions as side-effecting directives for provider purposes:
-  no inverse, no quantum control, no commutation or deletion assumptions.
+- Add `InputExpression(factory)`, accepted in `Compiler.compile(..., inputs=...)`: no
+  declaration, a read-only entry, `factory(lookup)` evaluated on each read.
+- Tests: a read inside `if`, `for`, `while` and `switch` blocks; `lookup` of an input;
+  a `Store` into an `InputExpression` is rejected; repeated compiles sharing one generator.
 
-### 2. Provider OpenQASM exporter
+### Provider
 
-- Extend `QMOpenQASM3Exporter` with a narrow dispatch for these instructions.
-- Emit `ClassicalAssignment` statements with a typed `FunctionCall` right-hand
-  side, rather than serializing values through numeric gate parameters.
-- Map copied `expr.Var` and bit resources back into the current export scope.
-- Validate that every opaque function name is registered by the backend before
-  export, just as conditional plays are preflighted against the Target.
+- `Random`: a `name` argument (identifier-safe, no `__`) and a token counter.
+- Helpers `QuantumCircuit.rand_int(dest, max, rng)` and `QuantumCircuit.rand_fixed(dest, rng)`.
+- A token checker run before export, enforcing the contract: the grammar, a single
+  `Store` right-hand side, never an lvalue, types, and variable ranges being read-only inputs.
+- `quantum_circuit_to_qua(..., random=...)`: decode the tokens and bind them. Skip the prefix
+  in `ParameterTable.from_qiskit` and in input declaration. Support standalone mode by
+  opening the program.
+- The job builder declares generators before its shot loop. The estimator and sampler
+  builders forward `random` if they support it.
+- The replay analysis pass.
+- The `ConditionalPlay` `box` fix.
 
-### 3. Provider-to-QUA operation mapping
+### Documentation and tests
 
-- Add no-qubit operation mappings whose macros return a QUA scalar for
-  `RandInt` and `RandFixed`, and mutate generator state for `SetRandomSeed`.
-- Introduce a **per-compilation lowering context** that owns a map of QUA
-  `Random` instances keyed by module name (including the default). A
-  backend-global macro closure is not sufficient: it could retain a QUA
-  variable from a previous compilation or declare generators inside an
-  incorrect branch scope.
-- Declare each used generator once in the intended outer QUA scope, then
-  share that instance among all random operations that name it in that
-  compilation.
+- Unit tests: token names, helper validation, the checker, DAG round-trips that keep draws
+  after the writes they depend on, and exporter text.
+- An end-to-end test with an in-memory QuAM machine: transpile, compile, and compare the
+  generated QUA with host replay.
+- Update the [Random numbers guide](random.md) with the circuit workflow.
 
-### 4. qm-qasm compiler assessment and required changes
+## Rejected alternatives
 
-The proposed assignment/function-call form deliberately avoids explicit
-OpenQASM `defcal` support. The current qm-qasm code already has most of the
-right structural path:
+Each alternative below was checked against the current code.
 
-- `FunctionCall` is an allowed AST node.
-- Its code generator treats a non-built-in function call as a zero-qubit
-  hardware operation and returns its result.
-- `ClassicalAssignment` assigns that result to a declared QUA variable.
+- **Provider instructions exported as opaque function calls**
+  (`sample = qm_rand_int(16);`). qm-qasm would inline a zero-qubit call as a macro with no
+  `align`, but three steps block that path today:
+  - `ReferencingValidator` rejects the undeclared function name;
+  - an assignment's right-hand side accepts only the math built-ins (`NotImplementedError`);
+  - a standalone call statement (`ExpressionStatement`) is a disallowed node type.
 
-Therefore **a new parser grammar or explicit-defcal implementation should not
-be required merely to accept an opaque call such as `sample =
-qm_rand_int(16);`**. This must nevertheless be demonstrated with a compiler
-integration test, because the OpenQASM parser, operation resolver, and
-provider-generated source have to agree on the exact AST shape.
+  The instructions also have no DAG wires, so the transpiler hoisted a draw above a
+  measurement and a conditional reseed at optimization levels 0 and 1. A zero-qubit Target
+  entry keyed on `()` also crashes `VF2Layout` at levels 2 and 3. Qiskit's qasm3 AST has no
+  `FunctionCall` node, and `DefcalCallStatement` drops the parentheses when a call has no
+  arguments.
+- **A string-keyed registry of named modules** (`qm_rand_int("rb", 24)`). String literals
+  are not valid OpenQASM 3 expressions. A registry created during compilation would also
+  need a lifecycle hook that neither the provider nor qm-qasm has.
+- **Generator state as a circuit variable**, advanced by `Random(state_var)` inside a
+  macro. qm-qasm restarts or copies circuit state on every execution (see
+  [seed timing](#randomness-ownership-and-seed-timing)). Keeping the state would need a
+  new by-reference input mode, or a copy-back by the provider after every circuit.
+- **A draw instruction wrapped in a `box`** for ordering. It works, but it keeps all the
+  function-call costs above for no benefit over a `Store`.
+- **An effectful expression node in Qiskit** (e.g. `expr.Call`). This is the most principled
+  representation. It needs changes to the Qiskit expression system (types, copying,
+  serialisation, DAG wiring), a `FunctionCall` exporter path, and qm-qasm call resolution.
+  If Qiskit adopts such a node, tokens can be translated to it mechanically.
+- **`DefcalInstruction` with a typed return.** Its base exporter accepts only `None` or
+  `Bool` returns, written to a clbit. `ConditionalPlay` already overrides
+  `build_defcal_call` to emit typed arguments, but a draw needs no such machinery once it
+  is a `Store`.
 
-The likely qm-qasm work is narrower but still real:
+## Implementation sequence
 
-- Confirm or extend resolution and configuration of a zero-qubit,
-  result-producing hardware operation.
-- Provide a per-`compile` context or lifecycle hook in which a map of QUA
-  `Random` instances can be created and reused safely throughout code
-  generation.
-- Add integration tests for typed assignment, per-module generator reuse,
-  independent reseeding of distinct modules, and repeated compilation with
-  the same backend/compiler instance.
-
-If the design instead emits real `defcal` definitions or relies on typed
-defcal returns, **qm-qasm changes become mandatory and substantially larger**:
-its allowed AST types currently exclude calibration-definition nodes, and its
-code generator has no generic assigned-defcal-call lowering path. That is
-outside the recommended first milestone.
-
-### 5. Tests, documentation, and compatibility
-
-- Test integer literals, typed unsigned inputs, dynamic maxima, and fixed
-  draws; reject incompatible types and invalid limits clearly.
-- Test reuse in `expr` comparisons, `if_test`, `switch`, and
-  `ConditionalPlay` conditions.
-- Test copies, nested control-flow blocks, layout/transpilation, and QASM
-  export scope remapping.
-- Test deterministic sequences, explicit reseeding, independent multi-module
-  streams, and no cross-compilation leakage of generator state.
-- Document the numerical contract, named-generator scope, reproducibility, and
-  performance/latency assumptions separately from hardware results.
-
-## Recommended implementation sequence
-
-1. **Write the semantic contract first.** Fix named-module identity, the
-   default-module convenience, seed timing, integer width/range, fixed-point
-   mapping, and error behaviour for unknown / duplicate names.
-2. **Prototype the qm-qasm boundary.** Compile a handwritten OpenQASM
-   assignment with an opaque zero-qubit function call and verify it returns a
-   QUA value into a classical variable. This resolves the main uncertainty
-   before adding provider API surface.
-3. **Add the per-compilation RNG registry.** Choose whether the
-   `dict[str, Random]` (or equivalent) belongs in the provider's compilation
-   wrapper or a small qm-qasm extension; do not hide it in a persistent Target
-   macro closure. Exercise at least two named modules in the prototype.
-4. **Implement `SetRandomSeed` and `RandInt` with optional `rng=`.** Keep the
-   first slice integer only and explicit-destination only, but carry the
-   module key from day one.
-5. **Add `RandFixed` after numeric semantics are validated.** Its QUA
-   fixed-point behaviour deserves separate tests and documentation.
-6. **Only then assess convenience syntax or upstream work.** Returning an
-   `expr.Var` from a helper is compatible with this design; returning an
-   effectful expression is not a small provider extension. Richer
-   `DeclareRandomModule` helpers can follow once the registry path is proven.
+1. **qm-qasm `InputExpression`**, with the tests above.
+2. **`Random.name` and the token helpers**, with the checker and DAG round-trip tests.
+3. **Binding in `quantum_circuit_to_qua`** for embedded mode, then standalone mode and the
+   job builder.
+4. **The `ConditionalPlay` `box` fix.** It is independent and can land at any point.
+5. **The replay analysis pass**, and replay helpers on `Random`.
+6. **Deferred:** ranges computed inside the circuit (they need a DAG-visible read of the
+   range, e.g. a guarding `if (m > 0)`), Gaussian draws built on `rand_fixed`, and random
+   gate angles fed through `Parameter` inputs.
 
 ## Decision record
 
-The recommended first implementation is an explicit-destination,
-provider-specific classical-effect instruction family lowered as opaque
-OpenQASM function calls inside ordinary classical assignments, with a
-**per-compilation registry of named QUA `Random` modules** and a convenience
-default name for simple circuits. It requires targeted provider work and
-likely a small qm-qasm lifecycle extension, but it does not require a full
-Qiskit classical-expression redesign or explicit OpenQASM `defcal` support.
+- A random draw is a `Store` from a reserved, self-describing token input
+  (`__qm_rand_<kind>__<rng>__<n>__<spec>`). Each token is used as the right-hand side of
+  exactly one `Store`.
+- The user owns the QUA generator and passes `random={rng: qua_rng}`; one stream per program.
+- A variable range must be a read-only circuit input.
+- The only compiler change is a generic qm-qasm `InputExpression` input, evaluated on each read.
+- Host replayability is analysed separately, on the transpiled circuit.
+- `ConditionalPlay` is boxed so that its condition reads are ordered.

@@ -175,6 +175,7 @@ compare them with the host. Run them when changing QOP versions:
 
 ## Towards Qiskit integration
 
-The [classical-effect instructions design note](classical_effect_instructions.md)
-describes how controller-side random draws could become Qiskit circuit instructions,
-and how this host mirror could serve as their entry point.
+The [random draws design note](classical_effect_instructions.md) describes how a
+Qiskit circuit could draw controller-side random values through reserved *random token*
+inputs handed out by a named `Random`, and how this host mirror would then replay
+those draws.
