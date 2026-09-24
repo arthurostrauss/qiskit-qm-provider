@@ -25,7 +25,7 @@ classifiers=[
 ]
 
 dependencies = [
-    "qiskit",
+    "qiskit<3",
     "qualang-tools>=0.16.0",
     "quam >=0.4.2",
     "sympy>=1.14.0",
