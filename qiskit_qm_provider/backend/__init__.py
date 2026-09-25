@@ -34,11 +34,13 @@ from .qua_circuit_compilation import (
     MeasurementOutcomeTable,
 )
 from .measurement_field import MeasurementRegisterField
+from ..conditional_play import ConditionalPlay
 
 __all__ = [
     "QMBackend",
     "FluxTunableTransmonBackend",
     "QMInstructionProperties",
+    "ConditionalPlay",
     "add_basic_macros",
     "assign_struct_with_table",
     "get_measurement_outcomes",
