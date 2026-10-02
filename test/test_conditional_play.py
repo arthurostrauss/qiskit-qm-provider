@@ -247,6 +247,7 @@ class TestConditionalPlayRegistration:
         backend, _, _ = _backend_with_pulse()
         qc = QuantumCircuit(1)
         qc.conditional_play("x180", expr.lift(True), 0)
+        qc.ensure_physical(backend.num_qubits)
 
         with pytest.raises(ValueError, match="not registered"):
             backend.quantum_circuit_to_qua(qc)
@@ -274,17 +275,13 @@ class TestConditionalPlayRegistration:
         assert conditional_play_operation_name("x180") not in backend.target.operation_names
 
     def test_quantum_circuit_to_qua_ensures_the_circuit_is_physical(self):
-        """quantum_circuit_to_qua is responsible for warranting the circuit is physical
-        (a single canonical "q" register) before export; the export layer itself has no
-        Target dependency and never re-derives or re-checks physical-qubit indices.
+        """quantum_circuit_to_qua ensures the circuit is physical via ensure_circuit_physical,
+        raising a ValueError if it was not transpiled to physical qubits.
         """
         backend, _, _ = _backend_with_pulse()
         backend.register_conditional_play("x180")
         qc = QuantumCircuit(QuantumRegister(1, "myreg"))
         qc.conditional_play("x180", expr.lift(True), 0)
 
-        with patch("qm_qasm.Compiler") as mock_compiler_cls:
-            mock_compiler_cls.return_value.compile.return_value = Mock()
+        with pytest.raises(ValueError, match="Provided circuit was not transpiled to physical qubits"):
             backend.quantum_circuit_to_qua(qc)
-
-        assert qc.qregs[0].name == "q"

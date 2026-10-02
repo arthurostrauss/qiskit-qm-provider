@@ -945,13 +945,13 @@ class QMBackend(Backend):
             wired measurement outputs.
         """
         from .qua_circuit_compilation import QuaCircuitCompilation
-
+        from .backend_utils import ensure_circuit_physical
         # Warrant that qc is expressed in terms of physical qubits (a single owning "q"
         # register) before export -- everything downstream, including ConditionalPlay's
         # box, assumes physical qubit indices and has no Target of its own to check against.
         # ``ensure_physical`` canonicalizes qc in place; its return value only says whether
         # it had to do anything, not whether qc is now physical (it always is, afterwards).
-        
+        ensure_circuit_physical(qc, self.target.num_qubits)
         self._validate_conditional_plays(qc)
 
         basis_gates = self.qm_qasm_basis_gates
