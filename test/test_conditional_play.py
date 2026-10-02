@@ -20,7 +20,7 @@ from qiskit_qm_provider import add_conditional_play
 from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qiskit_qm_provider.conditional_play import (
     _box_matches_conditional_play_contract,
-    _ConditionalPlayInstruction,
+    _ConditionalPlay,
     _conditional_play_macro,
     conditional_play_operation_name,
 )
@@ -35,11 +35,11 @@ def _exporter_for(pulse_name: str):
     )
 
 
-def _unwrap_conditional_play(operation: Instruction) -> _ConditionalPlayInstruction:
+def _unwrap_conditional_play(operation: Instruction) -> _ConditionalPlay:
     """Return the conditional play nested inside ``qc.conditional_play``'s box wrapper."""
     assert isinstance(operation, BoxOp)
     (inner,) = operation.body.data
-    assert isinstance(inner.operation, _ConditionalPlayInstruction)
+    assert isinstance(inner.operation, _ConditionalPlay)
     return inner.operation
 
 
@@ -81,7 +81,7 @@ class TestConditionalPlay:
 
         assert isinstance(qc.data[0].operation, BoxOp)
         operation = _unwrap_conditional_play(qc.data[0].operation)
-        assert isinstance(operation, _ConditionalPlayInstruction)
+        assert isinstance(operation, _ConditionalPlay)
         assert isinstance(operation, Instruction)
         assert not isinstance(operation, Gate)
         assert operation.pulse_name == "x180"
@@ -139,11 +139,11 @@ class TestConditionalPlay:
 
     def test_box_contract_helper_rejects_extra_content(self):
         """The structural contract a conditional-play box must satisfy: exactly one
-        _ConditionalPlayInstruction and nothing else. This must reject a body that a pass
+        _ConditionalPlay and nothing else. This must reject a body that a pass
         has added content to, e.g. because it didn't know to leave this box's body alone.
         """
         body = QuantumCircuit(1)
-        body.append(_ConditionalPlayInstruction("x180", expr.lift(True)), [0])
+        body.append(_ConditionalPlay("x180", expr.lift(True)), [0])
         body.x(0)
 
         assert not _box_matches_conditional_play_contract(body)
@@ -156,7 +156,7 @@ class TestConditionalPlay:
         qc = QuantumCircuit(1, 1)
         condition = expr.equal(qc.clbits[0], expr.lift(False))
         with qc.box():
-            qc.append(_ConditionalPlayInstruction("x180", condition), [0])
+            qc.append(_ConditionalPlay("x180", condition), [0])
             qc.x(0)
 
         with pytest.raises(QASM3ExporterError, match="must contain exactly that one instruction"):
@@ -192,7 +192,7 @@ class TestConditionalPlay:
         condition = expr.equal(qc.clbits[0], expr.lift(False))
         qc.conditional_play("x180", condition, 0)
         target = Target()
-        target.add_instruction(_ConditionalPlayInstruction.target_operation("x180"), {(0,): None})
+        target.add_instruction(_ConditionalPlay.target_operation("x180"), {(0,): None})
         target.add_instruction(BoxOp, name="box")
 
         transpiled = transpile(qc, target=target)
@@ -205,13 +205,13 @@ class TestConditionalPlay:
     def test_non_boolean_or_non_expression_condition_is_rejected(self):
         qc = QuantumCircuit(1, 1)
         with pytest.raises(CircuitError, match="classical Expr"):
-            _ConditionalPlayInstruction("x180", False)
+            _ConditionalPlay("x180", False)
         with pytest.raises(CircuitError, match="Boolean type"):
-            _ConditionalPlayInstruction("x180", expr.lift(1))
+            _ConditionalPlay("x180", expr.lift(1))
 
     def test_inverse_and_quantum_control_are_rejected(self):
         qc = QuantumCircuit(1, 1)
-        operation = _ConditionalPlayInstruction("x180", expr.equal(qc.clbits[0], expr.lift(False)))
+        operation = _ConditionalPlay("x180", expr.equal(qc.clbits[0], expr.lift(False)))
 
         with pytest.raises(CircuitError, match="inverse"):
             operation.inverse()

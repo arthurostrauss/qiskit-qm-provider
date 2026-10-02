@@ -117,7 +117,7 @@ class _QMOpenQASM3Builder(QASM3Builder):
         call, with no emitted defcal body.
         """
         operation = instruction.operation
-        if not isinstance(operation, _ConditionalPlayInstruction):
+        if not isinstance(operation, _ConditionalPlay):
             return super().build_defcal_call(instruction, defcal)
 
         if (
