@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Conditional pulse plays (`conditional_play`)** — support for applying a fixed QuAM pulse conditionally based on a real-time Boolean Qiskit expression (`expr.Expr`), lowering directly to QUA `pulse.play(condition=...)` without introducing Qiskit `if_test` blocks or QUA branching. Added `QuantumCircuit.conditional_play(pulse_name, condition, qubit)` and the standalone `add_conditional_play(qc, pulse_name, condition, qubit)` helper function, registered on the backend via `backend.register_conditional_play(pulse_name)`.
 - **DAG-safe `box` encapsulation** — conditional plays are automatically encapsulated inside a Qiskit `box` (`BoxOp`). Because the condition expression is stored in instruction parameters and would otherwise be invisible to Qiskit's DAG, wrapping in a `box` ensures the condition's classical `Var` dependencies are tracked by the DAG and protected against silent reordering during `transpile()` round-trips.
+- **`y` and `sxdg` basis gates** — added `"y": "y180"` and `"sxdg": "-x90"` mappings to `pulse_gate_map` in `add_basic_macros()`, allowing backends to register `y` and `sxdg` basis gates from the corresponding QuAM pulses alongside existing `x`, `sx`, `sy`, and `sydg` operations.
 - **Physical circuit validation (`ensure_circuit_physical`)** — added helper in `backend_utils.py` to validate that circuits submitted to the backend are already mapped to physical qubits.
 
 ### Changed
