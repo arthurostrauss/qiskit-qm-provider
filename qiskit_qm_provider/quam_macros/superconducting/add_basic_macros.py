@@ -97,7 +97,9 @@ def add_basic_macros(
     machine = backend.machine if isinstance(backend, QMBackend) else backend
     pulse_gate_map = {
         "x": "x180",
+        "y": "y180",
         "sx": "x90",
+        "sxdg": "-x90",
         "sy": "y90",
         "sydg": "-y90",
     }

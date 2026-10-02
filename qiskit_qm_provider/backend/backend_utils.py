@@ -145,6 +145,19 @@ def validate_circuits(
 
     return new_circuits
 
+def ensure_circuit_physical(qc: QuantumCircuit, n_qubits: int) -> None:
+    """Ensure the circuit is physical.
+
+    Args:
+        qc: QuantumCircuit to check.
+        n_qubits: Number of qubits of the backend
+
+    Raises:
+        ValueError: If the circuit is not physical.
+    """
+    if qc.ensure_physical(n_qubits):  
+        # method returns True if the circuit is not physical (had to be modified in place)
+        raise ValueError("Provided circuit was not transpiled to physical qubits, please use the transpiler against this backend before submitting it to the backend")
 
 def require_classified_meas_level(meas_level, *, context: str = "") -> None:
     """Raise if ``meas_level`` is not classified 0/1 readout.
