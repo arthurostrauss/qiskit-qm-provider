@@ -181,14 +181,14 @@ Whenever you modify `backend.target`, call `update_target` so both transpilation
 
 ## Conditional pulse plays
 
-`ConditionalPlay` applies one fixed QuAM pulse when a run-time Boolean Qiskit expression is true. It lowers directly to QUA `pulse.play(condition=...)`; it does not introduce a Qiskit `if_test` or an enclosing QUA branch.
+A conditional play applies one fixed QuAM pulse when a run-time Boolean Qiskit expression is true. It lowers directly to QUA `pulse.play(condition=...)`; it does not introduce a Qiskit `if_test` or an enclosing QUA branch. Build one with `QuantumCircuit.conditional_play(...)` (shown below) or the equivalent standalone `add_conditional_play(qc, ...)` function.
 
 The construct has two deliberately separate inputs:
 
 - `pulse_name` is compile-time metadata. It selects the QuAM pulse and must resolve uniquely through `qubit.get_pulse(pulse_name)` on every active physical qubit.
 - `condition` is a run-time `qiskit.circuit.classical.expr.Expr` whose type must be Boolean. It is lowered through Qiskit's typed classical-expression AST, not through a numeric Qiskit `Parameter`.
 
-`ConditionalPlay` is a provider `Instruction`, exported through Qiskit's implicit-`defcal` call path. The emitted OpenQASM operation has a readable, stable internal name such as `qm_conditional_play_x180_<digest>`; the pulse label is never passed as a run-time argument.
+Internally this is a private provider `Instruction`, always wrapped in a `box` by `conditional_play`/`add_conditional_play` (there is no supported way to construct one directly) and exported through Qiskit's implicit-`defcal` call path. The emitted OpenQASM operation has a readable, stable internal name such as `qm_conditional_play_x180_<digest>`; the pulse label is never passed as a run-time argument.
 
 ### Registration and compilation
 

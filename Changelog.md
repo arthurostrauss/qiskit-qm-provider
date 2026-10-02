@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Conditional pulse plays (`conditional_play`)** — support for applying a fixed QuAM pulse conditionally based on a real-time Boolean Qiskit expression (`expr.Expr`), lowering directly to QUA `pulse.play(condition=...)` without introducing Qiskit `if_test` blocks or QUA branching. Added `QuantumCircuit.conditional_play(pulse_name, condition, qubit)` and the standalone `add_conditional_play(qc, pulse_name, condition, qubit)` helper function, registered on the backend via `backend.register_conditional_play(pulse_name)`.
+- **DAG-safe `box` encapsulation** — conditional plays are automatically encapsulated inside a Qiskit `box` (`BoxOp`). Because the condition expression is stored in instruction parameters and would otherwise be invisible to Qiskit's DAG, wrapping in a `box` ensures the condition's classical `Var` dependencies are tracked by the DAG and protected against silent reordering during `transpile()` round-trips.
+- **Physical circuit validation (`ensure_circuit_physical`)** — added helper in `backend_utils.py` to validate that circuits submitted to the backend are already mapped to physical qubits.
+
+### Changed
+
+- **Private `_ConditionalPlay` instruction** — the underlying instruction class is private (`_ConditionalPlay`, renamed from `_ConditionalPlayInstruction`), ensuring users construct conditional plays exclusively through `QuantumCircuit.conditional_play` or `add_conditional_play`. Direct instantiation and bare circuit appending are prevented to maintain DAG-safety.
+- **Decoupled target validation from exporter** — removed `conditional_play_validator` callback from `QMOpenQASM3Exporter` and builder initialization. Target and qubit-support validation for conditional plays is now handled directly by `QMBackend.quantum_circuit_to_qua()` / `_validate_conditional_plays()` against `backend.target`, keeping the OpenQASM 3 exporter independent of backend targets.
+- **Recursive conditional play discovery** — introduced `_iter_conditional_plays` to recursively discover conditional play instructions across nested control-flow blocks and compose physical qubit indices, used by both the exporter (for implicit `defcal` registrations) and backend validation.
+- **Export-time box contract enforcement** — `QMOpenQASM3Exporter` verifies that every conditional-play box satisfies its structural contract (containing exactly one `_ConditionalPlay` instruction and no extraneous operations).
+
 ## [0.3.5] - 2026-09-23
 
 ### Added

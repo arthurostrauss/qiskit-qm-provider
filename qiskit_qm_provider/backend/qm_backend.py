@@ -63,7 +63,12 @@ from .backend_utils import (
     operation_key,
 )
 from .qm_instruction_properties import QMInstructionProperties
-from ..conditional_play import ConditionalPlay, _conditional_play_macro, conditional_play_operation_name
+from ..conditional_play import (
+    _ConditionalPlayInstruction,
+    _conditional_play_macro,
+    _iter_conditional_plays,
+    conditional_play_operation_name,
+)
 from ..qasm3_exporter import QMOpenQASM3Exporter
 
 if TYPE_CHECKING:
@@ -844,22 +849,27 @@ class QMBackend(Backend):
             for qargs, property_ in properties.items():
                 self.target.update_instruction_properties(operation_name, qargs, property_)
         else:
-            self.target.add_instruction(ConditionalPlay.target_operation(pulse_name), properties=properties)
+            self.target.add_instruction(_ConditionalPlayInstruction.target_operation(pulse_name), properties=properties)
 
         self._conditional_play_operations[operation_name] = pulse_name
         self.update_target()
 
-    def _validate_conditional_play(self, operation: ConditionalPlay, qargs: tuple[int, ...]) -> None:
-        """Check that a ConditionalPlay has a registered, physical Target mapping."""
-        if operation.name not in self._conditional_play_operations:
-            raise ValueError(
-                f"ConditionalPlay for pulse {operation.pulse_name!r} is not registered. "
-                f"Call backend.register_conditional_play({operation.pulse_name!r}) before compiling."
-            )
-        if not self.target.instruction_supported(operation.name, qargs):
-            raise ValueError(
-                f"ConditionalPlay for pulse {operation.pulse_name!r} is not supported on physical qubits {qargs}."
-            )
+    def _validate_conditional_plays(self, qc: QuantumCircuit) -> None:
+        """Check every ``ConditionalPlay`` in ``qc`` against this backend's own ``Target``.
+
+        This is checked directly here, against ``self.target``, rather than threaded
+        through the exporter/builder as a validator callback -- the export layer has no
+        ``Target`` of its own, and ``qc`` is already physical by the time this runs (see
+        the ``ensure_physical`` call in :meth:`quantum_circuit_to_qua`), so its qargs are
+        meaningful physical qubit indices.
+        """
+        for operation, qargs in _iter_conditional_plays(qc):
+            if not self.target.instruction_supported(operation.name, qargs):
+                raise ValueError(
+                    f"ConditionalPlay for pulse {operation.pulse_name!r} is not registered on "
+                    f"qubit(s) {qargs}. Call backend.register_conditional_play({operation.pulse_name!r}) "
+                    "before compiling."
+                )
 
     @requires_qiskit_pulse
     def update_calibrations(self, qc: QuantumCircuit, input_type: Optional[InputType] = None):
@@ -936,6 +946,14 @@ class QMBackend(Backend):
         """
         from .qua_circuit_compilation import QuaCircuitCompilation
 
+        # Warrant that qc is expressed in terms of physical qubits (a single owning "q"
+        # register) before export -- everything downstream, including ConditionalPlay's
+        # box, assumes physical qubit indices and has no Target of its own to check against.
+        # ``ensure_physical`` canonicalizes qc in place; its return value only says whether
+        # it had to do anything, not whether qc is now physical (it always is, afterwards).
+        
+        self._validate_conditional_plays(qc)
+
         basis_gates = self.qm_qasm_basis_gates
         # Check if all custom calibrations are in the qasm3 basis gates
         if hasattr(qc, "calibrations") and qc.calibrations:
@@ -949,7 +967,6 @@ class QMBackend(Backend):
             includes=(),
             basis_gates=basis_gates,
             disable_constants=True,
-            conditional_play_validator=self._validate_conditional_play,
         )
         open_qasm_code = exporter.dumps(qc)
         open_qasm_code = "\n".join(
@@ -1068,5 +1085,4 @@ class QMBackend(Backend):
             includes=(),
             basis_gates=self.qm_qasm_basis_gates,
             disable_constants=True,
-            conditional_play_validator=self._validate_conditional_play,
         )

@@ -16,8 +16,6 @@
 
 from __future__ import annotations
 
-from typing import Callable
-
 from qiskit.circuit import Bit, Clbit, ClassicalRegister
 from qiskit.circuit.classical import expr, types
 from qiskit.qasm3 import DefcalInstruction, ast
@@ -25,15 +23,37 @@ from qiskit.qasm3.exceptions import QASM3ExporterError
 from qiskit.qasm3.exporter import Exporter, QASM3Builder
 from qiskit.qasm3.printer import BasicPrinter
 
-from .conditional_play import ConditionalPlay
-
-ConditionalPlayValidator = Callable[[object, tuple[int, ...]], None]
+from .conditional_play import (
+    _box_matches_conditional_play_contract,
+    _ConditionalPlayInstruction,
+    _iter_conditional_plays,
+)
 
 
 class _QMOpenQASM3Builder(QASM3Builder):
-    """Qiskit's builder with typed implicit-defcal arguments for ``ConditionalPlay``."""
+    """Qiskit's builder with typed implicit-defcal arguments for a conditional play."""
 
-    _conditional_play_validator: ConditionalPlayValidator | None = None
+    def build_box(self, instruction):
+        """Build a ``box``, enforcing the conditional-play box contract.
+
+        A box built by ``QuantumCircuit.conditional_play``/``add_conditional_play``
+        always holds exactly one ``_ConditionalPlayInstruction`` and nothing
+        else (see :mod:`qiskit_qm_provider.conditional_play`). This is the
+        last point in the pipeline that still sees the box before it becomes
+        hardware-bound OpenQASM 3, so it is where that invariant is actually
+        checked, in case a generic transpiler pass altered the box's contents
+        in between without knowing to leave it alone. An ordinary box with no
+        conditional play in it at all is left to the base builder unchanged.
+        """
+        body = instruction.operation.blocks[0]
+        has_conditional_play = any(isinstance(i.operation, _ConditionalPlayInstruction) for i in body.data)
+        if has_conditional_play and not _box_matches_conditional_play_contract(body):
+            raise QASM3ExporterError(
+                "A box containing a ConditionalPlay must contain exactly that one instruction "
+                "and nothing else -- build it via QuantumCircuit.conditional_play or "
+                "add_conditional_play."
+            )
+        return super().build_box(instruction)
 
     def _resolve_expression_resource(self, resource):
         """Resolve copied circuit resources by their stable Qiskit names.
@@ -85,7 +105,7 @@ class _QMOpenQASM3Builder(QASM3Builder):
         return super()._lookup_variable_for_expression(self._resolve_expression_resource(var))
 
     def build_defcal_call(self, instruction, defcal):
-        """Serialize ``ConditionalPlay``'s Boolean argument as a typed expression.
+        """Serialize a conditional play's Boolean argument as a typed expression.
 
         The base method is retained for every other implicit defcal.  For this
         instruction alone, the base implementation is unsuitable because it
@@ -97,7 +117,7 @@ class _QMOpenQASM3Builder(QASM3Builder):
         call, with no emitted defcal body.
         """
         operation = instruction.operation
-        if not isinstance(operation, ConditionalPlay):
+        if not isinstance(operation, _ConditionalPlayInstruction):
             return super().build_defcal_call(instruction, defcal)
 
         if (
@@ -112,10 +132,6 @@ class _QMOpenQASM3Builder(QASM3Builder):
                 "ConditionalPlay requires an implicit defcal signature of (bool) on one qubit with no return value"
             )
 
-        qargs = tuple(self.scope.circuit.find_bit(qubit).index for qubit in instruction.qubits)
-        if self._conditional_play_validator is not None:
-            self._conditional_play_validator(operation, qargs)
-
         qubits = [self._lookup_bit(qubit) for qubit in instruction.qubits]
         return ast.DefcalCallStatement(
             ident=ast.Identifier(defcal.name),
@@ -128,17 +144,6 @@ class _QMOpenQASM3Builder(QASM3Builder):
 class QMOpenQASM3Exporter(Exporter):
     """Qiskit exporter extended with provider implicit defcals."""
 
-    def __init__(self, *args, conditional_play_validator: ConditionalPlayValidator | None = None, **kwargs):
-        """Add optional backend preflight validation to Qiskit's exporter setup.
-
-        The base exporter accepts a static ``implicit_defcals`` mapping but has
-        no provider validation hook.  This override stores a narrow callback;
-        all normal exporter options and semantics remain owned by the base
-        class.
-        """
-        super().__init__(*args, **kwargs)
-        self._conditional_play_validator = conditional_play_validator
-
     def dump(self, circuit, stream):
         """Export with implicit defcals for encountered conditional plays.
 
@@ -150,19 +155,25 @@ class QMOpenQASM3Exporter(Exporter):
         builder's basis-gate list because Qiskit's symbol table treats an
         implicit defcal and a basis gate with the same name as conflicting
         declarations.  Existing user-supplied implicit defcals are preserved.
+
+        ``ConditionalPlay`` is always found inside the ``box`` that
+        :func:`~qiskit_qm_provider.conditional_play._conditional_play` wraps
+        it in (see the module docstring for why); that box is exported as an
+        ordinary OpenQASM 3 ``box`` statement, using Qiskit's own unmodified
+        ``build_box`` (beyond checking the box's structural contract, see
+        ``_QMOpenQASM3Builder.build_box``) -- the QUA compiler's ``visit_Box``
+        already unwraps a box's body transparently, so no compiler-side or
+        exporter-side flattening is needed here. This exporter has no
+        ``Target`` of its own and does not validate that a ``ConditionalPlay``
+        is registered anywhere; that is
+        :meth:`QMBackend.quantum_circuit_to_qua`'s responsibility.
         """
         implicit_defcals = dict(self.implicit_defcals)
-        pending = [circuit]
-        while pending:
-            current = pending.pop()
-            for instruction in current.data:
-                operation = instruction.operation
-                if isinstance(operation, ConditionalPlay):
-                    implicit_defcals.setdefault(
-                        operation.name,
-                        DefcalInstruction(operation.name, parameters=1, qubits=1, return_type=None),
-                    )
-                pending.extend(getattr(operation, "blocks", ()))
+        for operation, _ in _iter_conditional_plays(circuit):
+            implicit_defcals.setdefault(
+                operation.name,
+                DefcalInstruction(operation.name, parameters=1, qubits=1, return_type=None),
+            )
         basis_gates = [gate for gate in self.basis_gates if gate not in implicit_defcals]
         builder = _QMOpenQASM3Builder(
             circuit,
@@ -174,5 +185,4 @@ class QMOpenQASM3Exporter(Exporter):
             annotation_handlers=self.annotation_handlers,
             implicit_defcals=implicit_defcals,
         )
-        builder._conditional_play_validator = self._conditional_play_validator
         BasicPrinter(stream, indent=self.indent, experimental=self.experimental).visit(builder.build_program())

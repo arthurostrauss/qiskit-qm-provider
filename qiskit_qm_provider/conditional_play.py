@@ -12,13 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Provider instruction for a QuAM pulse conditioned by a Qiskit expression.
+"""Provider support for a QuAM pulse conditioned by a Qiskit expression.
 
-``ConditionalPlay`` is an :class:`~qiskit.circuit.Instruction`, not a
-:class:`~qiskit.circuit.Gate`.  Its sole instruction argument is a typed
-Qiskit classical expression, never a numeric Qiskit ``Parameter``.  The
-provider exports it as an implicit OpenQASM ``defcal`` call so the expression
-reaches the registered QUA macro as a Boolean condition.
+The instruction itself (``_ConditionalPlayInstruction``) is private. Its
+Boolean condition lives only in ``Instruction.params``, invisible to Qiskit's
+DAG, so a bare instance is vulnerable to being silently reordered relative to
+a later write of the same classical ``Var`` by any
+``circuit_to_dag``/``dag_to_circuit`` round-trip (i.e. by any ``transpile()``
+call). The only sanctioned ways to create one are
+:meth:`QuantumCircuit.conditional_play` (installed on every circuit below) and
+:func:`add_conditional_play`, both of which always wrap it in a ``box`` so its
+condition's ``Var`` becomes a real DAG dependency. The provider exports that
+box as an ordinary OpenQASM 3 ``box`` statement; see
+:meth:`~qiskit_qm_provider.qasm3_exporter._QMOpenQASM3Builder.build_box` for
+where its structural contract -- exactly one ``_ConditionalPlayInstruction``
+and nothing else -- is enforced.
 """
 
 from __future__ import annotations
@@ -31,7 +39,7 @@ from qiskit.circuit.classical import expr, types
 from qiskit.circuit.exceptions import CircuitError
 
 __all__ = [
-    "ConditionalPlay",
+    "add_conditional_play",
     "conditional_play_operation_name",
 ]
 
@@ -58,8 +66,13 @@ def conditional_play_operation_name(pulse_name: str) -> str:
     return f"qm_conditional_play_{readable}_{digest}"
 
 
-class ConditionalPlay(Instruction):
+class _ConditionalPlayInstruction(Instruction):
     """A one-qubit QuAM pulse play guarded by a Boolean classical expression.
+
+    Private: this class is never exported, so a caller cannot construct one
+    and ``append`` it directly, bypassing the box that keeps its condition
+    ordering-safe (see the module docstring). Use
+    :meth:`QuantumCircuit.conditional_play` or :func:`add_conditional_play`.
 
     Args:
         pulse_name: Compile-time QuAM pulse label.  It is resolved per physical
@@ -139,23 +152,78 @@ class ConditionalPlay(Instruction):
         are interchangeable only when they designate the same QuAM pulse.
         """
         return (
-            isinstance(other, ConditionalPlay)
+            isinstance(other, _ConditionalPlayInstruction)
             and self.pulse_name == other.pulse_name
             and self.condition_expr == other.condition_expr
             and self.label == other.label
         )
 
 
+def _box_matches_conditional_play_contract(body: QuantumCircuit) -> bool:
+    """Whether ``body`` is exactly one ``_ConditionalPlayInstruction`` and nothing else.
+
+    This is the structural contract every box built by
+    :meth:`QuantumCircuit.conditional_play`/:func:`add_conditional_play`
+    satisfies by construction. It is enforced at OpenQASM 3 export time (see
+    :meth:`~qiskit_qm_provider.qasm3_exporter._QMOpenQASM3Builder.build_box`)
+    against boxes that may have been altered in between -- e.g. by a generic
+    transpiler pass that iterates over ``BoxOp`` nodes without knowing to
+    leave this one's body alone.
+    """
+    return len(body.data) == 1 and isinstance(body.data[0].operation, _ConditionalPlayInstruction)
+
+
+def _iter_conditional_plays(circuit: QuantumCircuit, qubit_map: dict | None = None):
+    """Recursively yield every conditional play in ``circuit`` with its physical qargs.
+
+    A conditional play always lives one level inside a ``box`` (see the
+    module docstring), and a caller may itself nest that box inside further
+    control flow (e.g. an ``if_test``). This composes qubit indices through
+    every such level the same way Qiskit composes them when it runs a block
+    natively: a block's own qubits correspond positionally to the qargs of the
+    instruction that owns it.
+    """
+    if qubit_map is None:
+        qubit_map = {qubit: index for index, qubit in enumerate(circuit.qubits)}
+    for instruction in circuit.data:
+        operation = instruction.operation
+        qargs = tuple(qubit_map[qubit] for qubit in instruction.qubits)
+        if isinstance(operation, _ConditionalPlayInstruction):
+            yield operation, qargs
+        for block in getattr(operation, "blocks", ()):
+            yield from _iter_conditional_plays(block, dict(zip(block.qubits, qargs)))
+
+
 def _conditional_play(self: QuantumCircuit, pulse_name: str, condition: expr.Expr, qubit, label: str | None = None):
-    """Append :class:`ConditionalPlay` to ``self``.
+    """Append a conditional play to ``self``, wrapped in a ``box``.
 
     This provider convenience method mirrors the additional-gate helpers.  The
     corresponding pulse must be registered on the backend before transpilation.
+
+    See the module docstring for why the ``box`` is there (DAG ordering
+    correctness against ``transpile``) and why it is exported as-is rather
+    than unwrapped.
     """
-    return self.append(ConditionalPlay(pulse_name, condition, label=label), [qubit])
+    with self.box():
+        instruction_set = self.append(_ConditionalPlayInstruction(pulse_name, condition, label=label), [qubit])
+    return instruction_set
 
 
 QuantumCircuit.conditional_play = _conditional_play
+
+
+def add_conditional_play(
+    qc: QuantumCircuit, pulse_name: str, condition: expr.Expr, qubit, label: str | None = None
+):
+    """Append a conditional QuAM pulse play to ``qc``, guarded by ``condition``.
+
+    Function-call equivalent of ``qc.conditional_play(...)`` (the method this
+    module installs on every :class:`~qiskit.circuit.QuantumCircuit`, above),
+    for callers who would rather use a standalone function than rely on the
+    monkey-patched method. Both go through the exact same box-wrapped
+    construction -- this just calls the method.
+    """
+    return qc.conditional_play(pulse_name, condition, qubit, label=label)
 
 
 def _conditional_play_macro(qubit, pulse_name: str):
