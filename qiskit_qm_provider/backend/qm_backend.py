@@ -64,7 +64,7 @@ from .backend_utils import (
 )
 from .qm_instruction_properties import QMInstructionProperties
 from ..conditional_play import (
-    _ConditionalPlayInstruction,
+    _ConditionalPlay,
     _conditional_play_macro,
     _iter_conditional_plays,
     conditional_play_operation_name,
@@ -849,7 +849,7 @@ class QMBackend(Backend):
             for qargs, property_ in properties.items():
                 self.target.update_instruction_properties(operation_name, qargs, property_)
         else:
-            self.target.add_instruction(_ConditionalPlayInstruction.target_operation(pulse_name), properties=properties)
+            self.target.add_instruction(_ConditionalPlay.target_operation(pulse_name), properties=properties)
 
         self._conditional_play_operations[operation_name] = pulse_name
         self.update_target()

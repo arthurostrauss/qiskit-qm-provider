@@ -14,7 +14,7 @@
 
 """Provider support for a QuAM pulse conditioned by a Qiskit expression.
 
-The instruction itself (``_ConditionalPlayInstruction``) is private. Its
+The instruction itself (``_ConditionalPlay``) is private. Its
 Boolean condition lives only in ``Instruction.params``, invisible to Qiskit's
 DAG, so a bare instance is vulnerable to being silently reordered relative to
 a later write of the same classical ``Var`` by any
@@ -25,7 +25,7 @@ call). The only sanctioned ways to create one are
 condition's ``Var`` becomes a real DAG dependency. The provider exports that
 box as an ordinary OpenQASM 3 ``box`` statement; see
 :meth:`~qiskit_qm_provider.qasm3_exporter._QMOpenQASM3Builder.build_box` for
-where its structural contract -- exactly one ``_ConditionalPlayInstruction``
+where its structural contract -- exactly one ``_ConditionalPlay``
 and nothing else -- is enforced.
 """
 
@@ -66,7 +66,7 @@ def conditional_play_operation_name(pulse_name: str) -> str:
     return f"qm_conditional_play_{readable}_{digest}"
 
 
-class _ConditionalPlayInstruction(Instruction):
+class _ConditionalPlay(Instruction):
     """A one-qubit QuAM pulse play guarded by a Boolean classical expression.
 
     Private: this class is never exported, so a caller cannot construct one
@@ -152,7 +152,7 @@ class _ConditionalPlayInstruction(Instruction):
         are interchangeable only when they designate the same QuAM pulse.
         """
         return (
-            isinstance(other, _ConditionalPlayInstruction)
+            isinstance(other, _ConditionalPlay)
             and self.pulse_name == other.pulse_name
             and self.condition_expr == other.condition_expr
             and self.label == other.label
@@ -160,7 +160,7 @@ class _ConditionalPlayInstruction(Instruction):
 
 
 def _box_matches_conditional_play_contract(body: QuantumCircuit) -> bool:
-    """Whether ``body`` is exactly one ``_ConditionalPlayInstruction`` and nothing else.
+    """Whether ``body`` is exactly one ``_ConditionalPlay`` and nothing else.
 
     This is the structural contract every box built by
     :meth:`QuantumCircuit.conditional_play`/:func:`add_conditional_play`
@@ -170,7 +170,7 @@ def _box_matches_conditional_play_contract(body: QuantumCircuit) -> bool:
     transpiler pass that iterates over ``BoxOp`` nodes without knowing to
     leave this one's body alone.
     """
-    return len(body.data) == 1 and isinstance(body.data[0].operation, _ConditionalPlayInstruction)
+    return len(body.data) == 1 and isinstance(body.data[0].operation, _ConditionalPlay)
 
 
 def _iter_conditional_plays(circuit: QuantumCircuit, qubit_map: dict | None = None):
@@ -188,7 +188,7 @@ def _iter_conditional_plays(circuit: QuantumCircuit, qubit_map: dict | None = No
     for instruction in circuit.data:
         operation = instruction.operation
         qargs = tuple(qubit_map[qubit] for qubit in instruction.qubits)
-        if isinstance(operation, _ConditionalPlayInstruction):
+        if isinstance(operation, _ConditionalPlay):
             yield operation, qargs
         for block in getattr(operation, "blocks", ()):
             yield from _iter_conditional_plays(block, dict(zip(block.qubits, qargs)))
@@ -205,7 +205,7 @@ def _conditional_play(self: QuantumCircuit, pulse_name: str, condition: expr.Exp
     than unwrapped.
     """
     with self.box():
-        instruction_set = self.append(_ConditionalPlayInstruction(pulse_name, condition, label=label), [qubit])
+        instruction_set = self.append(_ConditionalPlay(pulse_name, condition, label=label), [qubit])
     return instruction_set
 
 

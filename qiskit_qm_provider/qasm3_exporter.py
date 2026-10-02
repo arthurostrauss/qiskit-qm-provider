@@ -25,7 +25,7 @@ from qiskit.qasm3.printer import BasicPrinter
 
 from .conditional_play import (
     _box_matches_conditional_play_contract,
-    _ConditionalPlayInstruction,
+    _ConditionalPlay,
     _iter_conditional_plays,
 )
 
@@ -37,7 +37,7 @@ class _QMOpenQASM3Builder(QASM3Builder):
         """Build a ``box``, enforcing the conditional-play box contract.
 
         A box built by ``QuantumCircuit.conditional_play``/``add_conditional_play``
-        always holds exactly one ``_ConditionalPlayInstruction`` and nothing
+        always holds exactly one ``_ConditionalPlay`` and nothing
         else (see :mod:`qiskit_qm_provider.conditional_play`). This is the
         last point in the pipeline that still sees the box before it becomes
         hardware-bound OpenQASM 3, so it is where that invariant is actually
@@ -46,7 +46,7 @@ class _QMOpenQASM3Builder(QASM3Builder):
         conditional play in it at all is left to the base builder unchanged.
         """
         body = instruction.operation.blocks[0]
-        has_conditional_play = any(isinstance(i.operation, _ConditionalPlayInstruction) for i in body.data)
+        has_conditional_play = any(isinstance(i.operation, _ConditionalPlay) for i in body.data)
         if has_conditional_play and not _box_matches_conditional_play_contract(body):
             raise QASM3ExporterError(
                 "A box containing a ConditionalPlay must contain exactly that one instruction "
