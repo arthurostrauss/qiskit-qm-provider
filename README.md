@@ -92,6 +92,8 @@ backend = provider.get_backend(
 )
 ```
 
+> **Note:** The QM cloud simulator (QOP 3.8.1+) requires TLS-secured connections, available from `qm-saas>=1.2.0` (pulled in by the extra). `QmSaasProvider` connects with `QuantumMachinesManager(**instance.qmm_connection_params)`; if you build your own `QuantumMachinesManager` against a SaaS instance, use the same pattern instead of passing `host`/`port`/`connection_headers` manually — the old form stops working after the October 8th, 2026 server update.
+
 3. **IQCCProvider** *(requires `pip install qiskit-qm-provider[iqcc]`)*: Provides access to available devices at the Israeli Quantum Computing Center (IQCC) in Tel Aviv, Israel.  IQCC backends are flux-tunable transmon machines; the provider always returns a `FluxTunableTransmonBackend`.
 
 ```python

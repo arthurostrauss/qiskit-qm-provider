@@ -60,6 +60,16 @@ backend = provider.get_backend(
 
 Credentials can be read from `~/qm_saas_config.json` when omitted.
 
+Communication with the cloud simulator is secured with TLS. This requires `qm-saas>=1.2.0`, which the extra installs. Internally the provider spawns a simulator instance and connects with:
+
+```python
+from qm import QuantumMachinesManager
+
+qmm = QuantumMachinesManager(**provider.instance.qmm_connection_params)
+```
+
+`qmm_connection_params` bundles the host, port, authentication headers and TLS credentials. If you create your own `QuantumMachinesManager` for a SaaS instance, use this form rather than passing `host`, `port` and `connection_headers` separately — connections without TLS credentials are rejected after the October 8th, 2026 server update (QOP 3.8.1).
+
 ## [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst) — IQCC cloud devices
 
 Use [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst) for devices at the Israeli Quantum Computing Center. Requires `pip install qiskit-qm-provider[iqcc]`. Always returns [`FluxTunableTransmonBackend`](apidocs/stubs/qiskit_qm_provider.backend.FluxTunableTransmonBackend.rst).

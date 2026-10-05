@@ -1820,12 +1820,12 @@ requires-dist = [
     { name = "jinja2", marker = "extra == 'iqcc'" },
     { name = "myst-parser", marker = "extra == 'docs'" },
     { name = "openqasm3" },
-    { name = "qiskit" },
+    { name = "qiskit", specifier = ">=2,<3" },
     { name = "qiskit-qasm3-import" },
     { name = "qiskit-sphinx-theme", marker = "extra == 'docs'" },
     { name = "qm-qasm", specifier = ">=1.7.7" },
     { name = "qm-qua", specifier = ">=1.2.3" },
-    { name = "qm-saas", marker = "extra == 'qm-saas'" },
+    { name = "qm-saas", marker = "extra == 'qm-saas'", specifier = ">=1.2.0,<2" },
     { name = "qualang-tools", specifier = ">=0.16.0" },
     { name = "quam", specifier = ">=0.4.2" },
     { name = "sphinx", marker = "extra == 'docs'" },
@@ -1915,7 +1915,7 @@ wheels = [
 
 [[package]]
 name = "qm-saas"
-version = "1.1.7"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "deprecation" },
@@ -1925,9 +1925,9 @@ dependencies = [
     { name = "requests" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/84/97/ec0ff55433f2f879c514f59b0f122946c641888fa327e4bac74947ea9759/qm_saas-1.1.7.tar.gz", hash = "sha256:3e9662b10eeb87dc8f2f79451aa2b23b588c52b716accdf1d0f060d061d59b70", size = 8317, upload-time = "2026-01-20T19:09:35.077Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e5/57/2049e940d12db71b91d46ad633fbf34a721390291be174d126b317b56c11/qm_saas-1.2.0.tar.gz", hash = "sha256:e57532ba3c332876bc33300b0be45f78e8b62c9bbf1cc15539c45b272d146f45", size = 8840, upload-time = "2026-09-30T07:01:45.071Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c7/e1/f57d87a34dccf07849c19daea90f424a5815c2c4d362c1e68ef7798d494c/qm_saas-1.1.7-py3-none-any.whl", hash = "sha256:2e6522dc2717fce0688f762ea3c7903d3dcd0bcd045dc6f0ea817cefe416fae3", size = 7696, upload-time = "2026-01-20T19:09:34.142Z" },
+    { url = "https://files.pythonhosted.org/packages/35/7d/5b497e4a9a977ec9812a4bab35d29cfbbb6099ec01523e16e84747ab5ed3/qm_saas-1.2.0-py3-none-any.whl", hash = "sha256:757b344c5826115426ce4654558b612e5386d6e7b0c1bd8a1d25a075a85ae0d7", size = 7958, upload-time = "2026-09-30T07:01:44.258Z" },
 ]
 
 [[package]]
