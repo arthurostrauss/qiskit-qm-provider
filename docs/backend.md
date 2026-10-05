@@ -225,8 +225,9 @@ qm-qasm receives this as an ordinary provider operation call. Its registered per
 - Only Boolean `expr.Expr` conditions are accepted. Use Qiskit's `expr` constructors for comparisons, logical operations, and typed input variables.
 - Run-time selection among pulse names is not supported; register each pulse label separately and choose it while building the circuit.
 - Inversion and quantum controls are deliberately unsupported. The condition is classical and acts at the QUA pulse-play level.
-- Registration propagates QuAM errors when the pulse is missing or ambiguous on any active qubit. Compilation rejects an unregistered pulse or a conditional play placed on a physical qubit that has no registered mapping.
+- Registration propagates QuAM errors when the pulse is missing or ambiguous on any active qubit. `backend.quantum_circuit_to_qua(...)` rejects an unregistered pulse or a conditional play placed on a physical qubit that has no registered mapping.
 - QUA conditions the analog pulse only; associated digital markers follow QUA's normal behavior.
+- That rejection is `quantum_circuit_to_qua`'s responsibility, not the exporter's: `backend.qasm3_exporter` (or any `QMOpenQASM3Exporter`) has no `Target` of its own and does not check registration at all. Calling `.dumps(qc)` on it directly, instead of going through `quantum_circuit_to_qua`, will happily export a `ConditionalPlay` that was never registered -- the resulting OpenQASM 3 simply fails to lower to QUA later.
 
 ## Pulse support (Qiskit 1.x legacy)
 

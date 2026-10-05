@@ -63,24 +63,36 @@ class _QMOpenQASM3Builder(QASM3Builder):
         resources while copying a circuit.  The current export scope does know
         the corresponding resources, which lets us recover the standard Qiskit
         copy/transpile case without adding a provider-specific transpiler pass.
+
+        A resource that cannot be matched this way raises explicitly rather than
+        falling back to a guess: a wrong guess here would silently export a
+        condition against the wrong classical bit, with no indication anything
+        went wrong.
         """
         circuit = self.scope.circuit
         if isinstance(resource, Bit):
             if resource in self.scope.bit_map:
                 return resource
             register = getattr(resource, "_register", None)
-            index = getattr(resource, "_index", None)
-            if register is not None and index is not None:
-                for candidate in circuit.cregs:
+            if register is not None:
+                registers = circuit.cregs if isinstance(resource, Clbit) else circuit.qregs
+                for candidate in registers:
                     if candidate.name == register.name and len(candidate) == len(register):
-                        return candidate[index]
-            if isinstance(resource, Clbit) and index is not None and index < len(circuit.clbits):
-                return circuit.clbits[index]
-            return resource
+                        return candidate[resource._index]
+            raise QASM3ExporterError(
+                f"Cannot resolve ConditionalPlay condition resource {resource!r} in the current "
+                "export scope: no register with a matching name and size was found. This can "
+                "happen if a circuit copy or transpiler pass renamed or dropped the register "
+                "the condition was originally built against."
+            )
         if isinstance(resource, ClassicalRegister):
             for candidate in circuit.cregs:
                 if candidate is resource or (candidate.name == resource.name and len(candidate) == len(resource)):
                     return candidate
+            raise QASM3ExporterError(
+                f"Cannot resolve ConditionalPlay condition register {resource!r} in the current "
+                "export scope: no classical register with a matching name and size was found."
+            )
         return resource
 
     def _lookup_bit(self, bit):
@@ -142,7 +154,18 @@ class _QMOpenQASM3Builder(QASM3Builder):
 
 
 class QMOpenQASM3Exporter(Exporter):
-    """Qiskit exporter extended with provider implicit defcals."""
+    """Qiskit exporter extended with provider implicit defcals.
+
+    Prefer :attr:`QMBackend.qasm3_exporter` over constructing this directly, and
+    prefer :meth:`QMBackend.quantum_circuit_to_qua` over calling ``.dumps()`` on
+    either. This class has no ``Target`` of its own and validates nothing against
+    one: it will export a ``ConditionalPlay`` that was never registered via
+    :meth:`QMBackend.register_conditional_play`, or one placed on a qubit with no
+    registered mapping, exactly as readily as a valid one. That validation is
+    :meth:`QMBackend.quantum_circuit_to_qua`'s job; a caller who uses this exporter
+    directly and skips it is responsible for the OpenQASM 3 it produces failing to
+    lower to QUA later.
+    """
 
     def dump(self, circuit, stream):
         """Export with implicit defcals for encountered conditional plays.

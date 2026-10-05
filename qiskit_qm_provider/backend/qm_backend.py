@@ -183,7 +183,6 @@ class QMBackend(Backend):
         # Calibration mapping: working copy for circuit-specific pulse calibrations
         self._calibration_operation_mapping_QUA = self._operation_mapping_QUA.copy()
         self._qasm3_custom_gates = []
-        self._conditional_play_operations: Dict[str, str] = {}
         self._init_macro = init_macro if init_macro is not None else lambda: None
 
     def __deepcopy__(self, memo):
@@ -414,6 +413,31 @@ class QMBackend(Backend):
         """
         return self.options.max_circuits
 
+    def _add_or_update_target_instruction(
+        self,
+        operation_name: str,
+        target_instruction: Instruction,
+        properties: Dict[Tuple[int, ...], QMInstructionProperties],
+    ) -> None:
+        """Add ``target_instruction`` to ``self.target``, or update it if already present.
+
+        Shared by every backend method that wires a QUA-backed operation onto the
+        Target (:meth:`_populate_target`, :meth:`register_conditional_play`): the
+        add-vs-update decision and the per-qarg existence check are the same
+        regardless of how ``operation_name`` and its properties were discovered.
+
+        Raises:
+            ValueError: if ``operation_name`` is already registered but not for one
+                of ``properties``' qargs.
+        """
+        if self.target.instruction_supported(operation_name):
+            for qargs, prop in properties.items():
+                if not self.target.instruction_supported(operation_name, qargs):
+                    raise ValueError(f"Instruction {operation_name} with qargs {qargs} is not supported by the target")
+                self.target.update_instruction_properties(operation_name, qargs, prop)
+        else:
+            self.target.add_instruction(target_instruction, properties=properties)
+
     def _populate_target(self) -> None:
         """
         Populate the target instructions with the QOP configuration from machine macros.
@@ -505,16 +529,7 @@ class QMBackend(Backend):
 
         # Update Target object incrementally
         for op, properties in operations_dict.items():
-            if self._target.instruction_supported(op):
-                for qargs, prop in properties.items():
-                    # Check if this qargs combination already exists for this instruction
-                    if self._target.instruction_supported(op, qargs):
-                        self._target.update_instruction_properties(op, qargs, prop)
-                    else:
-                        raise ValueError(f"Instruction {op} with qargs {qargs} is not supported by the target")
-            else:
-                # Add new instruction to target
-                self._target.add_instruction(name_to_op_dict[op], properties=properties)
+            self._add_or_update_target_instruction(op, name_to_op_dict[op], properties)
 
         for flow_op_name, control_flow_op in control_flow_name_mapping.items():
             if flow_op_name not in self._target.operation_names:
@@ -822,36 +837,25 @@ class QMBackend(Backend):
         :meth:`quam.components.pulses.Pulse.play` as ``condition``.
 
         Call this before transpiling a circuit that uses
-        :meth:`qiskit.circuit.QuantumCircuit.conditional_play`.
+        :meth:`qiskit.circuit.QuantumCircuit.conditional_play`. Calling this again
+        for the same ``pulse_name`` is safe and just refreshes its Target properties.
         """
         operation_name = conditional_play_operation_name(pulse_name)
-        registered_pulse = self._conditional_play_operations.get(operation_name)
-        if self.target.instruction_supported(operation_name) and registered_pulse != pulse_name:
-            raise ValueError(
-                f"Cannot register conditional play for pulse {pulse_name!r}: "
-                f"the generated Target operation name {operation_name!r} is already in use."
-            )
+
         properties = {}
-
-        # Resolve all pulses before mutating the Target so a QuAM lookup error
-        # leaves backend state unchanged.
-        resolved_pulses = [self.get_qubit(index).get_pulse(pulse_name) for index in range(self.num_qubits)]
-
-        for index, pulse in enumerate(resolved_pulses):
+        for index in range(self.num_qubits):
             qubit = self.get_qubit(index)
-
+            # Resolving the pulse before touching the Target means a QuAM lookup
+            # error (missing/ambiguous pulse) leaves backend state unchanged.
+            pulse = qubit.get_pulse(pulse_name)
             properties[(index,)] = QMInstructionProperties(
                 duration=pulse.length * 1e-9,
                 qua_pulse_macro=_conditional_play_macro(qubit, pulse_name),
             )
 
-        if self.target.instruction_supported(operation_name):
-            for qargs, property_ in properties.items():
-                self.target.update_instruction_properties(operation_name, qargs, property_)
-        else:
-            self.target.add_instruction(_ConditionalPlay.target_operation(pulse_name), properties=properties)
-
-        self._conditional_play_operations[operation_name] = pulse_name
+        self._add_or_update_target_instruction(
+            operation_name, _ConditionalPlay.target_operation(pulse_name), properties
+        )
         self.update_target()
 
     def _validate_conditional_plays(self, qc: QuantumCircuit) -> None:
@@ -1078,8 +1082,17 @@ class QMBackend(Backend):
 
     @property
     def qasm3_exporter(self) -> QMOpenQASM3Exporter:
-        """
-        Retrieve the OpenQASM 3 exporter for the backend
+        """Retrieve the OpenQASM 3 exporter for the backend.
+
+        This is the sanctioned way to get a :class:`QMOpenQASM3Exporter` configured
+        for this backend's basis gates -- do not construct one directly. It performs
+        no validation of its own against this backend's ``Target``: calling
+        ``.dumps(qc)`` on the result will happily export a ``ConditionalPlay`` that
+        was never registered (see :meth:`register_conditional_play`), or one placed
+        on a qubit this backend has no mapping for, producing OpenQASM 3 that later
+        fails to lower to QUA. That check is :meth:`quantum_circuit_to_qua`'s
+        responsibility, not this exporter's -- prefer calling that instead of
+        ``.dumps()`` directly unless you have already validated ``qc`` yourself.
         """
         return QMOpenQASM3Exporter(
             includes=(),

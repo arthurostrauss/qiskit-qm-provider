@@ -218,6 +218,24 @@ class TestConditionalPlay:
         with pytest.raises(CircuitError, match="quantum-controlled"):
             operation.control()
 
+    def test_copy_follows_the_standard_instruction_rename_contract(self):
+        """copy(name=...) must rename the operation like Instruction.copy does for every
+        other instruction, not silently overwrite .label instead.
+        """
+        condition = expr.lift(True)
+        operation = _ConditionalPlay("x180", condition, label="mylabel")
+
+        renamed = operation.copy(name="renamed")
+
+        assert renamed.name == "renamed"
+        assert renamed.label == "mylabel"
+        assert renamed.pulse_name == "x180"
+        assert renamed.condition_expr == condition
+
+        plain_copy = operation.copy()
+        assert plain_copy.name == operation.name
+        assert plain_copy == operation
+
     def test_qua_macro_resolves_the_quam_pulse_and_forwards_condition(self):
         pulse = Mock()
         qubit = Mock()
@@ -283,5 +301,8 @@ class TestConditionalPlayRegistration:
         qc = QuantumCircuit(QuantumRegister(1, "myreg"))
         qc.conditional_play("x180", expr.lift(True), 0)
 
-        with pytest.raises(ValueError, match="Provided circuit was not transpiled to physical qubits"):
+        with pytest.raises(ValueError, match="not expressed in terms of this backend's"):
             backend.quantum_circuit_to_qua(qc)
+
+        assert qc.qregs[0].name == "myreg", "rejecting a non-physical circuit must not mutate it"
+        assert qc.layout is None, "rejecting a non-physical circuit must not mutate it"

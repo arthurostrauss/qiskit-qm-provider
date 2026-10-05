@@ -112,16 +112,6 @@ class _ConditionalPlay(Instruction):
         """
         return Instruction(conditional_play_operation_name(pulse_name), 1, 0, [])
 
-    def copy(self, name: str | None = None):
-        """Copy provider metadata that :meth:`Instruction.copy` does not know.
-
-        The base copy machinery can preserve the generic argument list but has
-        no knowledge of the compile-time ``pulse_name`` used to rebuild this
-        provider-specific instruction.  Reconstructing the operation keeps the
-        pulse identity and its typed Boolean argument together.
-        """
-        return type(self)(self.pulse_name, self.condition_expr, label=name if name is not None else self.label)
-
     def inverse(self, annotated: bool = False):
         """Reject inversion instead of applying the base instruction fallback.
 
@@ -146,17 +136,14 @@ class _ConditionalPlay(Instruction):
         raise CircuitError("ConditionalPlay cannot be quantum-controlled")
 
     def __eq__(self, other):
-        """Include pulse identity in equality beyond the base argument comparison.
+        """Add label comparison on top of the base class's identity/params check.
 
-        Two operations with the same generated name shape and Boolean argument
-        are interchangeable only when they designate the same QuAM pulse.
+        Base :meth:`Instruction.__eq__` already compares ``name`` (which encodes
+        ``pulse_name``, see :func:`conditional_play_operation_name`) and ``params``
+        (``condition_expr`` is the sole entry); ``label`` is the only thing it
+        doesn't consider.
         """
-        return (
-            isinstance(other, _ConditionalPlay)
-            and self.pulse_name == other.pulse_name
-            and self.condition_expr == other.condition_expr
-            and self.label == other.label
-        )
+        return super().__eq__(other) and self.label == other.label
 
 
 def _box_matches_conditional_play_contract(body: QuantumCircuit) -> bool:

@@ -7,6 +7,8 @@ from qiskit.quantum_info import Pauli, PauliList
 
 from types import SimpleNamespace
 
+from qiskit.circuit import QuantumRegister
+
 from qiskit_qm_provider.backend.backend_utils import (
     look_for_standard_op,
     get_extended_gate_name_mapping,
@@ -21,6 +23,7 @@ from qiskit_qm_provider.backend.backend_utils import (
     get_non_trivial_observables,
     assign_struct_with_table,
     pack_register_to_int,
+    ensure_circuit_physical,
     _measurement_var_is_array,
 )
 
@@ -209,6 +212,34 @@ class TestValidateCircuits:
         qc.measure(1, loose1)
         result = validate_circuits(qc)
         assert len(result) == 1
+
+
+class TestEnsureCircuitPhysical:
+    def test_accepts_an_already_physical_circuit(self):
+        qc = QuantumCircuit(2)
+        qc.ensure_physical(2)
+        ensure_circuit_physical(qc, 2)  # must not raise
+
+    def test_rejects_a_non_physical_circuit_without_mutating_it(self):
+        qc = QuantumCircuit(QuantumRegister(1, "myreg"))
+
+        with pytest.raises(ValueError, match="not expressed in terms of this backend's"):
+            ensure_circuit_physical(qc, 1)
+
+        assert qc.qregs[0].name == "myreg"
+        assert qc.layout is None
+
+    def test_rejects_a_circuit_with_a_mismatched_existing_layout_as_valueerror(self):
+        """A circuit already laid out for a different qubit count makes
+        ``QuantumCircuit.ensure_physical`` raise ``CircuitError`` directly; this must
+        surface as the same documented ``ValueError`` as any other non-physical circuit,
+        not leak Qiskit's internal exception type.
+        """
+        qc = QuantumCircuit(2)
+        qc.ensure_physical(2)
+
+        with pytest.raises(ValueError, match="not expressed in terms of this backend's"):
+            ensure_circuit_physical(qc, 5)
 
 
 class TestMeasurementOutputBitSizes:

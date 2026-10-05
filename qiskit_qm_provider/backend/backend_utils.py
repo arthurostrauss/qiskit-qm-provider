@@ -27,6 +27,7 @@ import warnings
 from typing import Any, List, TYPE_CHECKING, Dict, Type
 
 from qiskit.circuit import QuantumCircuit, Parameter
+from qiskit.circuit.exceptions import CircuitError
 from qiskit.circuit.controlflow import (
     ControlFlowOp,
     IfElseOp,
@@ -146,18 +147,31 @@ def validate_circuits(
     return new_circuits
 
 def ensure_circuit_physical(qc: QuantumCircuit, n_qubits: int) -> None:
-    """Ensure the circuit is physical.
+    """Validate that ``qc`` is already in canonical physical form for ``n_qubits`` qubits.
+
+    Checked against a disposable copy of ``qc`` -- ``QuantumCircuit.ensure_physical``
+    mutates in place (canonicalizing the register, applying a layout) whenever it has
+    anything to do, and this must never surface as a side effect of a check that can
+    also reject the circuit.
 
     Args:
         qc: QuantumCircuit to check.
-        n_qubits: Number of qubits of the backend
+        n_qubits: Number of qubits of the backend.
 
     Raises:
-        ValueError: If the circuit is not physical.
+        ValueError: If ``qc`` is not already physical for ``n_qubits`` qubits -- either
+            because it needed canonicalizing, or because Qiskit refused to (for example,
+            it already carries a layout for a different qubit count).
     """
-    if qc.ensure_physical(n_qubits):  
-        # method returns True if the circuit is not physical (had to be modified in place)
-        raise ValueError("Provided circuit was not transpiled to physical qubits, please use the transpiler against this backend before submitting it to the backend")
+    try:
+        needed_canonicalizing = qc.copy().ensure_physical(n_qubits)
+    except (ValueError, CircuitError):
+        needed_canonicalizing = True
+    if needed_canonicalizing:
+        raise ValueError(
+            f"Circuit is not expressed in terms of this backend's {n_qubits} physical qubits. "
+            "Transpile it against this backend (or its target) before submitting it for compilation."
+        )
 
 def require_classified_meas_level(meas_level, *, context: str = "") -> None:
     """Raise if ``meas_level`` is not classified 0/1 readout.
