@@ -412,7 +412,7 @@ Enum for input mechanisms:
 - `IO1`, `IO2`: GPIO inputs.
 - **[`ParameterPool`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterPool.rst)** — coordinate multiple tables in one program.
 - **[`QUA2DArray`](apidocs/stubs/qiskit_qm_provider.parameter_table.QUA2DArray.rst) / [`QUAArray`](apidocs/stubs/qiskit_qm_provider.parameter_table.QUAArray.rst)** — multi-index parameter memory (flattened QUA arrays).
-- **`ParameterVector` note:** OpenQASM 3 exports `ParameterVector` elements as individual parameters; `from_qiskit` handles this transparently.
+- **`ParameterVector` note:** With stock Qiskit, OpenQASM 3 exports `ParameterVector` elements as individual parameters, and `from_qiskit` creates one scalar field per element (`_name_i_`). With the [`full_real_time_expr` Qiskit branch](real_time_expressions.md), the vector is exported as one `input array[float[64], N]`, and `from_qiskit` creates a single array `Parameter` named after the vector. Classical `types.Array` inputs are mapped the same way. Pass `qiskit_supports_array=False` to keep the unrolled layout.
 
 ## Related
 

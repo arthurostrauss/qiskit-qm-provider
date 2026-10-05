@@ -965,6 +965,7 @@ class ParameterTable(QuaFieldTable):
         Create a ParameterTable object from a QuantumCircuit object (and stores it in circuit metadata).
         This creates a ParameterTable that jointly encapsulates both symbolic (compile-time) parameters and input real-time variables.
         Returns None if no parameters are found.
+
         Args:
             qc: QuantumCircuit object to be converted to a ParameterTable object.
             input_type: Input type of the parameters in the table.

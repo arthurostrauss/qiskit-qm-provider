@@ -1820,7 +1820,7 @@ requires-dist = [
     { name = "jinja2", marker = "extra == 'iqcc'" },
     { name = "myst-parser", marker = "extra == 'docs'" },
     { name = "openqasm3" },
-    { name = "qiskit" },
+    { name = "qiskit", specifier = ">=2,<3" },
     { name = "qiskit-qasm3-import" },
     { name = "qiskit-sphinx-theme", marker = "extra == 'docs'" },
     { name = "qm-qasm", specifier = ">=1.7.7" },

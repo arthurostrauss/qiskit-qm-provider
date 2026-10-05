@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Support for the `full_real_time_expr` Qiskit branch** — the provider now works with classical arrays from the author's Qiskit branch [`arthurostrauss/qiskit@full_real_time_expr`](https://github.com/arthurostrauss/qiskit/tree/full_real_time_expr), which is not merged upstream. The branch adds dynamic `for`-loop ranges (`expr.Range`), 1-D classical arrays (`types.Array`, indexed with `expr.index`), and a fix that lets `for`-loop bodies with a `Var` counter capture variables from the enclosing scope. See the new *Real-Time Classical Expressions* guide in the docs, which includes a two-qubit randomized-benchmarking example. On the branch, `expr.Range` uses OpenQASM 3 inclusive-stop semantics. Array inputs need qm-qasm ≥ 1.8.0. Everything below is inactive on stock Qiskit.
+- **`ParameterTable.from_qiskit` array inputs** — a classical input of type `types.Array(Uint | Bool | Float, n)` becomes a single array-valued `Parameter` (a QUA `int` / `bool` / `fixed` array of length `n`). Earlier versions misread it as a scalar `fixed`.
+- **`qiskit_supports_array` keyword** on `ParameterTable.from_qiskit` (keyword-only, default `True`) — set it to `False` to keep the unrolled scalar layout even when the installed Qiskit provides `types.Array`.
+
+### Changed
+
+- **`ParameterVector` handling in `ParameterTable.from_qiskit`** — when the installed Qiskit provides `types.Array`, a `ParameterVector` becomes **one** array `Parameter` named after the vector, matching the branch's OpenQASM 3 export (`input array[float[64], N]`). Stock Qiskit keeps the previous per-element `_name_i_` fields. Code that looks up `_name_i_` fields while running on the branch should pass `qiskit_supports_array=False`.
+- **Qiskit requirement** tightened from `qiskit<3` to `qiskit>=2,<3`.
+- **quam-builder** — the installation instructions now point to `v0.6.0`, which needs `qualang-tools>=0.22.0` and `quam>=0.4.0`. Both are compatible with this package's requirements.
+- **Array `Parameter.assign`** — also accepts a row of a `QUA2DArray` (as well as a `QuaArrayVariable`) as the source of an element-wise copy.
+
 ## [0.3.5] - 2026-09-23
 
 ### Added

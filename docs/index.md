@@ -17,6 +17,7 @@ backend
 measurement_outputs
 primitives
 parameter_table
+real_time_expressions
 jobs
 error_correction
 changelog
@@ -51,7 +52,7 @@ pip install qiskit-qm-provider
 [quam-builder](https://github.com/qua-platform/quam-builder) is required for the built-in `FluxTunableTransmonBackend` and related QuAM components. It is not published on PyPI and must be installed from source:
 
 ```bash
-pip install git+https://github.com/qua-platform/quam-builder.git@v0.4.0
+pip install git+https://github.com/qua-platform/quam-builder.git@v0.6.0
 ```
 
 For IQCC cloud access and QM SaaS simulation:
@@ -96,6 +97,7 @@ Use the sidebar to browse guides, then dive into the [API Reference](apidocs/qm.
 - **[Measurement outputs](measurement_outputs.md)** — [`QuaCircuitCompilation`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation.rst), [`MeasurementOutcomeTable`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.MeasurementOutcomeTable.rst), [`MeasurementRegisterField`](apidocs/stubs/qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField.rst).
 - **[Primitives](primitives.md)** — [`QMSamplerV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerV2.rst) and [`QMEstimatorV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMEstimatorV2.rst).
 - **[Parameter Table](parameter_table.md)** — [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) and real-time data flow.
+- **[Real-Time Classical Expressions](real_time_expressions.md)** — dynamic `expr.Range` loops and `types.Array` inputs from the `full_real_time_expr` Qiskit branch, with a two-qubit RB example.
 - **[Jobs](jobs.md)** — job handles, `program`, `qm_job`, IQCC `run_data`, and printing QUA with `generate_qua_script`.
 - **[Error-Correction Workflow](error_correction.md)** — hybrid EC pattern with [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst).
 - **[API Reference](apidocs/qm.rst)** — autodoc pages for all public classes and functions.
