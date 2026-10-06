@@ -41,7 +41,7 @@ iqcc = [
     "jinja2",
 ]
 qm-saas = [
-    "qm-saas"
+    "qm-saas>=1.2.0,<2"
 ]
 docs = [
     "myst-parser",

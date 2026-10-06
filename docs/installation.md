@@ -38,6 +38,8 @@ Provides `QmSaasProvider` for connecting to the [QM SaaS platform](https://docs.
 pip install qiskit-qm-provider[qm-saas]
 ```
 
+The extra requires `qm-saas>=1.2.0,<2`, the first release supporting the TLS-secured connection used by the cloud simulator from QOP 3.8.1 onwards. If you already have an older `qm-saas` installed, upgrade it with `pip install -U qm-saas`.
+
 ### Documentation build
 
 Dependencies for building these docs locally:

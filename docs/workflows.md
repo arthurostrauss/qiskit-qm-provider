@@ -20,12 +20,12 @@ Large **lists** passed to `backend.run` are automatically split into several QUA
 
 ### 1.2 QM SaaS simulator with QmSaasProvider
 
-1. `pip install qiskit-qm-provider[qm_saas]`
+1. `pip install qiskit-qm-provider[qm_saas]` (installs `qm-saas>=1.2.0`, required for the TLS-secured cloud connection)
 2. Create [`QmSaasProvider`](apidocs/stubs/qiskit_qm_provider.providers.qm_saas_provider.QmSaasProvider.rst).
 3. Call `get_backend()` and run as usual.
 
 - **Guide:** [Providers — QmSaasProvider](providers.md#qmsaasprovider-cloud-simulation)
-- **Examples:** adapt `examples/sampler_workflow.py`
+- **Examples:** `examples/qm_saas_sampler.py`
 
 ### 1.3 IQCC devices with IQCCProvider
 
