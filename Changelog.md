@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **quam-builder** — the installation instructions now point to `v0.6.0`, which needs `qualang-tools>=0.22.0` and `quam>=0.4.0`. Both are compatible with this package's requirements.
 - **Array `Parameter.assign`** — also accepts a row of a `QUA2DArray` (as well as a `QuaArrayVariable`) as the source of an element-wise copy.
 
+- **TLS-secured QM SaaS connection** — `QmSaasProvider.get_backend()` now builds its `QuantumMachinesManager` with `QuantumMachinesManager(**instance.qmm_connection_params)`, which adds the TLS credentials required by the QM cloud simulator from QOP 3.8.1 onwards (connections without them fail after the October 8th, 2026 server update). Replaces the deprecated `host`/`port`/`default_connection_headers` form.
+
 ## [0.3.5] - 2026-09-23
 
 ### Added
