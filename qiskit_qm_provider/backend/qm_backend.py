@@ -890,8 +890,17 @@ class QMBackend(Backend):
                         f"Custom calibration {gate_name} not in basis gates {basis_gates}",
                         f"Run update_calibrations() before compiling the circuit",
                     )
+        from ..parameter_table.qiskit_classical import (
+            export_qasm3_with_input_names,
+            qiskit_input_key,
+            validate_classical_types,
+        )
+
+        validate_classical_types(qc)
         exporter = Exporter(includes=(), basis_gates=basis_gates, disable_constants=True)
-        open_qasm_code = exporter.dumps(qc)
+        # The exporter may rename inputs on name clashes (e.g. a vector called ``x`` -> ``x_1``);
+        # ``exported_names`` maps provider table names to the identifiers actually emitted.
+        open_qasm_code, exported_names = export_qasm3_with_input_names(exporter, qc)
         open_qasm_code = "\n".join(
             line for line in open_qasm_code.splitlines() if not line.strip().startswith(("barrier",))
         )
@@ -910,9 +919,10 @@ class QMBackend(Backend):
             elif isinstance(param_table, Dict):
                 for key, value in param_table.items():
                     if isinstance(key, (QiskitParameter, Var)):
-                        inputs[key.name] = value
+                        inputs[qiskit_input_key(key)] = value
                     else:
                         inputs[key] = value
+            inputs = {exported_names.get(key, key): value for key, value in inputs.items()}
 
         result = self.compiler.compile(
             open_qasm_code,

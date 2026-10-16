@@ -107,7 +107,7 @@ Use `InputType.OPNIC` instead to drive the fold count from an OAS/QUARC classica
 When the fork is installed, two things change in this provider:
 
 - [`ParameterTable.from_qiskit`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) maps an `Array` input to **one array-valued `Parameter`** (a QUA array of `int`, `bool` or `fixed`). Earlier provider versions misread it as a scalar `fixed`.
-- A `ParameterVector` is collapsed into **one** array `Parameter` named after the vector, in place of the `_name_i_` scalars used with stock Qiskit. The fork's OpenQASM 3 exporter emits a matching `input array[float[64], N]`. To keep the old unrolled layout, pass `qiskit_supports_array=False`.
+- A `ParameterVector` is collapsed into **one** array `Parameter` named after the vector, in place of the `_name_i_` scalars used with stock Qiskit. The fork's OpenQASM 3 exporter emits a matching `input array[float[64], N]`. This is detected automatically from `types.Array`; there is no switch, because the fork always exports vectors this way. Every element is exported even if only some are used, so a vector is kept or dropped as a whole by `filter_function` (a split raises `ValueError`).
 
 ## Worked example: two-qubit randomized benchmarking
 

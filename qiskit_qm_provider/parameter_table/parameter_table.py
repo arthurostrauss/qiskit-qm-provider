@@ -958,98 +958,131 @@ class ParameterTable(QuaFieldTable):
         input_type: Optional[Literal["INPUT_STREAM", "OPNIC", "IO1", "IO2"] | InputType] = None,
         filter_function: Optional[Callable[[QiskitParameter | Var], bool]] = None,
         name: Optional[str] = None,
-        *,
-        qiskit_supports_array: bool = True,
     ) -> Optional["ParameterTable"]:
         """
         Create a ParameterTable object from a QuantumCircuit object (and stores it in circuit metadata).
         This creates a ParameterTable that jointly encapsulates both symbolic (compile-time) parameters and input real-time variables.
         Returns None if no parameters are found.
 
+        The layout of ``ParameterVector`` s follows the installed Qiskit automatically:
+
+        * **Array mode** (Qiskit provides ``types.Array``, i.e. the ``full_real_time_expr`` fork):
+          the OpenQASM 3 exporter always emits each vector as one full-length
+          ``input array[float[64], N]``, so the table holds one array ``Parameter`` of length
+          ``N`` named after the vector -- even if only some elements are used in the circuit.
+          All elements are exported, so a vector should be used (and filtered) as a whole.
+        * **Stock Qiskit**: each element is its own scalar field ``_name_i_`` (filtered per element).
+
+        Table names are the Qiskit names; if the exporter renames an input (name clash),
+        :meth:`QMBackend.quantum_circuit_to_qua` maps it to the exported identifier.
+
         Args:
             qc: QuantumCircuit object to be converted to a ParameterTable object.
             input_type: Input type of the parameters in the table.
             filter_function: Optional function to filter the parameters to be included in the table.
+                In array mode a ``ParameterVector`` is kept or dropped as a whole: the filter is
+                evaluated on every element of the vector and a ``ValueError`` is raised if it keeps
+                some elements and drops others.
             name: Optional name for the parameter table.
-            qiskit_supports_array: When ``True`` (default), collapse ``ParameterVector`` s
-                and classical ``Array`` inputs to one array QuaParameter when Qiskit
-                exposes ``types.Array``. Set ``False`` to always emit unrolled scalar
-                fields (``_name_i_``), e.g. on hosts without array support.
+
+        Raises:
+            ValueError: on a split ``ParameterVector`` (array mode, see above), or on an input
+                variable of a type QUA cannot represent (Duration/Stretch, zero-size arrays,
+                Duration arrays).
         """
         from qiskit.circuit import QuantumCircuit, Parameter as QiskitParameter
         from qiskit.circuit.parametervector import ParameterVectorElement
         from qiskit.circuit.classical import types
+        from .qiskit_classical import qiskit_has_array, qiskit_input_key, unsupported_classical_type_error
 
+        array_mode = qiskit_has_array()
         param_list = []
         param_vector_set = set()
-        qiskit_supports_array = bool(qiskit_supports_array) and hasattr(types, "Array")
+        loop_parameters = None
         for parameter in qc.parameters:
-            if isinstance(parameter, QiskitParameter):
-                if filter_function is not None and not filter_function(parameter):
+            if not isinstance(parameter, QiskitParameter):
+                continue
+            if array_mode and isinstance(parameter, ParameterVectorElement):
+                param_vec = parameter.vector
+                if param_vec in param_vector_set:
                     continue
-                if isinstance(parameter, ParameterVectorElement):
-                    # Qiskit exports vectors as a collection of single parameters, so we need to create a list of parameters for each element of the vector with a unique name.
-                    # Transformation rule: p[i] -> _p_i_ where p is the name of the vector and i is the index of the parameter in the vector.
-                    param_vec = parameter.vector
-                    if param_vec not in param_vector_set:
-                        param_vector_set.add(param_vec)
-                        if qiskit_supports_array:
-                            param_list.append(
-                                Parameter(
-                                    param_vec.name,
-                                    value=[0.0] * len(param_vec),
-                                    qua_type=fixed,
-                                    input_type=input_type,
-                                    direction=Direction.INCOMING,
-                                )
-                            )
-                        else:
-                            param_list.extend(
-                                Parameter(
-                                    f"_{param_vec.name}_{i}_",
-                                    qua_type=fixed,
-                                    input_type=input_type,
-                                    direction=Direction.INCOMING,
-                                )
-                                for i in range(len(param_vec))
-                            )
+                param_vector_set.add(param_vec)
+                if filter_function is not None:
+                    kept = {bool(filter_function(elem)) for elem in param_vec}
+                    if len(kept) > 1:
+                        raise ValueError(
+                            f"filter_function keeps some elements of ParameterVector '{param_vec.name}' "
+                            "and drops others. With array support the whole vector is exported as one "
+                            "OpenQASM 3 input array, so it must be kept or dropped as a whole."
+                        )
+                    if kept == {False}:
                         continue
-                    else:
-                        continue
+                if isinstance(qc, QuantumCircuit):
+                    if loop_parameters is None:
+                        from .qiskit_classical import for_loop_parameters
 
+                        loop_parameters = for_loop_parameters(qc)
+                    if any(elem in loop_parameters for elem in param_vec):
+                        raise ValueError(
+                            f"An element of ParameterVector '{param_vec.name}' is used as a for-loop "
+                            "parameter; use a standalone Parameter (or a Var) as loop index instead."
+                        )
                 param_list.append(
                     Parameter(
-                        parameter.name,
+                        param_vec.name,
+                        value=[0.0] * len(param_vec),
                         qua_type=fixed,
                         input_type=input_type,
                         direction=Direction.INCOMING,
                     )
                 )
+                continue
+            if isinstance(parameter, ParameterVectorElement):
+                # Stock Qiskit: one scalar field ``_name_i_`` per element (all elements, as before).
+                if parameter.vector in param_vector_set:
+                    continue
+                param_vector_set.add(parameter.vector)
+                param_list.extend(
+                    Parameter(
+                        qiskit_input_key(elem),
+                        qua_type=fixed,
+                        input_type=input_type,
+                        direction=Direction.INCOMING,
+                    )
+                    for elem in parameter.vector
+                    if filter_function is None or filter_function(elem)
+                )
+                continue
+            if filter_function is not None and not filter_function(parameter):
+                continue
+            param_list.append(
+                Parameter(
+                    qiskit_input_key(parameter),
+                    qua_type=fixed,
+                    input_type=input_type,
+                    direction=Direction.INCOMING,
+                )
+            )
         if isinstance(qc, QuantumCircuit):
             for var in qc.iter_input_vars():
                 if filter_function is not None and not filter_function(var):
                     continue
-                if var.type.kind == types.Uint:
+                error = unsupported_classical_type_error(var.name, var.type)
+                if error is not None:
+                    raise error
+                kind = var.type.kind
+                scalar_map = {types.Uint: int, types.Bool: bool, types.Float: fixed}
+                if kind in scalar_map:
                     param_list.append(
                         Parameter(
                             var.name,
-                            qua_type=int,
+                            qua_type=scalar_map[kind],
                             input_type=input_type,
                             direction=Direction.INCOMING,
                         )
                     )
-                elif var.type.kind == types.Bool:
-                    param_list.append(
-                        Parameter(
-                            var.name,
-                            qua_type=bool,
-                            input_type=input_type,
-                            direction=Direction.INCOMING,
-                        )
-                    )
-                elif qiskit_supports_array and var.type.kind == types.Array:
-                    element_kind_map = {types.Uint: int, types.Bool: bool, types.Float: fixed}
-                    element_type = element_kind_map.get(var.type.element.kind)
+                elif array_mode and kind == types.Array:
+                    element_type = scalar_map.get(var.type.element.kind)
                     if element_type is None:
                         raise ValueError(f"Unsupported element type: {var.type.element.kind}")
                     value = [0.0 if element_type is fixed else element_type(0) for _ in range(var.type.size)]
@@ -1062,15 +1095,8 @@ class ParameterTable(QuaFieldTable):
                             direction=Direction.INCOMING,
                         )
                     )
-                else:  # Float
-                    param_list.append(
-                        Parameter(
-                            var.name,
-                            qua_type=fixed,
-                            input_type=input_type,
-                            direction=Direction.INCOMING,
-                        )
-                    )
+                else:
+                    raise ValueError(f"Unsupported classical type {var.type} for variable '{var.name}'.")
         if len(param_list) == 0:
             return
         new_table = cls(param_list, name if name is not None else qc.name)

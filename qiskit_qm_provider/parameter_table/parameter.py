@@ -449,8 +449,13 @@ class Parameter:
                 assign_with_condition(self.var, value.var, value_cond.var if value_cond else None)
         else:
             if self.is_array:
-                from .qua2darray import _QUA2DRow
-                if isinstance(value, (QuaArrayVariable,_QUA2DRow)):
+                from .qua2darray import _QUA2DRow  # local import: qua2darray imports this module
+
+                if isinstance(value, _QUA2DRow) and len(value) != self.length:
+                    raise ValueError(
+                        f"Invalid input. Mismatch in length of {self.name} ({self.length}) and row ({len(value)})."
+                    )
+                if isinstance(value, (QuaArrayVariable, _QUA2DRow)):
                     with for_(self._ctr, 0, self._ctr < self.length, self._ctr + 1):
                         assign_with_condition(
                             self.var[self._ctr],
