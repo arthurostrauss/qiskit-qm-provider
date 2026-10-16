@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Array `Parameter.assign`** — also accepts a row of a `QUA2DArray` (as well as a `QuaArrayVariable`) as the source of an element-wise copy.
 
 - **TLS-secured QM SaaS connection** — `QmSaasProvider.get_backend()` now builds its `QuantumMachinesManager` with `QuantumMachinesManager(**instance.qmm_connection_params)`, which adds the TLS credentials required by the QM cloud simulator from QOP 3.8.1 onwards (connections without them fail after the October 8th, 2026 server update). Replaces the deprecated `host`/`port`/`default_connection_headers` form.
+- **`qm-saas` extra** now requires `qm-saas>=1.2.0,<2` (first release exposing `qmm_connection_params`).
 
 ## [0.3.5] - 2026-09-23
 
