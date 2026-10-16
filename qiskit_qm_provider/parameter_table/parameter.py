@@ -533,7 +533,7 @@ class Parameter:
                     self._var = declare(self.type, value=self.value)
                 else:
                     self._var = declare(self.type, size=self.length if self.is_array else None)
-            if self.is_array and self.length > 1:
+            if self.is_array:
                 self._ctr = declare(int)
         if pause_program:
             pause()

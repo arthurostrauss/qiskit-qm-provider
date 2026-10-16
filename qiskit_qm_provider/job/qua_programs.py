@@ -27,6 +27,7 @@ from qm import Program
 from qm.qua import *
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from ..parameter_table import ParameterTable, QUA2DArray
+from ..parameter_table.qiskit_classical import map_qiskit_parameter_values
 from typing import Dict, List, Optional, TYPE_CHECKING
 import numpy as np
 
@@ -129,10 +130,12 @@ def _process_sampler_pub(
         with for_(p, 0, p < pub.parameter_values.ravel().size, p + 1):
             if param_table.input_type is None:
                 # Declare the parameters at compile time
-                param_values_qua = QUA2DArray("param_values", pub.parameter_values.ravel().as_array())
+                param_values_qua = QUA2DArray(
+                    "param_values", pub.parameter_values.ravel().as_array(pub.circuit.parameters)
+                )
                 param_values_qua.declare()
                 param_table.assign_parameters(
-                    {param.name: param_values_qua[p][i] for i, param in enumerate(param_table.parameters)}
+                    map_qiskit_parameter_values(pub.circuit, param_table, param_values_qua[p])
                 )
             else:
                 param_table.rcv()
@@ -264,7 +267,7 @@ def _process_estimator_pub(
         if plan.param_table.input_type is None:
             param_values_qua = QUA2DArray(
                 f"param_values_{plan.param_table.name}",
-                plan.pub.parameter_values.ravel().as_array(),
+                plan.pub.parameter_values.ravel().as_array(plan.pub.circuit.parameters),
             )
             param_values_qua.declare()
             if plan.observables_var.input_type is None:
@@ -275,7 +278,7 @@ def _process_estimator_pub(
         with for_(p, 0, p < plan.pub.parameter_values.ravel().size, p + 1):
             if plan.param_table.input_type is None:
                 plan.param_table.assign_parameters(
-                    {param.name: param_values_qua[p, i] for i, param in enumerate(plan.param_table.parameters)}
+                    map_qiskit_parameter_values(plan.pub.circuit, plan.param_table, param_values_qua[p])
                 )
             else:
                 plan.param_table.rcv()

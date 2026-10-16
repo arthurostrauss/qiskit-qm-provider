@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Array binding consistency** — sampler/estimator PUBs now pack vector values by parameter identity for compile-time assignment, local streaming and IQCC hooks, zero-filling unused vector entries. Ambiguous input names are rejected, dictionary bindings accept whole vectors in array mode, and singleton array row copies now work.
 - **`ParameterVector` handling in `ParameterTable.from_qiskit`** — when the installed Qiskit provides `types.Array`, a `ParameterVector` becomes **one** array `Parameter` named after the vector, matching the branch's OpenQASM 3 export (`input array[float[64], N]`). Stock Qiskit keeps the previous per-element `_name_i_` fields. The mode is detected automatically from `types.Array` (no switch: the branch always exports full-length vector arrays, even when only some elements are used). In array mode the full vector is declared whenever the `filter_function` keeps any of its used elements. Names are used verbatim as OpenQASM 3 identifiers: pick ASCII `Parameter`/`ParameterVector` names that are not gate names or OpenQASM keywords.
 - **Qiskit requirement** tightened from `qiskit<3` to `qiskit>=2,<3`.
 - **quam-builder** — the installation instructions now point to `v0.6.0`, which needs `qualang-tools>=0.22.0` and `quam>=0.4.0`. Both are compatible with this package's requirements.

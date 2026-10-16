@@ -27,6 +27,7 @@ from typing import List
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 
 from qiskit_qm_provider.parameter_table import ParameterTable
+from qiskit_qm_provider.parameter_table.qiskit_classical import packed_qiskit_parameter_rows
 from ._sync_hook_common import jinja_env, serialize_table, to_py_literal
 
 
@@ -42,7 +43,7 @@ def generate_sync_hook_sampler(pubs: List[SamplerPub], parameter_tables: List[Pa
             {
                 "input_type": table["input_type"],
                 "params": table["params"],
-                "values": pub.parameter_values.ravel().as_array().tolist(),
+                "values": packed_qiskit_parameter_rows(pub, parameter_table),
             }
         )
 

@@ -991,8 +991,11 @@ class ParameterTable(QuaFieldTable):
         from qiskit.circuit import QuantumCircuit
         from qiskit.circuit.parametervector import ParameterVectorElement
         from qiskit.circuit.classical import types
-        from .qiskit_classical import qiskit_has_array, qiskit_input_key, unsupported_classical_type_error
+        from .qiskit_classical import (
+            qiskit_has_array, qiskit_input_key, unsupported_classical_type_error, validate_qiskit_input_names,
+        )
 
+        validate_qiskit_input_names(qc)
         array_mode = qiskit_has_array()
         param_list = []
         param_vector_set = set()

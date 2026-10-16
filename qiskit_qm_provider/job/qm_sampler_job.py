@@ -38,6 +38,7 @@ from qm.jobs.running_qm_job import RunningQmJob
 from ..backend import QMBackend
 from ..backend.backend_utils import measurement_output_bit_sizes, require_classified_meas_level
 from ..parameter_table import InputType, ParameterPool, ParameterTable
+from ..parameter_table.qiskit_classical import map_qiskit_parameter_values
 from .iqcc_job_mixin import IQCCJobMixin
 from .qm_execution_options import (
     await_running_jobs,
@@ -149,11 +150,8 @@ class QMSamplerJob(QMPrimitiveJob):
             pub = self._pubs[global_idx]
             param_table = self._param_tables[global_idx]
             if param_table is not None and param_table.input_type is not None:
-                for parameters in pub.parameter_values.ravel().as_array():
-                    param_dict = {
-                        param.name: value
-                        for param, value in zip(param_table.parameters, parameters)
-                    }
+                for parameters in pub.parameter_values.ravel().as_array(pub.circuit.parameters):
+                    param_dict = map_qiskit_parameter_values(pub.circuit, param_table, parameters)
                     param_table.push_to_opx(param_dict, qm_job, self._backend.qm)
 
     def result(self) -> PrimitiveResult[SamplerPubResult]:

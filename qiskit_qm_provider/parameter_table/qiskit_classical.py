@@ -42,14 +42,65 @@ def qiskit_has_array() -> bool:
 
 
 def qiskit_input_key(obj) -> str:
-    """Provider-side input name: ``_name_i_`` for a ``ParameterVectorElement`` (the identifier
-    stock Qiskit's OpenQASM 3 exporter emits for ``name[i]``), otherwise ``obj.name``.
-    """
+    """Input field name, following the installed Qiskit's vector export layout."""
     from qiskit.circuit.parametervector import ParameterVectorElement
 
     if isinstance(obj, ParameterVectorElement):
+        if qiskit_has_array():
+            return obj.vector.name
         return f"_{obj.vector.name}_{obj.index}_"
     return obj.name
+
+
+def validate_qiskit_input_names(qc: "QuantumCircuit") -> None:
+    """Reject ambiguous input names before the exporter renames or a table drops them.
+
+    Qiskit permits a scalar ``theta`` alongside ``theta[0]``, but in array mode both
+    would become a field named ``theta``. The provider requires distinct input names.
+    """
+    from qiskit.circuit.parametervector import ParameterVectorElement
+
+    array_mode = qiskit_has_array()
+    names = {}
+    for obj in (*qc.parameters, *qc.iter_input_vars()):
+        owner = obj.vector if array_mode and isinstance(obj, ParameterVectorElement) else obj
+        name = qiskit_input_key(obj)
+        if name in names and names[name] != owner:
+            raise ValueError(
+                f"Ambiguous Qiskit input name '{name}': distinct inputs map to the same field. "
+                "Rename the scalar, ParameterVector or classical input to use distinct names."
+            )
+        names[name] = owner
+
+
+def map_qiskit_parameter_values(qc, table, row) -> dict:
+    """Pack a row ordered as ``qc.parameters`` into scalar/array table fields.
+
+    Unused vector elements are zero-filled: the fork exports the full vector even
+    though PUBs contain only the circuit's used parameters. Works with Python values
+    and QUA2DArray row elements, so all primitive execution paths share this layout.
+    """
+    from qiskit.circuit.parametervector import ParameterVectorElement
+
+    array_mode = qiskit_has_array()
+    values = {p.name: [0.0] * p.length if p.is_array else 0.0 for p in table.parameters}
+    for column, parameter in enumerate(qc.parameters):
+        key = qiskit_input_key(parameter)
+        if key not in values:
+            continue
+        if array_mode and isinstance(parameter, ParameterVectorElement):
+            values[key][parameter.index] = row[column]
+        else:
+            values[key] = row[column]
+    return values
+
+
+def packed_qiskit_parameter_rows(pub, table) -> list[list]:
+    """Return PUB bindings packed in table order, suitable for a cloud sync hook."""
+    return [
+        list(map_qiskit_parameter_values(pub.circuit, table, row).values())
+        for row in pub.parameter_values.ravel().as_array(pub.circuit.parameters).tolist()
+    ]
 
 
 # --------------------------------------------------------------------------------------------

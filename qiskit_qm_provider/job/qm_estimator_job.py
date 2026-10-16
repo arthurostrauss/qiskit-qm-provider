@@ -41,6 +41,7 @@ from ..parameter_table import (
     Parameter as QuaParameter,
 )
 from .iqcc_job_mixin import IQCCJobMixin
+from ..parameter_table.qiskit_classical import map_qiskit_parameter_values
 from .qm_execution_options import (
     await_running_jobs,
     join_job_ids,
@@ -371,11 +372,10 @@ class QMEstimatorJob(QMPrimitiveJob):
         observables_var = plan.observables_var
 
         if param_table is not None and param_table.input_type is not None:
-            for p, param_value in enumerate(plan.pub.parameter_values.ravel().as_array()):
-                param_dict = {
-                    param.name: value
-                    for param, value in zip(param_table.parameters, param_value)
-                }
+            for p, param_value in enumerate(
+                plan.pub.parameter_values.ravel().as_array(plan.pub.circuit.parameters)
+            ):
+                param_dict = map_qiskit_parameter_values(plan.pub.circuit, param_table, param_value)
                 param_table.push_to_opx(param_dict, qm_job, self._backend.qm)
                 if observables_var.input_type is not None:
                     self._obs_length_vars.push_to_opx(

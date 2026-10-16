@@ -16,7 +16,7 @@ from qiskit.circuit.classical import expr, types
 from qiskit.qasm3 import Exporter
 from qm import qua, generate_qua_script
 
-from qiskit_qm_provider import ParameterPool, ParameterTable, QUA2DArray
+from qiskit_qm_provider import InputType, ParameterPool, ParameterTable, QUA2DArray
 from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qiskit_qm_provider.parameter_table import qiskit_classical
 from qiskit_qm_provider.parameter_table.qiskit_classical import qiskit_has_array
@@ -242,3 +242,92 @@ def test_qua2d_row_assign_length_mismatch():
         grid.declare()
         with pytest.raises(ValueError, match="Mismatch in length"):
             p.assign(grid[0])
+
+
+def _mixed_vector_pub():
+    from qiskit.primitives.containers.bindings_array import BindingsArray
+    from qiskit.primitives.containers.sampler_pub import SamplerPub
+
+    qc, vec = _partial_vector_circuit(name="theta", size=4)
+    scalar = QiskitParameter("a")
+    qc.rz(scalar, 0)
+    # Deliberately reverse circuit parameter order in the PUB.
+    return SamplerPub(qc, BindingsArray({(vec[2], scalar): [[0.2, 0.1]]}), shots=2)
+
+
+@pytest.mark.parametrize("primitive", ["sampler", "estimator"])
+def test_vector_pub_local_streaming(array_mode, primitive, monkeypatch):
+    from qiskit_qm_provider.job.qm_sampler_job import QMSamplerJob
+    from qiskit_qm_provider.job.qm_estimator_job import QMEstimatorJob
+
+    pub = _mixed_vector_pub()
+    table = ParameterTable.from_qiskit(pub.circuit, input_type=InputType.INPUT_STREAM)
+    pushed = []
+    monkeypatch.setattr(table, "push_to_opx", lambda values, *args: pushed.append(values))
+    backend = SimpleNamespace(qm=None)
+    if primitive == "sampler":
+        job = SimpleNamespace(_pubs=[pub], _param_tables=[table], _backend=backend)
+        QMSamplerJob._push_parameters(job, None, [0])
+    else:
+        job = SimpleNamespace(_backend=backend)
+        plan = SimpleNamespace(pub=pub, param_table=table, observables_var=SimpleNamespace(input_type=None))
+        QMEstimatorJob._push_plan_data(job, None, plan)
+    expected = {"a": 0.1, "theta": [0.0, 0.0, 0.2, 0.0]} if array_mode else {
+        "a": 0.1, "_theta_0_": 0.0, "_theta_1_": 0.0, "_theta_2_": 0.2, "_theta_3_": 0.0,
+    }
+    assert pushed == [expected]
+
+
+@pytest.mark.parametrize("primitive", ["sampler", "estimator"])
+def test_vector_pub_compile_time_assignment(array_mode, primitive, monkeypatch):
+    from qiskit_qm_provider.job import qua_programs
+
+    pub = _mixed_vector_pub()
+    table = ParameterTable.from_qiskit(pub.circuit)
+    monkeypatch.setattr(qua_programs, "_process_circuit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(qua_programs, "_process_observables_with_circuit", lambda *args, **kwargs: None)
+    with qua.program() as prog:
+        if primitive == "sampler":
+            qua_programs._process_sampler_pub(pub, None, table)
+        else:
+            plan = SimpleNamespace(
+                pub=pub, param_table=table,
+                observables_var=SimpleNamespace(input_type=InputType.INPUT_STREAM),
+            )
+            qua_programs._process_estimator_pub(plan, None)
+    assert "assign(" in generate_qua_script(prog)
+
+
+def test_array_mode_input_name_collision_rejected(monkeypatch):
+    monkeypatch.setattr(qiskit_classical, "qiskit_has_array", lambda: True)
+    qc, _ = _partial_vector_circuit(name="theta")
+    qc.rz(QiskitParameter("theta"), 0)
+    with pytest.raises(ValueError, match="Ambiguous Qiskit input name 'theta'"):
+        ParameterTable.from_qiskit(qc)
+    compiler = _RecordingCompiler()
+    with pytest.raises(ValueError, match="Ambiguous Qiskit input name"):
+        _compile(qc, None, compiler)
+    assert not compiler.calls
+
+
+def test_array_mode_dictionary_vector_binding(monkeypatch):
+    monkeypatch.setattr(qiskit_classical, "qiskit_has_array", lambda: True)
+    qc, vec = _partial_vector_circuit()
+    compiler = _RecordingCompiler()
+    with qua.program():
+        source = qua.declare(qua.fixed, value=[0.0] * len(vec))
+        _compile(qc, {vec: source}, compiler)
+        assert compiler.calls[-1].inputs == {vec.name: source}
+        with pytest.raises(ValueError, match="whole ParameterVector"):
+            _compile(qc, {vec[2]: source[2]}, compiler)
+
+
+def test_singleton_row_copy():
+    from qiskit_qm_provider import Parameter
+
+    p = Parameter("one", [0.0])
+    grid = QUA2DArray("grid", [[0.1], [0.2]])
+    with qua.program() as prog:
+        grid.declare()
+        p.assign(grid[1])
+    assert "for_(" in generate_qua_script(prog)

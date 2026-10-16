@@ -107,7 +107,11 @@ Use `InputType.OPNIC` instead to drive the fold count from an OAS/QUARC classica
 When the fork is installed, two things change in this provider:
 
 - [`ParameterTable.from_qiskit`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) maps an `Array` input to **one array-valued `Parameter`** (a QUA array of `int`, `bool` or `fixed`). Earlier provider versions misread it as a scalar `fixed`.
-- A `ParameterVector` is collapsed into **one** array `Parameter` named after the vector, in place of the `_name_i_` scalars used with stock Qiskit. The fork's OpenQASM 3 exporter emits a matching `input array[float[64], N]`. This is detected automatically from `types.Array`; there is no switch, because the fork always exports vectors this way. Every element is exported even if only some are used, so a vector is kept or dropped as a whole by `filter_function` (a split raises `ValueError`).
+- A `ParameterVector` is collapsed into **one** array `Parameter` named after the vector, in place of the `_name_i_` scalars used with stock Qiskit. The fork's OpenQASM 3 exporter emits a matching `input array[float[64], N]`. This is detected automatically from `types.Array`; there is no switch, because the fork always exports vectors this way. Every element is exported even if only some are used, so the full vector is included whenever `filter_function` keeps any used element.
+
+Sampler and estimator PUBs still supply values only for parameters used by the circuit. The provider orders those values by parameter identity, packs each vector into its full-length array and fills unused entries with zero. The same mapping is used for compile-time bindings, local streaming and IQCC sync hooks.
+
+For dictionary bindings to `quantum_circuit_to_qua`, use `{vector: qua_array}` or `{vector.name: qua_array}` in array mode. Supply the full vector length; individual `vector[i]` keys are rejected because the exported input is an array. Give scalars, vectors and classical inputs distinct names: a scalar `theta` and a vector `theta` would collide, so the provider raises `ValueError` before export instead of silently dropping one field.
 
 ## Worked example: two-qubit randomized benchmarking
 
