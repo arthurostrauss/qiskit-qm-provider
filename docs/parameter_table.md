@@ -32,7 +32,7 @@ Both `ParameterTable` and `Parameter` share **the same canonical verb names**, s
 - **`rcv(filter_function=None)`**
     Loads values from the configured input mechanism (Input Stream, IO, OPNIC).
 
-**ASCII parameter names:** QOP rejects non-ASCII names. Use `theta`, `phi`, not Greek symbols, when building tables from Qiskit circuits.
+**ASCII parameter names:** QOP rejects non-ASCII names. Use `theta`, `phi`, not Greek symbols, when building tables from Qiskit circuits. Names are used verbatim as OpenQASM 3 input identifiers, so also avoid gate names (`x`, `rz`, ...) and OpenQASM reserved keywords (`input`, `int`, ...) for `Parameter`/`ParameterVector`/`Var` names.
 
 ## Lifecycle
 

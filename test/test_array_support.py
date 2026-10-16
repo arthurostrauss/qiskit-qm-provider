@@ -1,5 +1,4 @@
-"""Tests for Qiskit array support (``arthurostrauss/qiskit@full_real_time_expr``) and
-exported-input-name resolution.
+"""Tests for Qiskit array support (``arthurostrauss/qiskit@full_real_time_expr``).
 
 Both Qiskit variants are covered: table logic runs in both modes by monkeypatching
 :func:`qiskit_has_array`; tests that need the fork's exporter / ``types.Array`` are skipped on
@@ -20,11 +19,7 @@ from qm import qua, generate_qua_script
 from qiskit_qm_provider import ParameterPool, ParameterTable, QUA2DArray
 from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qiskit_qm_provider.parameter_table import qiskit_classical
-from qiskit_qm_provider.parameter_table.qiskit_classical import (
-    declared_input_names,
-    export_qasm3_with_input_names,
-    qiskit_has_array,
-)
+from qiskit_qm_provider.parameter_table.qiskit_classical import qiskit_has_array
 
 HAS_ARRAY = hasattr(types, "Array")
 fork_only = pytest.mark.skipif(not HAS_ARRAY, reason="requires Qiskit with types.Array (full_real_time_expr)")
@@ -118,12 +113,9 @@ def test_filter_split_vector(array_mode):
     for p in vec:
         qc.rx(p, 0)
     keep_first = lambda p: getattr(p, "index", None) == 0  # noqa: E731
-    if array_mode:
-        with pytest.raises(ValueError, match="kept or dropped as a whole"):
-            ParameterTable.from_qiskit(qc, filter_function=keep_first)
-    else:
-        table = ParameterTable.from_qiskit(qc, filter_function=keep_first)
-        assert list(table.table) == ["_t_0_"]
+    table = ParameterTable.from_qiskit(qc, filter_function=keep_first)
+    # array mode: the full vector is declared; stock: all elements (as on main)
+    assert list(table.table) == (["t"] if array_mode else [f"_t_{i}_" for i in range(3)])
 
 
 def test_filter_whole_vector(array_mode):
@@ -137,16 +129,6 @@ def test_filter_whole_vector(array_mode):
     assert list(table.table) == (["t"] if array_mode else ["_t_0_", "_t_1_"])
     table = ParameterTable.from_qiskit(qc, filter_function=lambda p: p.name == "a", name="keep_a")
     assert list(table.table) == ["a"]
-
-
-def test_vector_element_as_loop_parameter_rejected(monkeypatch):
-    monkeypatch.setattr(qiskit_classical, "qiskit_has_array", lambda: True)
-    qc = QuantumCircuit(1)
-    vec = ParameterVector("t", 2)
-    with qc.for_loop(range(2), vec[0]):
-        qc.rx(vec[1], 0)
-    with pytest.raises(ValueError, match="for-loop parameter"):
-        ParameterTable.from_qiskit(qc)
 
 
 @pytest.mark.parametrize("make_type", ["duration", "stretch"])
@@ -205,98 +187,8 @@ def test_duration_array_rejected():
 
 
 # ---------------------------------------------------------------------------------------------
-# Exported names / renames
-# ---------------------------------------------------------------------------------------------
-
-
-@fork_only
-def test_fork_vector_rename_gate_clash():
-    # ``x`` clashes with the ``x`` gate in the default includes -> renamed by the exporter.
-    qc = QuantumCircuit(1)
-    vec = ParameterVector("x", 3)
-    qc.rx(vec[1], 0)
-    qc.rz(QiskitParameter("input"), 0)  # keyword clash
-    qasm, names = export_qasm3_with_input_names(Exporter(), qc)
-    declared = declared_input_names(qasm)
-    assert names["x"] in declared and names["x"] != "x"
-    assert names["input"] in declared and names["input"] != "input"
-    assert f"input array[float[64], 3] {names['x']};" in qasm
-
-
-@fork_only
-def test_fork_vector_and_var_same_name():
-    qc = QuantumCircuit(1)
-    qc.add_input("t", types.Float())
-    vec = ParameterVector("t", 2)
-    qc.rx(vec[0], 0)
-    qasm, names = export_qasm3_with_input_names(_exporter(), qc)
-    declared = declared_input_names(qasm)
-    assert set(names.values()) <= set(declared)
-    assert len(set(declared)) == len(declared)
-    assert names["t"] in declared  # vector and var both resolved under distinct identifiers
-
-
-@stock_only
-def test_stock_element_and_scalar_rename():
-    qc = QuantumCircuit(1)
-    vec = ParameterVector("x", 3)
-    qc.rx(vec[1], 0)
-    qc.rz(QiskitParameter("input"), 0)
-    qasm, names = export_qasm3_with_input_names(_exporter(), qc)
-    assert names["_x_1_"] in declared_input_names(qasm)
-    assert names["input"] == "input_0"
-
-
-def test_fallback_parses_declarations(monkeypatch):
-    """Without the exporter's symbol table, names come from parsing ``input`` declarations."""
-
-    def boom(*args, **kwargs):
-        raise AttributeError("no symbol table")
-
-    monkeypatch.setattr(qiskit_classical, "_symbol_table_names", boom)
-    qc = QuantumCircuit(1)
-    vec = ParameterVector("x", 3)
-    qc.rx(vec[1], 0)
-    qc.rz(QiskitParameter("input"), 0)
-    qasm, names = export_qasm3_with_input_names(_exporter(), qc)
-    declared = declared_input_names(qasm)
-    assert sorted(names.values()) == sorted(declared)
-    assert names["input"] == "input_0"
-
-
-def test_declared_input_names_parser():
-    qasm = "OPENQASM 3.0;\ninput float[64] a;\ninput array[float[64], 3] x_1;\ninput bool b ;\nqubit[1] q;\n"
-    assert declared_input_names(qasm) == ["a", "x_1", "b"]
-
-
-# ---------------------------------------------------------------------------------------------
 # End-to-end through quantum_circuit_to_qua
 # ---------------------------------------------------------------------------------------------
-
-
-def _clash_circuit():
-    qc = QuantumCircuit(1)
-    vec = ParameterVector("rx", 3)  # clashes with the ``rx`` basis gate on the fork
-    qc.rx(vec[1], 0)
-    qc.rz(QiskitParameter("input"), 0)  # keyword clash -> input_0
-    return qc
-
-
-def test_e2e_inputs_use_exported_names():
-    qc = _clash_circuit()
-    table = ParameterTable.from_qiskit(qc)
-    compiler = _RecordingCompiler()
-    with qua.program():
-        _compile(qc, table, compiler)
-    call = compiler.calls[0]
-    declared = declared_input_names(call.qasm)
-    # every exported input is bound (stock mode also passes unused vector elements, which
-    # the compiler ignores)
-    assert set(declared) <= set(call.inputs)
-    assert "input_0" in call.inputs
-    if HAS_ARRAY:
-        assert "rx" not in declared and "rx" not in call.inputs
-        assert any(line.startswith("input array[float[64], 3] rx_") for line in call.qasm.splitlines())
 
 
 @fork_only
@@ -324,15 +216,16 @@ def test_e2e_fork_real_compiler():
 
     if Version(version("qm-qasm")) < Version("1.8.0"):
         pytest.skip("array inputs need qm-qasm >= 1.8.0")
-    qc = _clash_circuit()
+    qc, _ = _partial_vector_circuit()
     table = ParameterTable.from_qiskit(qc)
     with qua.program():
         _compile(qc, table, _real_compiler())
 
 
 @stock_only
-def test_e2e_stock_real_compiler_with_rename():
-    qc = _clash_circuit()
+def test_e2e_stock_real_compiler():
+    qc, _ = _partial_vector_circuit()
+    qc.rz(QiskitParameter("a"), 0)
     table = ParameterTable.from_qiskit(qc)
     with qua.program() as prog:
         _compile(qc, table, _real_compiler())
