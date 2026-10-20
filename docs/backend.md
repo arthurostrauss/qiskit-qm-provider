@@ -192,7 +192,7 @@ Internally this is a private provider `Instruction`, always wrapped in a `box` b
 
 ### Registration and compilation
 
-Register a pulse label once before transpiling. Registration resolves the label on all active qubits, installs one per-qubit Target mapping, and synchronizes the qm-qasm operation mapping. There is no need to call `update_target()` again after a successful registration.
+Register a pulse label once before transpiling. Registration resolves the label on all active qubits, installs one per-qubit Target mapping, and synchronizes the qm-qasm operation mapping. There is no need to call `update_target()` again after a successful registration. To register several labels, pass them in one call, e.g. `backend.register_conditional_play("x180", "-y90")`: all of them are resolved before any is installed (a lookup error registers none), and the operation mapping is synchronized once.
 
 ```python
 from qiskit import transpile

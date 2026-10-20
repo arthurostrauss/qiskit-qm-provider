@@ -347,6 +347,33 @@ class TestConditionalPlayRegistration:
         assert backend._conditional_play_pulses[operation_name] == "-y90"
         assert backend._operation_mapping_QUA[(operation_name, 1, (0,))] is macro_before
 
+    def test_batch_registration_installs_every_pulse(self):
+        backend, _, _ = _backend_with_pulse()
+        backend.register_conditional_play("x180", "-y90", "x180")
+
+        for pulse_name in ("x180", "-y90"):
+            assert backend.target.instruction_supported(conditional_play_operation_name(pulse_name), (0,))
+
+    def test_batch_registration_is_all_or_nothing(self):
+        backend, qubit, pulse = _backend_with_pulse()
+
+        def get_pulse(name):
+            if name == "y90":
+                raise ValueError("Pulse y90 not found")
+            return pulse
+
+        qubit.get_pulse.side_effect = get_pulse
+        with pytest.raises(ValueError, match="y90 not found"):
+            backend.register_conditional_play("x180", "y90")
+
+        assert conditional_play_operation_name("x180") not in backend.target.operation_names
+        assert not backend._conditional_play_pulses
+
+    def test_registration_needs_a_pulse_name(self):
+        backend, _, _ = _backend_with_pulse()
+        with pytest.raises(ValueError, match="at least one pulse name"):
+            backend.register_conditional_play()
+
     @pytest.mark.parametrize("error", [ValueError("Pulse x180 not found"), ValueError("Pulse x180 is not unique")])
     def test_registration_propagates_quam_pulse_lookup_errors(self, error):
         backend, _, _ = _backend_with_pulse(get_pulse_side_effect=error)
@@ -392,7 +419,7 @@ class TestConditionalPlayRegistration:
         qc.h(0)
         qc.ensure_physical(backend.num_qubits)
 
-        with pytest.raises(ValueError, match="not native to this backend's Target"):
+        with pytest.raises(ValueError, match="not supported by the given Target"):
             backend.quantum_circuit_to_qua(qc)
 
     def test_transpile_then_export_matches_the_documented_qasm(self):

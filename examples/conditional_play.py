@@ -11,8 +11,7 @@ backend = provider.get_backend()
 add_basic_macros(backend)
 # Register once before transpilation.  The pulse label must resolve uniquely on
 # every active QuAM qubit.
-backend.register_conditional_play("x180")
-backend.register_conditional_play("-y90")
+backend.register_conditional_play("x180", "-y90")
 
 q = QuantumRegister(1)
 c = ClassicalRegister(1)

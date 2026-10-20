@@ -36,6 +36,7 @@ from qiskit.circuit.controlflow import (
 )
 from qiskit.circuit.library import get_standard_gate_name_mapping
 from qiskit.quantum_info import Pauli, PauliList
+from qiskit.converters import circuit_to_dag
 from qiskit.transpiler.passes import GatesInBasis
 
 from quam.components import Qubit, QubitPair
@@ -207,6 +208,35 @@ def validate_conditional_plays(qc: QuantumCircuit, target: Target) -> None:
             )
 
 
+def _first_unsupported_operation(qc: QuantumCircuit, target: Target, qubit_map: dict | None = None):
+    """Return ``(operation, physical_qargs)`` for the first operation ``target`` rejects, else ``None``.
+
+    Mirrors :class:`~qiskit.transpiler.passes.GatesInBasis`: ``barrier`` and ``store``
+    are always accepted, parameters are only compared for non-parameterized,
+    non-control-flow operations, and control-flow blocks are searched with their
+    qubits mapped back to the physical qubits of the owning instruction.
+    """
+    if qubit_map is None:
+        qubit_map = {qubit: index for index, qubit in enumerate(qc.qubits)}
+    for instruction in qc.data:
+        operation = instruction.operation
+        if operation.name in ("barrier", "store"):
+            continue
+        qargs = tuple(qubit_map[qubit] for qubit in instruction.qubits)
+        is_control_flow = isinstance(operation, ControlFlowOp)
+        check_params = not is_control_flow and not operation.is_parameterized()
+        if not target.instruction_supported(
+            operation.name, qargs, parameters=list(operation.params) if check_params else None
+        ):
+            return operation, qargs
+        if is_control_flow:
+            for block in operation.blocks:
+                found = _first_unsupported_operation(block, target, dict(zip(block.qubits, qargs)))
+                if found is not None:
+                    return found
+    return None
+
+
 def ensure_native_operations(qc: QuantumCircuit, target: Target) -> None:
     """Validate that every operation in ``qc`` is supported by ``target``.
 
@@ -221,20 +251,28 @@ def ensure_native_operations(qc: QuantumCircuit, target: Target) -> None:
         target: Target the circuit is compiled against.
 
     Raises:
-        ValueError: If any operation is not native to ``target``. An unregistered
+        ValueError: If any operation is not supported by ``target``. The message names
+            the first offending operation and its physical qubits; an unregistered
             conditional play gets a dedicated message (see :func:`validate_conditional_plays`).
     """
     gates_in_basis = GatesInBasis(target=target)
-    gates_in_basis(qc)
+    # Run the analysis pass directly: going through ``__call__`` would build a
+    # PassManager and convert the DAG back into a throwaway circuit.
+    gates_in_basis.run(circuit_to_dag(qc, copy_operations=False))
     if gates_in_basis.property_set["all_gates_in_basis"]:
         return
-    # Conditional plays are the one non-native operation with a specific remedy;
-    # report that first, then fall back to the generic error.
+    # Failure path only: conditional plays have a specific remedy, so report those
+    # first, then name the first other operation the target rejects.
     validate_conditional_plays(qc, target)
+    unsupported = _first_unsupported_operation(qc, target)
+    detail = (
+        f": {unsupported[0].name!r} on qubit(s) {unsupported[1]} with params {list(unsupported[0].params)}"
+        if unsupported is not None
+        else ""
+    )
     raise ValueError(
-        f"Circuit {qc.name!r} contains operations that are not native to this backend's "
-        "Target (unsupported name, qubits or parameters). Transpile it against this backend "
-        "(or its target) before submitting it for compilation."
+        f"Circuit {qc.name!r} contains an operation not supported by the given Target{detail}. "
+        "Transpile the circuit against that target before compiling it."
     )
 
 

@@ -831,47 +831,60 @@ class QMBackend(Backend):
         # Step 3: Update calibration mapping
         self._calibration_operation_mapping_QUA = self._operation_mapping_QUA.copy()
 
-    def register_conditional_play(self, pulse_name: str) -> None:
-        """Register a direct conditional play for ``pulse_name`` on every active qubit.
+    def register_conditional_play(self, *pulse_names: str) -> None:
+        """Register a direct conditional play for each of ``pulse_names`` on every active qubit.
 
-        The pulse is resolved using :meth:`quam.components.Qubit.get_pulse`,
+        Each pulse is resolved using :meth:`quam.components.Qubit.get_pulse`,
         which intentionally propagates QuAM's missing-pulse and ambiguity errors.
         The generated QUA macro receives one Boolean argument and forwards it to
         :meth:`quam.components.pulses.Pulse.play` as ``condition``.
 
         Call this before transpiling a circuit that uses
-        :meth:`qiskit.circuit.QuantumCircuit.conditional_play`. Calling this again
-        for the same ``pulse_name`` is safe and just refreshes its Target properties.
+        :meth:`qiskit.circuit.QuantumCircuit.conditional_play`. Registering several
+        pulses in one call resolves all of them first (so a lookup error registers
+        none) and synchronizes the qm-qasm operation mapping once. Calling this again
+        for an already-registered pulse is safe and just refreshes its Target properties.
+
+        Args:
+            *pulse_names: QuAM pulse labels to register, e.g. ``"x180"``, ``"-y90"``.
+
+        Raises:
+            ValueError: if no pulse name is given, or QuAM cannot resolve a pulse
+                uniquely on every active qubit.
         """
-        operation_name = conditional_play_operation_name(pulse_name)
+        if not pulse_names:
+            raise ValueError("register_conditional_play needs at least one pulse name")
 
-        properties = {}
-        for index in range(self.num_qubits):
-            qubit = self.get_qubit(index)
-            # Resolving the pulse before touching the Target means a QuAM lookup
-            # error (missing/ambiguous pulse) leaves backend state unchanged.
-            pulse = qubit.get_pulse(pulse_name)
-            properties[(index,)] = QMInstructionProperties(
-                duration=pulse.length * 1e-9,
-                qua_pulse_macro=_conditional_play_macro(qubit, pulse_name),
+        resolved = {}
+        for pulse_name in dict.fromkeys(pulse_names):
+            operation_name = conditional_play_operation_name(pulse_name)
+            properties = {}
+            for index in range(self.num_qubits):
+                qubit = self.get_qubit(index)
+                # Resolving every pulse before touching the Target means a QuAM lookup
+                # error (missing/ambiguous pulse) leaves backend state unchanged.
+                pulse = qubit.get_pulse(pulse_name)
+                properties[(index,)] = QMInstructionProperties(
+                    duration=pulse.length * 1e-9,
+                    qua_pulse_macro=_conditional_play_macro(qubit, pulse_name),
+                )
+            resolved[pulse_name] = (operation_name, properties)
+
+        for pulse_name, (operation_name, properties) in resolved.items():
+            # Every pulse has resolved, so this replacement is certain to happen.
+            previous_pulse = self._conditional_play_pulses.get(operation_name)
+            if previous_pulse is not None and previous_pulse != pulse_name:
+                warnings.warn(
+                    f"Conditional play for pulse {pulse_name!r} uses the same operation name "
+                    f"{operation_name!r} as the previously registered pulse {previous_pulse!r}; "
+                    f"it replaces that registration, so circuits using {previous_pulse!r} will "
+                    f"now play {pulse_name!r}.",
+                    stacklevel=2,
+                )
+            self._add_or_update_target_instruction(
+                operation_name, _ConditionalPlay.target_operation(pulse_name), properties
             )
-
-        # Only warn once every qubit has resolved the pulse, i.e. once the replacement
-        # below is certain to happen.
-        previous_pulse = self._conditional_play_pulses.get(operation_name)
-        if previous_pulse is not None and previous_pulse != pulse_name:
-            warnings.warn(
-                f"Conditional play for pulse {pulse_name!r} uses the same operation name "
-                f"{operation_name!r} as the previously registered pulse {previous_pulse!r}; "
-                f"it replaces that registration, so circuits using {previous_pulse!r} will "
-                f"now play {pulse_name!r}.",
-                stacklevel=2,
-            )
-
-        self._add_or_update_target_instruction(
-            operation_name, _ConditionalPlay.target_operation(pulse_name), properties
-        )
-        self._conditional_play_pulses[operation_name] = pulse_name
+            self._conditional_play_pulses[operation_name] = pulse_name
         self.update_target()
 
     @requires_qiskit_pulse
