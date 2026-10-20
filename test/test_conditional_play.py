@@ -18,6 +18,7 @@ from qiskit.transpiler import Target
 from qiskit.qasm3.exceptions import QASM3ExporterError
 
 from qiskit_qm_provider import add_conditional_play
+from qiskit_qm_provider.backend.backend_utils import ensure_native_operations
 from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qiskit_qm_provider.conditional_play import (
     _box_matches_conditional_play_contract,
@@ -383,7 +384,7 @@ class TestConditionalPlayRegistration:
             qc.conditional_play("x180", flag, 0)
         qc.ensure_physical(backend.num_qubits)
 
-        backend._ensure_native_operations(qc)  # must not raise
+        ensure_native_operations(qc, backend.target)  # must not raise
 
     def test_quantum_circuit_to_qua_rejects_non_native_operations(self):
         backend, _, _ = _backend_with_pulse()
@@ -404,7 +405,7 @@ class TestConditionalPlayRegistration:
         qc.conditional_play("x180", condition=expr.equal(creg[0], expr.lift(False)), qubit=qreg[0])
 
         transpiled = transpile(qc, backend, initial_layout=[0])
-        backend._ensure_native_operations(transpiled)
+        ensure_native_operations(transpiled, backend.target)
 
         qasm = backend.qasm3_exporter.dumps(transpiled)
         assert "box {\n  qm_conditional_play_x180(creg_0[0] == false) $0;\n}" in qasm

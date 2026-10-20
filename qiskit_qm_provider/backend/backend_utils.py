@@ -36,12 +36,14 @@ from qiskit.circuit.controlflow import (
 )
 from qiskit.circuit.library import get_standard_gate_name_mapping
 from qiskit.quantum_info import Pauli, PauliList
+from qiskit.transpiler.passes import GatesInBasis
 
 from quam.components import Qubit, QubitPair
 from quam.core import QuamRoot
 from quam.utils.qua_types import QuaVariableInt
 from qm import generate_qua_script
 from qm.qua import assign, Cast
+from ..conditional_play import _iter_conditional_plays
 from ..additional_gates import CRGate, FSimGate, SYGate, SYdgGate, GPIGate, GPI2Gate
 # Re-exported for backward compatibility; canonical home is quam_macros.superconducting.
 from ..quam_macros.superconducting import add_basic_macros
@@ -49,6 +51,7 @@ from ..quam_macros.superconducting import add_basic_macros
 if TYPE_CHECKING:
     from qm_qasm import CompilationResult
     from ..parameter_table import ParameterTable
+    from qiskit.transpiler import Target
     from .qm_backend import QMBackend
 try:
     from qiskit.circuit.controlflow import get_control_flow_name_mapping
@@ -178,6 +181,61 @@ def ensure_circuit_physical(qc: QuantumCircuit, n_qubits: int) -> None:
             f"Circuit is not expressed in terms of this backend's {n_qubits} physical qubits. "
             "Transpile it against this backend (or its target) before submitting it for compilation."
         )
+
+
+def validate_conditional_plays(qc: QuantumCircuit, target: Target) -> None:
+    """Check that every conditional play in ``qc`` is registered in ``target``.
+
+    Gives an unregistered conditional play an actionable error naming the missing
+    :meth:`~qiskit_qm_provider.backend.QMBackend.register_conditional_play` call.
+    ``qc`` must already be physical (see :func:`ensure_circuit_physical`) so that its
+    qargs are physical qubit indices.
+
+    Args:
+        qc: QuantumCircuit to check.
+        target: Target the circuit is compiled against.
+
+    Raises:
+        ValueError: If a conditional play is not supported by ``target`` on its qubit.
+    """
+    for operation, qargs in _iter_conditional_plays(qc):
+        if not target.instruction_supported(operation.name, qargs):
+            raise ValueError(
+                f"ConditionalPlay for pulse {operation.pulse_name!r} is not registered on "
+                f"qubit(s) {qargs}. Call backend.register_conditional_play({operation.pulse_name!r}) "
+                "before compiling."
+            )
+
+
+def ensure_native_operations(qc: QuantumCircuit, target: Target) -> None:
+    """Validate that every operation in ``qc`` is supported by ``target``.
+
+    Uses Qiskit's :class:`~qiskit.transpiler.passes.GatesInBasis`, which checks each
+    operation's name, physical qargs and parameters against ``target``, recursing into
+    control-flow blocks (``barrier`` and ``store`` are always accepted). ``qc`` must
+    already be physical (see :func:`ensure_circuit_physical`) so that its qargs are
+    physical qubit indices. ``qc`` is only inspected, never modified.
+
+    Args:
+        qc: QuantumCircuit to check.
+        target: Target the circuit is compiled against.
+
+    Raises:
+        ValueError: If any operation is not native to ``target``. An unregistered
+            conditional play gets a dedicated message (see :func:`validate_conditional_plays`).
+    """
+    gates_in_basis = GatesInBasis(target=target)
+    gates_in_basis(qc)
+    if gates_in_basis.property_set["all_gates_in_basis"]:
+        return
+    # Conditional plays are the one non-native operation with a specific remedy;
+    # report that first, then fall back to the generic error.
+    validate_conditional_plays(qc, target)
+    raise ValueError(
+        f"Circuit {qc.name!r} contains operations that are not native to this backend's "
+        "Target (unsupported name, qubits or parameters). Transpile it against this backend "
+        "(or its target) before submitting it for compilation."
+    )
 
 
 def require_classified_meas_level(meas_level, *, context: str = "") -> None:

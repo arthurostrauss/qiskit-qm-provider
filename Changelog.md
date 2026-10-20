@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Breaking: `quantum_circuit_to_qua()` only accepts circuits transpiled for the backend** — the OpenQASM 3 lowering needs circuits expressed in native operations on physical qubits, so `quantum_circuit_to_qua()` (and everything built on it, such as `backend.run()` and the primitives) now raises `ValueError` unless the circuit:
   - has been laid out on the backend's physical qubits: it carries a `TranspileLayout` and a single canonical `q` register of exactly `backend.num_qubits` qubits (`ensure_circuit_physical` in `backend_utils.py`);
-  - uses only operations supported by `backend.target` on the qubits they act on, as checked by Qiskit's `GatesInBasis` pass (an unregistered conditional play gets a dedicated error).
+  - uses only operations supported by `backend.target` on the qubits they act on, as checked by Qiskit's `GatesInBasis` pass (`ensure_native_operations` in `backend_utils.py`; an unregistered conditional play gets a dedicated error from `validate_conditional_plays`).
 
   Circuits that previously compiled without transpilation (hand-built `QuantumCircuit(n)`, or `transpile(..., basis_gates=...)` without the backend) must now be transpiled against the backend first. Both checks only inspect the circuit and never modify it.
 - **Minimum Qiskit version is now 2.2** — the OpenQASM 3 exporter relies on `qiskit.qasm3.DefcalInstruction`/implicit defcals and the physical-circuit form introduced in Qiskit 2.2.
