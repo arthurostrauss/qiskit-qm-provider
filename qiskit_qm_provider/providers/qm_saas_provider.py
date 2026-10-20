@@ -41,7 +41,9 @@ class QmSaasProvider:
     :class:`QMProvider`, users should supply their own ``quam_cls`` and
     ``backend_cls`` to match their hardware.
 
-    Requires the ``qm_saas`` extras (``pip install qiskit-qm-provider[qm_saas]``).
+    Requires the ``qm_saas`` extras (``pip install qiskit-qm-provider[qm_saas]``),
+    which pull in ``qm-saas>=1.2.0``.  Client-to-server communication with the
+    simulator is secured with TLS.
 
     Args:
         email: QM SaaS account email.
@@ -132,11 +134,9 @@ class QmSaasProvider:
 
         machine = self.get_machine(quam_state_folder_path, quam_cls)
         self.instance.spawn()
-        qmm = QuantumMachinesManager(
-            host=self.instance.host,
-            port=self.instance.port,
-            connection_headers=self.instance.default_connection_headers,
-        )
+        # ``qmm_connection_params`` (qm-saas >= 1.2.0) carries host, port,
+        # auth headers and the TLS credentials required by the cloud simulator.
+        qmm = QuantumMachinesManager(**self.instance.qmm_connection_params)
         if simulation_config is None:
             simulation_config = SimulationConfig(duration=10000)
         if backend_cls is None:

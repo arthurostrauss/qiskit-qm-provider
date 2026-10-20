@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Recursive conditional play discovery** — introduced `_iter_conditional_plays` to recursively discover conditional play instructions across nested control-flow blocks and compose physical qubit indices, used by both the exporter (for implicit `defcal` registrations) and backend validation.
 - **Export-time box contract enforcement** — `QMOpenQASM3Exporter` verifies that every conditional-play box satisfies its structural contract (containing exactly one `_ConditionalPlay` instruction and no extraneous operations).
 
+- **TLS-secured QM SaaS connection** — `QmSaasProvider.get_backend()` now builds its `QuantumMachinesManager` with `QuantumMachinesManager(**instance.qmm_connection_params)`, which adds the TLS credentials required by the QM cloud simulator from QOP 3.8.1 onwards (connections without them fail after the October 8th, 2026 server update). Replaces the deprecated `host`/`port`/`default_connection_headers` form.
+- **`qm-saas` extra** now requires `qm-saas>=1.2.0,<2` (first release exposing `qmm_connection_params`).
 ## [0.3.5] - 2026-09-23
 
 ### Added
