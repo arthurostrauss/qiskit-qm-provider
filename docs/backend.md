@@ -188,7 +188,7 @@ The construct has two deliberately separate inputs:
 - `pulse_name` is compile-time metadata. It selects the QuAM pulse and must resolve uniquely through `qubit.get_pulse(pulse_name)` on every active physical qubit.
 - `condition` is a run-time `qiskit.circuit.classical.expr.Expr` whose type must be Boolean. It is lowered through Qiskit's typed classical-expression AST, not through a numeric Qiskit `Parameter`.
 
-Internally this is a private provider `Instruction`, always wrapped in a `box` by `conditional_play`/`add_conditional_play` (there is no supported way to construct one directly) and exported through Qiskit's implicit-`defcal` call path. The emitted OpenQASM operation has a readable, stable internal name such as `qm_conditional_play_x180_<digest>`; the pulse label is never passed as a run-time argument.
+Internally this is a private provider `Instruction`, always wrapped in a `box` by `conditional_play`/`add_conditional_play` (there is no supported way to construct one directly) and exported through Qiskit's implicit-`defcal` call path. The emitted OpenQASM operation name is `qm_conditional_play_x180` when `pulse_name` is already a valid OpenQASM 3 identifier (the common case), or `qm_conditional_play_minus_x90` for the `"-x90"`/`"-y90"` negated-pulse convention. A pulse label using any other character falls back to a sanitized name with a digest suffix, so two differently-named pulses can never collide on the same operation name. The pulse label is never passed as a run-time argument.
 
 ### Registration and compilation
 
@@ -215,7 +215,7 @@ comp = backend.quantum_circuit_to_qua(transpiled)
 The corresponding OpenQASM call has the shape:
 
 ```
-qm_conditional_play_x180_<digest>(creg_0[0] == false) qreg_1[0];
+qm_conditional_play_x180(creg_0[0] == false) qreg_1[0];
 ```
 
 qm-qasm receives this as an ordinary provider operation call. Its registered per-qubit macro re-resolves the compile-time pulse and executes `qubit.get_pulse("x180").play(condition=qua_condition)`.

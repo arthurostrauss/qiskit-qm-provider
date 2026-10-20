@@ -67,11 +67,23 @@ def _backend_with_pulse(*, get_pulse_side_effect=None):
 
 class TestConditionalPlay:
     def test_operation_name_is_readable_qasm_safe_and_injective(self):
-        x180_name = conditional_play_operation_name("x180")
+        # An already-valid identifier is used as-is -- no mangling, no digest.
+        assert conditional_play_operation_name("x180") == "qm_conditional_play_x180"
 
-        assert x180_name.startswith("qm_conditional_play_x180_")
-        assert re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", x180_name)
+        # The one other character this domain's pulse names actually use ("-", the
+        # negated-pulse convention) gets a dedicated, still digest-free substitution.
+        assert conditional_play_operation_name("-x90") == "qm_conditional_play_minus_x90"
+
+        # That substitution must not collide with how "_" already passes through
+        # unchanged -- these must stay distinct.
         assert conditional_play_operation_name("-y90") != conditional_play_operation_name("_y90")
+        assert conditional_play_operation_name("-y90") != conditional_play_operation_name("y90")
+
+        # A genuinely unanticipated character still falls back to a digest-suffixed,
+        # but still OpenQASM-safe, name.
+        exotic_name = conditional_play_operation_name("x 180")
+        assert re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", exotic_name)
+        assert exotic_name != conditional_play_operation_name("x_180")
 
     def test_circuit_method_preserves_expression_and_pulse_name(self):
         qc = QuantumCircuit(1, 1)

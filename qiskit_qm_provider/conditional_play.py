@@ -44,19 +44,37 @@ __all__ = [
 ]
 
 
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
 def conditional_play_operation_name(pulse_name: str) -> str:
     """Return the stable OpenQASM-safe operation name for ``pulse_name``.
 
-    The operation name includes a readable ASCII fragment of the QuAM pulse
-    label for exported-QASM diagnostics.  It also includes a digest of the
-    original UTF-8 label, so distinct labels that sanitize to the same OpenQASM
-    fragment (for example, ``"-y90"`` and ``"_y90"``) remain distinct.  The
-    digest is part of the name's stable compile-time identity; it is never a
-    run-time pulse-selection parameter.
+    A ``pulse_name`` that is already a valid OpenQASM 3 identifier (the common
+    case -- e.g. ``"x180"``, ``"y90"``) is used as-is; no label needs mangling
+    there, so none is. ``-`` is the one other character this domain's pulse
+    names are known to use in practice (the ``"-x90"``/``"-y90"`` negated-pulse
+    convention), so it gets a dedicated, readable substitution (``minus``)
+    chosen specifically so it cannot collide with how ``_`` already passes
+    through unchanged (``"-y90"`` and ``"_y90"`` must stay distinct).
+
+    Anything else -- a character this domain's naming conventions don't
+    anticipate -- falls back to a generic sanitized form plus a digest of the
+    original UTF-8 label, so it stays injective even though the sanitization
+    itself is lossy. The digest is part of the name's stable compile-time
+    identity; it is never a run-time pulse-selection parameter.
     """
     if not isinstance(pulse_name, str) or not pulse_name:
         raise ValueError("pulse_name must be a non-empty string")
-    readable = re.sub(r"[^A-Za-z0-9_]", "_", pulse_name).strip("_")
+
+    if _IDENTIFIER.fullmatch(pulse_name):
+        return f"qm_conditional_play_{pulse_name}"
+
+    minus_substituted = pulse_name.replace("-", "minus_")
+    if _IDENTIFIER.fullmatch(minus_substituted):
+        return f"qm_conditional_play_{minus_substituted}"
+
+    readable = re.sub(r"[^A-Za-z0-9_]", "_", minus_substituted).strip("_")
     if not readable:
         readable = "pulse"
     if readable[0].isdigit():
