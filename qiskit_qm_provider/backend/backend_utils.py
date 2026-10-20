@@ -26,8 +26,7 @@ from __future__ import annotations
 import warnings
 from typing import Any, List, TYPE_CHECKING, Dict, Type
 
-from qiskit.circuit import QuantumCircuit, Parameter
-from qiskit.circuit.exceptions import CircuitError
+from qiskit.circuit import QuantumCircuit, QuantumRegister, Parameter
 from qiskit.circuit.controlflow import (
     ControlFlowOp,
     IfElseOp,
@@ -149,29 +148,37 @@ def validate_circuits(
 def ensure_circuit_physical(qc: QuantumCircuit, n_qubits: int) -> None:
     """Validate that ``qc`` is already in canonical physical form for ``n_qubits`` qubits.
 
-    Checked against a disposable copy of ``qc`` -- ``QuantumCircuit.ensure_physical``
-    mutates in place (canonicalizing the register, applying a layout) whenever it has
-    anything to do, and this must never surface as a side effect of a check that can
-    also reject the circuit.
+    This is the form :meth:`QuantumCircuit.ensure_physical` leaves a circuit in after
+    layout: a single owning ``"q"`` register of exactly ``n_qubits`` qubits, plus a
+    :class:`~qiskit.transpiler.TranspileLayout` whose physical side covers the same
+    ``n_qubits`` qubits. A circuit with no layout is rejected even if its register
+    happens to look physical: the OpenQASM 3 lowering needs a circuit that went
+    through layout (and translation) against this backend, not merely one of the
+    right width. ``qc`` is only inspected, never modified.
 
     Args:
         qc: QuantumCircuit to check.
         n_qubits: Number of qubits of the backend.
 
     Raises:
-        ValueError: If ``qc`` is not already physical for ``n_qubits`` qubits -- either
-            because it needed canonicalizing, or because Qiskit refused to (for example,
-            it already carries a layout for a different qubit count).
+        ValueError: If ``qc`` is not already physical for ``n_qubits`` qubits.
     """
-    try:
-        needed_canonicalizing = qc.copy().ensure_physical(n_qubits)
-    except (ValueError, CircuitError):
-        needed_canonicalizing = True
-    if needed_canonicalizing:
+    canonical = QuantumRegister(n_qubits, "q")
+    layout = qc.layout
+    is_physical = (
+        layout is not None
+        and qc.num_qubits == n_qubits
+        and qc.qregs == [canonical]
+        and qc.qubits == list(canonical)
+        and len(layout.initial_layout.get_physical_bits()) == n_qubits
+        and (layout.final_layout is None or len(layout.final_layout.get_physical_bits()) == n_qubits)
+    )
+    if not is_physical:
         raise ValueError(
             f"Circuit is not expressed in terms of this backend's {n_qubits} physical qubits. "
             "Transpile it against this backend (or its target) before submitting it for compilation."
         )
+
 
 def require_classified_meas_level(meas_level, *, context: str = "") -> None:
     """Raise if ``meas_level`` is not classified 0/1 readout.

@@ -241,6 +241,28 @@ class TestEnsureCircuitPhysical:
         with pytest.raises(ValueError, match="not expressed in terms of this backend's"):
             ensure_circuit_physical(qc, 5)
 
+    def test_rejects_a_canonical_width_circuit_without_layout(self):
+        """Having the canonical ``q`` register is not enough: the circuit must
+        have gone through layout, so a hand-built circuit is rejected."""
+        qc = QuantumCircuit(2)
+        assert qc.qregs[0].name == "q"
+
+        with pytest.raises(ValueError, match="not expressed in terms of this backend's"):
+            ensure_circuit_physical(qc, 2)
+
+    def test_accepts_a_circuit_transpiled_against_a_coupling_map(self):
+        from qiskit import transpile
+        from qiskit.transpiler import CouplingMap
+
+        qc = QuantumCircuit(QuantumRegister(2, "virt"))
+        qc.cx(0, 1)
+        transpiled = transpile(
+            qc, coupling_map=CouplingMap.from_line(3), basis_gates=["cx", "rz", "sx", "x"], seed_transpiler=0
+        )
+        ensure_circuit_physical(transpiled, 3)  # must not raise
+        with pytest.raises(ValueError, match="not expressed in terms of this backend's"):
+            ensure_circuit_physical(transpiled, 4)
+
 
 class TestMeasurementOutputBitSizes:
     def test_creg_and_loose_bits(self):

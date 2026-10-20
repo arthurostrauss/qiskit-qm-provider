@@ -1,13 +1,14 @@
 """Tests for provider-specific conditional QUA pulse plays."""
 
 import re
+import warnings
 from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 import pytest
 from quam.components import Qubit
 from qiskit import transpile
-from qiskit.circuit import Gate, Instruction, QuantumCircuit, QuantumRegister
+from qiskit.circuit import ClassicalRegister, Gate, Instruction, QuantumCircuit, QuantumRegister
 from qiskit.circuit.classical import expr, types
 from qiskit.circuit.controlflow.box import BoxOp
 from qiskit.circuit.exceptions import CircuitError
@@ -214,6 +215,22 @@ class TestConditionalPlay:
         assert "box {" in qasm
         assert _unwrap_conditional_play(transpiled.data[0].operation).pulse_name == "x180"
 
+    def test_compose_onto_a_renamed_register_remaps_the_condition(self):
+        """Composing onto a circuit whose classical register has a different name must
+        export the condition against the host's register. Qiskit's ``compose`` remaps
+        the ``Expr`` held in the instruction's params itself; the exporter relies on
+        that rather than re-resolving resources by name."""
+        source = QuantumCircuit(QuantumRegister(1, "q"), ClassicalRegister(1, "c"))
+        source.measure(0, 0)
+        source.conditional_play("x180", expr.lift(source.clbits[0]), 0)
+        host = QuantumCircuit(QuantumRegister(1, "q"), ClassicalRegister(1, "d"))
+        host.compose(source, inplace=True)
+
+        qasm = _exporter_for("x180").dumps(host)
+
+        assert f"{conditional_play_operation_name('x180')}(d[0]) q[0];" in qasm
+        assert "c[0]" not in qasm
+
     def test_non_boolean_or_non_expression_condition_is_rejected(self):
         qc = QuantumCircuit(1, 1)
         with pytest.raises(CircuitError, match="classical Expr"):
@@ -294,6 +311,23 @@ class TestConditionalPlayRegistration:
         macro(condition)
         qubit.get_pulse.assert_called_with("x180")
         pulse.play.assert_called_once_with(condition=condition)
+
+    def test_registering_a_colliding_pulse_name_warns(self):
+        """``"-y90"`` and a pulse literally named ``"minus_y90"`` share one operation
+        name; the second registration replaces the first, so it must say so."""
+        backend, _, _ = _backend_with_pulse()
+        backend.register_conditional_play("-y90")
+
+        with pytest.warns(UserWarning, match="same operation name"):
+            backend.register_conditional_play("minus_y90")
+
+    def test_re_registering_the_same_pulse_does_not_warn(self):
+        backend, _, _ = _backend_with_pulse()
+        backend.register_conditional_play("-y90")
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            backend.register_conditional_play("-y90")
 
     @pytest.mark.parametrize("error", [ValueError("Pulse x180 not found"), ValueError("Pulse x180 is not unique")])
     def test_registration_propagates_quam_pulse_lookup_errors(self, error):

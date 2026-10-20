@@ -183,6 +183,8 @@ class QMBackend(Backend):
         # Calibration mapping: working copy for circuit-specific pulse calibrations
         self._calibration_operation_mapping_QUA = self._operation_mapping_QUA.copy()
         self._qasm3_custom_gates = []
+        # Operation name -> pulse label, for every pulse registered via register_conditional_play
+        self._conditional_play_pulses: Dict[str, str] = {}
         self._init_macro = init_macro if init_macro is not None else lambda: None
 
     def __deepcopy__(self, memo):
@@ -841,6 +843,15 @@ class QMBackend(Backend):
         for the same ``pulse_name`` is safe and just refreshes its Target properties.
         """
         operation_name = conditional_play_operation_name(pulse_name)
+        previous_pulse = self._conditional_play_pulses.get(operation_name)
+        if previous_pulse is not None and previous_pulse != pulse_name:
+            warnings.warn(
+                f"Conditional play for pulse {pulse_name!r} uses the same operation name "
+                f"{operation_name!r} as the previously registered pulse {previous_pulse!r}; "
+                f"it replaces that registration, so circuits using {previous_pulse!r} will "
+                f"now play {pulse_name!r}.",
+                stacklevel=2,
+            )
 
         properties = {}
         for index in range(self.num_qubits):
@@ -856,6 +867,7 @@ class QMBackend(Backend):
         self._add_or_update_target_instruction(
             operation_name, _ConditionalPlay.target_operation(pulse_name), properties
         )
+        self._conditional_play_pulses[operation_name] = pulse_name
         self.update_target()
 
     def _validate_conditional_plays(self, qc: QuantumCircuit) -> None:
@@ -863,9 +875,9 @@ class QMBackend(Backend):
 
         This is checked directly here, against ``self.target``, rather than threaded
         through the exporter/builder as a validator callback -- the export layer has no
-        ``Target`` of its own, and ``qc`` is already physical by the time this runs (see
-        the ``ensure_physical`` call in :meth:`quantum_circuit_to_qua`), so its qargs are
-        meaningful physical qubit indices.
+        ``Target`` of its own, and ``qc`` has already been checked to be physical by the
+        time this runs (see the ``ensure_circuit_physical`` call in
+        :meth:`quantum_circuit_to_qua`), so its qargs are meaningful physical qubit indices.
         """
         for operation, qargs in _iter_conditional_plays(qc):
             if not self.target.instruction_supported(operation.name, qargs):
@@ -950,11 +962,9 @@ class QMBackend(Backend):
         """
         from .qua_circuit_compilation import QuaCircuitCompilation
         from .backend_utils import ensure_circuit_physical
-        # Warrant that qc is expressed in terms of physical qubits (a single owning "q"
-        # register) before export -- everything downstream, including ConditionalPlay's
-        # box, assumes physical qubit indices and has no Target of its own to check against.
-        # ``ensure_physical`` canonicalizes qc in place; its return value only says whether
-        # it had to do anything, not whether qc is now physical (it always is, afterwards).
+        # Reject (never fix up) a qc that is not already laid out on this backend's physical
+        # qubits -- the OpenQASM 3 lowering, including ConditionalPlay's box, needs native,
+        # physically-indexed operations and has no Target of its own to check against.
         ensure_circuit_physical(qc, self.target.num_qubits)
         self._validate_conditional_plays(qc)
 

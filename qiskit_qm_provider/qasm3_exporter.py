@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from qiskit.circuit import Bit, Clbit, ClassicalRegister
 from qiskit.circuit.classical import expr, types
 from qiskit.qasm3 import DefcalInstruction, ast
 from qiskit.qasm3.exceptions import QASM3ExporterError
@@ -54,67 +53,6 @@ class _QMOpenQASM3Builder(QASM3Builder):
                 "add_conditional_play."
             )
         return super().build_box(instruction)
-
-    def _resolve_expression_resource(self, resource):
-        """Resolve copied circuit resources by their stable Qiskit names.
-
-        Qiskit's generic transpiler does not know that ``condition_expr`` is
-        provider metadata, so it does not remap its referenced classical
-        resources while copying a circuit.  The current export scope does know
-        the corresponding resources, which lets us recover the standard Qiskit
-        copy/transpile case without adding a provider-specific transpiler pass.
-
-        A resource that cannot be matched this way raises explicitly rather than
-        falling back to a guess: a wrong guess here would silently export a
-        condition against the wrong classical bit, with no indication anything
-        went wrong.
-        """
-        circuit = self.scope.circuit
-        if isinstance(resource, Bit):
-            if resource in self.scope.bit_map:
-                return resource
-            register = getattr(resource, "_register", None)
-            if register is not None:
-                registers = circuit.cregs if isinstance(resource, Clbit) else circuit.qregs
-                for candidate in registers:
-                    if candidate.name == register.name and len(candidate) == len(register):
-                        return candidate[resource._index]
-            raise QASM3ExporterError(
-                f"Cannot resolve ConditionalPlay condition resource {resource!r} in the current "
-                "export scope: no register with a matching name and size was found. This can "
-                "happen if a circuit copy or transpiler pass renamed or dropped the register "
-                "the condition was originally built against."
-            )
-        if isinstance(resource, ClassicalRegister):
-            for candidate in circuit.cregs:
-                if candidate is resource or (candidate.name == resource.name and len(candidate) == len(resource)):
-                    return candidate
-            raise QASM3ExporterError(
-                f"Cannot resolve ConditionalPlay condition register {resource!r} in the current "
-                "export scope: no classical register with a matching name and size was found."
-            )
-        return resource
-
-    def _lookup_bit(self, bit):
-        """Resolve copied expression bits before the base builder serializes them.
-
-        This differs from :meth:`QASM3Builder._lookup_bit` only for a bit held
-        inside a ``ConditionalPlay`` expression after a generic Qiskit copy or
-        transpilation.  Such a bit can refer to an equivalent source register
-        rather than the current build scope; the base implementation requires
-        the latter.  All ordinary bit lookups are delegated unchanged.
-        """
-        return super()._lookup_bit(self._resolve_expression_resource(bit))
-
-    def _lookup_variable_for_expression(self, var):
-        """Resolve copied expression registers before using Qiskit's base lookup.
-
-        This is the register analogue of :meth:`_lookup_bit`.  It changes no
-        naming or expression semantics; it only reconnects provider-held
-        expression resources to the active export scope, then delegates to the
-        standard Qiskit symbol-table lookup.
-        """
-        return super()._lookup_variable_for_expression(self._resolve_expression_resource(var))
 
     def build_defcal_call(self, instruction, defcal):
         """Serialize a conditional play's Boolean argument as a typed expression.
