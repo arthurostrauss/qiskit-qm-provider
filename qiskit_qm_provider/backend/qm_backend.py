@@ -46,6 +46,7 @@ from qiskit.providers import BackendV2 as Backend, QubitProperties, Options
 from qiskit.result.models import MeasLevel, MeasReturnType
 
 from qiskit.transpiler import Target, InstructionProperties, CouplingMap
+from qiskit.transpiler.passes import GatesInBasis
 
 # QUA and Quam imports
 from qm import QuantumMachinesManager, DictQuaConfig, QuantumMachine
@@ -61,6 +62,7 @@ from .backend_utils import (
     control_flow_name_mapping,
     qasm3_keyword_instructions,
     operation_key,
+    ensure_circuit_physical,
 )
 from .qm_instruction_properties import QMInstructionProperties
 from ..conditional_play import (
@@ -843,15 +845,6 @@ class QMBackend(Backend):
         for the same ``pulse_name`` is safe and just refreshes its Target properties.
         """
         operation_name = conditional_play_operation_name(pulse_name)
-        previous_pulse = self._conditional_play_pulses.get(operation_name)
-        if previous_pulse is not None and previous_pulse != pulse_name:
-            warnings.warn(
-                f"Conditional play for pulse {pulse_name!r} uses the same operation name "
-                f"{operation_name!r} as the previously registered pulse {previous_pulse!r}; "
-                f"it replaces that registration, so circuits using {previous_pulse!r} will "
-                f"now play {pulse_name!r}.",
-                stacklevel=2,
-            )
 
         properties = {}
         for index in range(self.num_qubits):
@@ -864,20 +857,56 @@ class QMBackend(Backend):
                 qua_pulse_macro=_conditional_play_macro(qubit, pulse_name),
             )
 
+        # Only warn once every qubit has resolved the pulse, i.e. once the replacement
+        # below is certain to happen.
+        previous_pulse = self._conditional_play_pulses.get(operation_name)
+        if previous_pulse is not None and previous_pulse != pulse_name:
+            warnings.warn(
+                f"Conditional play for pulse {pulse_name!r} uses the same operation name "
+                f"{operation_name!r} as the previously registered pulse {previous_pulse!r}; "
+                f"it replaces that registration, so circuits using {previous_pulse!r} will "
+                f"now play {pulse_name!r}.",
+                stacklevel=2,
+            )
+
         self._add_or_update_target_instruction(
             operation_name, _ConditionalPlay.target_operation(pulse_name), properties
         )
         self._conditional_play_pulses[operation_name] = pulse_name
         self.update_target()
 
+    def _ensure_native_operations(self, qc: QuantumCircuit) -> None:
+        """Raise unless every operation in ``qc`` is supported by this backend's ``Target``.
+
+        Uses Qiskit's :class:`~qiskit.transpiler.passes.GatesInBasis`, which checks each
+        operation's name, physical qargs and parameters against ``self.target``, recursing
+        into control-flow blocks (``barrier`` and ``store`` are always accepted). ``qc`` must
+        already be physical (see :func:`ensure_circuit_physical`) so that its qargs are
+        physical qubit indices.
+
+        Raises:
+            ValueError: if any operation is not native to this backend. An unregistered
+                conditional play gets a dedicated message naming the missing registration.
+        """
+        gates_in_basis = GatesInBasis(target=self.target)
+        gates_in_basis(qc)
+        if gates_in_basis.property_set["all_gates_in_basis"]:
+            return
+        # Conditional plays are the one non-native operation with a specific remedy;
+        # report that first, then fall back to the generic error.
+        self._validate_conditional_plays(qc)
+        raise ValueError(
+            f"Circuit {qc.name!r} contains operations that are not native to this backend's "
+            "Target (unsupported name, qubits or parameters). Transpile it against this backend "
+            "(or its target) before submitting it for compilation."
+        )
+
     def _validate_conditional_plays(self, qc: QuantumCircuit) -> None:
         """Check every ``ConditionalPlay`` in ``qc`` against this backend's own ``Target``.
 
-        This is checked directly here, against ``self.target``, rather than threaded
-        through the exporter/builder as a validator callback -- the export layer has no
-        ``Target`` of its own, and ``qc`` has already been checked to be physical by the
-        time this runs (see the ``ensure_circuit_physical`` call in
-        :meth:`quantum_circuit_to_qua`), so its qargs are meaningful physical qubit indices.
+        Called by :meth:`_ensure_native_operations` once ``GatesInBasis`` has found a
+        non-native operation, to give an unregistered conditional play an actionable
+        error. ``qc`` is already physical by then, so its qargs are physical qubit indices.
         """
         for operation, qargs in _iter_conditional_plays(qc):
             if not self.target.instruction_supported(operation.name, qargs):
@@ -961,12 +990,12 @@ class QMBackend(Backend):
             wired measurement outputs.
         """
         from .qua_circuit_compilation import QuaCircuitCompilation
-        from .backend_utils import ensure_circuit_physical
+
         # Reject (never fix up) a qc that is not already laid out on this backend's physical
-        # qubits -- the OpenQASM 3 lowering, including ConditionalPlay's box, needs native,
-        # physically-indexed operations and has no Target of its own to check against.
+        # qubits and expressed in its native operations -- the OpenQASM 3 lowering, including
+        # ConditionalPlay's box, has no Target of its own to check against.
         ensure_circuit_physical(qc, self.target.num_qubits)
-        self._validate_conditional_plays(qc)
+        self._ensure_native_operations(qc)
 
         basis_gates = self.qm_qasm_basis_gates
         # Check if all custom calibrations are in the qasm3 basis gates

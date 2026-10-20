@@ -34,7 +34,7 @@ from __future__ import annotations
 from hashlib import sha256
 import re
 
-from qiskit.circuit import Instruction, QuantumCircuit
+from qiskit.circuit import Instruction, Parameter, QuantumCircuit
 from qiskit.circuit.classical import expr, types
 from qiskit.circuit.exceptions import CircuitError
 
@@ -121,14 +121,19 @@ class _ConditionalPlay(Instruction):
 
     @classmethod
     def target_operation(cls, pulse_name: str) -> Instruction:
-        """Create the parameter-free Target operation for ``pulse_name``.
+        """Create the Target operation for ``pulse_name``.
 
         Target applicability and the QUA macro are independent of the runtime
-        Boolean expression.  The concrete circuit instruction carries that
-        expression in ``params``; this Target exemplar only identifies the
-        per-qubit hardware operation.
+        Boolean expression, so the exemplar's single argument slot holds a free
+        placeholder :class:`~qiskit.circuit.Parameter`. A free parameter in a Target
+        operation accepts any value, which is what lets
+        :class:`~qiskit.transpiler.passes.GatesInBasis` (and
+        :meth:`~qiskit.transpiler.Target.instruction_supported` when given
+        ``parameters``) match a concrete instruction whose slot holds a Boolean
+        :class:`~qiskit.circuit.classical.expr.Expr`. A parameter-free exemplar would
+        fail that arity check for every conditional play.
         """
-        return Instruction(conditional_play_operation_name(pulse_name), 1, 0, [])
+        return Instruction(conditional_play_operation_name(pulse_name), 1, 0, [Parameter("condition")])
 
     def inverse(self, annotated: bool = False):
         """Reject inversion instead of applying the base instruction fallback.
@@ -152,16 +157,6 @@ class _ConditionalPlay(Instruction):
         rather than allowing an accidental gate-like conversion.
         """
         raise CircuitError("ConditionalPlay cannot be quantum-controlled")
-
-    def __eq__(self, other):
-        """Add label comparison on top of the base class's identity/params check.
-
-        Base :meth:`Instruction.__eq__` already compares ``name`` (which encodes
-        ``pulse_name``, see :func:`conditional_play_operation_name`) and ``params``
-        (``condition_expr`` is the sole entry); ``label`` is the only thing it
-        doesn't consider.
-        """
-        return super().__eq__(other) and self.label == other.label
 
 
 def _box_matches_conditional_play_contract(body: QuantumCircuit) -> bool:

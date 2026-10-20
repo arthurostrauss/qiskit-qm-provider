@@ -329,6 +329,23 @@ class TestConditionalPlayRegistration:
             warnings.simplefilter("error")
             backend.register_conditional_play("-y90")
 
+    def test_failed_colliding_registration_neither_warns_nor_replaces(self):
+        """A colliding registration that fails pulse resolution must leave the earlier
+        registration in place and must not claim to have replaced it."""
+        backend, qubit, pulse = _backend_with_pulse()
+        backend.register_conditional_play("-y90")
+        operation_name = conditional_play_operation_name("-y90")
+        macro_before = backend._operation_mapping_QUA[(operation_name, 1, (0,))]
+        qubit.get_pulse.side_effect = ValueError("Pulse minus_y90 not found")
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(ValueError, match="minus_y90 not found"):
+                backend.register_conditional_play("minus_y90")
+
+        assert backend._conditional_play_pulses[operation_name] == "-y90"
+        assert backend._operation_mapping_QUA[(operation_name, 1, (0,))] is macro_before
+
     @pytest.mark.parametrize("error", [ValueError("Pulse x180 not found"), ValueError("Pulse x180 is not unique")])
     def test_registration_propagates_quam_pulse_lookup_errors(self, error):
         backend, _, _ = _backend_with_pulse(get_pulse_side_effect=error)
@@ -352,3 +369,42 @@ class TestConditionalPlayRegistration:
 
         assert qc.qregs[0].name == "myreg", "rejecting a non-physical circuit must not mutate it"
         assert qc.layout is None, "rejecting a non-physical circuit must not mutate it"
+
+    def test_native_operation_check_accepts_a_registered_conditional_play(self):
+        """The Target exemplar's placeholder parameter must let ``GatesInBasis`` accept a
+        conditional play whose argument slot holds a Boolean ``Expr``."""
+        backend, _, _ = _backend_with_pulse()
+        backend.register_conditional_play("x180")
+        qc = QuantumCircuit(1, 1)
+        flag = qc.add_input("flag", types.Bool())
+        qc.conditional_play("x180", expr.logic_and(flag, qc.clbits[0]), 0)
+        qc.barrier()
+        with qc.if_test(expr.lift(qc.clbits[0])):
+            qc.conditional_play("x180", flag, 0)
+        qc.ensure_physical(backend.num_qubits)
+
+        backend._ensure_native_operations(qc)  # must not raise
+
+    def test_quantum_circuit_to_qua_rejects_non_native_operations(self):
+        backend, _, _ = _backend_with_pulse()
+        qc = QuantumCircuit(1)
+        qc.h(0)
+        qc.ensure_physical(backend.num_qubits)
+
+        with pytest.raises(ValueError, match="not native to this backend's Target"):
+            backend.quantum_circuit_to_qua(qc)
+
+    def test_transpile_then_export_matches_the_documented_qasm(self):
+        """Keeps the OpenQASM call shown in docs/backend.md honest."""
+        backend, _, _ = _backend_with_pulse()
+        backend.register_conditional_play("x180")
+        creg = ClassicalRegister(1, "creg")
+        qreg = QuantumRegister(1, "qreg")
+        qc = QuantumCircuit(qreg, creg)
+        qc.conditional_play("x180", condition=expr.equal(creg[0], expr.lift(False)), qubit=qreg[0])
+
+        transpiled = transpile(qc, backend, initial_layout=[0])
+        backend._ensure_native_operations(transpiled)
+
+        qasm = backend.qasm3_exporter.dumps(transpiled)
+        assert "box {\n  qm_conditional_play_x180(creg_0[0] == false) $0;\n}" in qasm
