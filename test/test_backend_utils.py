@@ -24,6 +24,9 @@ from qiskit_qm_provider.backend.backend_utils import (
     assign_struct_with_table,
     pack_register_to_int,
     ensure_circuit_physical,
+    ensure_native_operations,
+    missing_operation_names,
+    validate_conditional_plays,
     _measurement_var_is_array,
 )
 
@@ -641,3 +644,100 @@ class TestHasConflictingCalibrations:
             ),
         ]
         assert has_conflicting_calibrations(circuits) is True
+
+
+def _x_target(qargs, *, with_builtins=True):
+    """A Target shaped like a QM backend's: ``x`` on ``qargs`` plus global control flow
+    and, unless ``with_builtins`` is False, global ``barrier``/``store``."""
+    from qiskit.circuit.library import XGate
+    from qiskit.circuit.controlflow import get_control_flow_name_mapping
+    from qiskit.transpiler import Target
+
+    from qiskit_qm_provider.backend.backend_utils import variadic_builtin_instructions
+
+    target = Target(num_qubits=2)
+    target.add_instruction(XGate(), {qarg: None for qarg in qargs})
+    global_ops = dict(get_control_flow_name_mapping())
+    if with_builtins:
+        global_ops.update(variadic_builtin_instructions)
+    for name, op in global_ops.items():
+        target.add_instruction(op, name=name)
+    return target
+
+
+class TestMissingOperationNames:
+    def test_counts_operations_nested_in_control_flow(self):
+        from qiskit.circuit.classical import expr
+
+        qc = QuantumCircuit(2, 1)
+        qc.x(0)
+        qc.barrier()
+        with qc.if_test(expr.lift(qc.clbits[0])):
+            with qc.box():
+                qc.h(1)
+        qc.conditional_play("y90", expr.lift(True), 0)
+
+        assert missing_operation_names(qc, _x_target([(0,), (1,)])) == {"h", "qm_conditional_play_y90"}
+
+    def test_barrier_and_store_count_only_when_the_target_lacks_them(self):
+        """barrier/store are not special-cased: a QM Target defines them, a bare one doesn't."""
+        qc = QuantumCircuit(2)
+        flag = qc.add_var("flag", False)
+        qc.x(0)
+        qc.barrier()
+        qc.store(flag, True)
+
+        assert missing_operation_names(qc, _x_target([(0,), (1,)])) == set()
+        assert missing_operation_names(qc, _x_target([(0,), (1,)], with_builtins=False)) == {"barrier", "store"}
+
+    def test_is_empty_when_every_name_is_defined_even_on_wrong_qubits(self):
+        qc = QuantumCircuit(2)
+        qc.x(1)
+        assert missing_operation_names(qc, _x_target([(0,)])) == set()
+
+
+class TestEnsureNativeOperations:
+    def test_unregistered_conditional_plays_are_listed_by_pulse(self):
+        from qiskit.circuit.classical import expr
+
+        qc = QuantumCircuit(2)
+        qc.h(0)
+        qc.conditional_play("-y90", expr.lift(True), 0)
+        qc.conditional_play("y90", expr.lift(True), 1)
+        qc.conditional_play("-y90", expr.lift(False), 1)
+        qc.ensure_physical(2)
+
+        message = r"pulse\(s\) '-y90', 'y90' are not registered.*register_conditional_play\('-y90', 'y90'\)"
+        with pytest.raises(ValueError, match=message):
+            validate_conditional_plays(qc, _x_target([(0,), (1,)]))
+        with pytest.raises(ValueError, match=message):
+            ensure_native_operations(qc, _x_target([(0,), (1,)]))
+
+    def test_missing_names_are_listed(self):
+        qc = QuantumCircuit(2)
+        qc.h(0)
+        qc.sdg(1)
+        qc.ensure_physical(2)
+
+        with pytest.raises(ValueError, match=r"\['h', 'sdg'\] that the given Target does not define"):
+            ensure_native_operations(qc, _x_target([(0,), (1,)]))
+
+    def test_qubit_mismatch_is_named_by_the_walk(self):
+        from qiskit.circuit.classical import expr
+
+        qc = QuantumCircuit(2, 1)
+        qc.x(0)
+        with qc.if_test(expr.lift(qc.clbits[0])):
+            qc.x(1)
+        qc.ensure_physical(2)
+
+        with pytest.raises(ValueError, match=r"'x' on qubit\(s\) \(1,\)"):
+            ensure_native_operations(qc, _x_target([(0,)]))
+
+    def test_supported_circuit_passes(self):
+        qc = QuantumCircuit(2)
+        qc.x(0)
+        qc.barrier()
+        qc.x(1)
+        qc.ensure_physical(2)
+        ensure_native_operations(qc, _x_target([(0,), (1,)]))

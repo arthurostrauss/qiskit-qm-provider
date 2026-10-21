@@ -26,7 +26,7 @@ from __future__ import annotations
 import warnings
 from typing import Any, List, TYPE_CHECKING, Dict, Type
 
-from qiskit.circuit import QuantumCircuit, QuantumRegister, Parameter
+from qiskit.circuit import Barrier, QuantumCircuit, QuantumRegister, Parameter, Store
 from qiskit.circuit.controlflow import (
     ControlFlowOp,
     IfElseOp,
@@ -37,6 +37,7 @@ from qiskit.circuit.controlflow import (
 from qiskit.circuit.library import get_standard_gate_name_mapping
 from qiskit.quantum_info import Pauli, PauliList
 from qiskit.converters import circuit_to_dag
+from qiskit.dagcircuit import DAGCircuit
 from qiskit.transpiler.passes import GatesInBasis
 
 from quam.components import Qubit, QubitPair
@@ -44,7 +45,7 @@ from quam.core import QuamRoot
 from quam.utils.qua_types import QuaVariableInt
 from qm import generate_qua_script
 from qm.qua import assign, Cast
-from ..conditional_play import _iter_conditional_plays
+from ..conditional_play import CONDITIONAL_PLAY_PREFIX, _iter_conditional_plays
 from ..additional_gates import CRGate, FSimGate, SYGate, SYdgGate, GPIGate, GPI2Gate
 # Re-exported for backward compatibility; canonical home is quam_macros.superconducting.
 from ..quam_macros.superconducting import add_basic_macros
@@ -69,7 +70,18 @@ except ImportError:
         "switch_case": SwitchCaseOp,
     }
 
+# Variable-width instructions every QM backend Target exposes as global operations, the
+# way control flow is exposed. They are lowered by qm-qasm itself, not through the QUA
+# operations mapping: ``barrier`` becomes a QUA ``align`` over the elements of the barrier
+# qubits, and ``store`` becomes a QUA assignment.
+variadic_builtin_instructions: Dict[str, type] = {
+    "barrier": Barrier,
+    "store": Store,
+}
+
 qasm3_keyword_instructions = (
+    "barrier",
+    "store",
     "measure",
     "reset",
     "delay",
@@ -184,44 +196,75 @@ def ensure_circuit_physical(qc: QuantumCircuit, n_qubits: int) -> None:
         )
 
 
+def _missing_names_in_dag(dag: DAGCircuit, target: Target) -> set[str]:
+    supported = target.operation_names
+    return {name for name in dag.count_ops(recurse=True) if name not in supported}
+
+
+def missing_operation_names(qc: QuantumCircuit, target: Target) -> set[str]:
+    """Return the names of operations in ``qc`` that ``target`` does not define at all.
+
+    Counts operations with :meth:`DAGCircuit.count_ops` (``recurse=True``), so operations
+    nested in control-flow blocks -- including every conditional play, which always sits
+    inside a ``box`` -- are included; :meth:`QuantumCircuit.count_ops` would miss them.
+
+    This is a name-only check: an operation whose name is in ``target`` but which is
+    used on qubits or with parameters the target does not support is not reported (see
+    :func:`ensure_native_operations` for the full check).
+
+    Args:
+        qc: QuantumCircuit to inspect.
+        target: Target to compare against.
+
+    Returns:
+        The set of operation names in ``qc`` absent from ``target.operation_names``.
+    """
+    return _missing_names_in_dag(circuit_to_dag(qc, copy_operations=False), target)
+
+
+def _raise_for_unregistered_conditional_plays(qc: QuantumCircuit, missing_names: set[str]) -> None:
+    if not any(name.startswith(CONDITIONAL_PLAY_PREFIX) for name in missing_names):
+        return
+    # Failure path only: walk the circuit to recover the pulse labels behind the
+    # missing operation names (a name with a digest suffix cannot be inverted).
+    pulse_names = list(
+        dict.fromkeys(operation.pulse_name for operation, _ in _iter_conditional_plays(qc) if operation.name in missing_names)
+    )
+    raise ValueError(
+        f"ConditionalPlay pulse(s) {', '.join(map(repr, pulse_names))} are not registered. "
+        f"Call backend.register_conditional_play({', '.join(map(repr, pulse_names))}) before compiling."
+    )
+
+
 def validate_conditional_plays(qc: QuantumCircuit, target: Target) -> None:
     """Check that every conditional play in ``qc`` is registered in ``target``.
 
-    Gives an unregistered conditional play an actionable error naming the missing
-    :meth:`~qiskit_qm_provider.backend.QMBackend.register_conditional_play` call.
-    ``qc`` must already be physical (see :func:`ensure_circuit_physical`) so that its
-    qargs are physical qubit indices.
+    :meth:`~qiskit_qm_provider.backend.QMBackend.register_conditional_play` always
+    registers a pulse on every active qubit, so registration is a name lookup (see
+    :func:`missing_operation_names`); no per-qubit walk is needed. Gives an unregistered
+    conditional play an actionable error naming the missing registration.
 
     Args:
         qc: QuantumCircuit to check.
         target: Target the circuit is compiled against.
 
     Raises:
-        ValueError: If a conditional play is not supported by ``target`` on its qubit.
+        ValueError: If a conditional play's operation is not defined in ``target``.
     """
-    for operation, qargs in _iter_conditional_plays(qc):
-        if not target.instruction_supported(operation.name, qargs):
-            raise ValueError(
-                f"ConditionalPlay for pulse {operation.pulse_name!r} is not registered on "
-                f"qubit(s) {qargs}. Call backend.register_conditional_play({operation.pulse_name!r}) "
-                "before compiling."
-            )
+    _raise_for_unregistered_conditional_plays(qc, missing_operation_names(qc, target))
 
 
 def _first_unsupported_operation(qc: QuantumCircuit, target: Target, qubit_map: dict | None = None):
     """Return ``(operation, physical_qargs)`` for the first operation ``target`` rejects, else ``None``.
 
-    Mirrors :class:`~qiskit.transpiler.passes.GatesInBasis`: ``barrier`` and ``store``
-    are always accepted, parameters are only compared for non-parameterized,
-    non-control-flow operations, and control-flow blocks are searched with their
-    qubits mapped back to the physical qubits of the owning instruction.
+    Mirrors :class:`~qiskit.transpiler.passes.GatesInBasis`: parameters are only compared
+    for non-parameterized, non-control-flow operations, and control-flow blocks are
+    searched with their qubits mapped back to the physical qubits of the owning instruction.
     """
     if qubit_map is None:
         qubit_map = {qubit: index for index, qubit in enumerate(qc.qubits)}
     for instruction in qc.data:
         operation = instruction.operation
-        if operation.name in ("barrier", "store"):
-            continue
         qargs = tuple(qubit_map[qubit] for qubit in instruction.qubits)
         is_control_flow = isinstance(operation, ControlFlowOp)
         check_params = not is_control_flow and not operation.is_parameterized()
@@ -242,28 +285,40 @@ def ensure_native_operations(qc: QuantumCircuit, target: Target) -> None:
 
     Uses Qiskit's :class:`~qiskit.transpiler.passes.GatesInBasis`, which checks each
     operation's name, physical qargs and parameters against ``target``, recursing into
-    control-flow blocks (``barrier`` and ``store`` are always accepted). ``qc`` must
+    control-flow blocks (``GatesInBasis`` itself always accepts ``barrier`` and ``store``;
+    QM backend Targets also define both, see ``variadic_builtin_instructions``). ``qc`` must
     already be physical (see :func:`ensure_circuit_physical`) so that its qargs are
     physical qubit indices. ``qc`` is only inspected, never modified.
+
+    When the check fails, the error is built from the cheapest diagnosis that explains
+    it: unregistered conditional plays first, then operation names ``target`` does not
+    define at all (:func:`missing_operation_names`), and only if every name is defined,
+    the first operation used on unsupported qubits or with unsupported parameters.
 
     Args:
         qc: QuantumCircuit to check.
         target: Target the circuit is compiled against.
 
     Raises:
-        ValueError: If any operation is not supported by ``target``. The message names
-            the first offending operation and its physical qubits; an unregistered
-            conditional play gets a dedicated message (see :func:`validate_conditional_plays`).
+        ValueError: If any operation is not supported by ``target``.
     """
+    dag = circuit_to_dag(qc, copy_operations=False)
     gates_in_basis = GatesInBasis(target=target)
     # Run the analysis pass directly: going through ``__call__`` would build a
     # PassManager and convert the DAG back into a throwaway circuit.
-    gates_in_basis.run(circuit_to_dag(qc, copy_operations=False))
+    gates_in_basis.run(dag)
     if gates_in_basis.property_set["all_gates_in_basis"]:
         return
-    # Failure path only: conditional plays have a specific remedy, so report those
-    # first, then name the first other operation the target rejects.
-    validate_conditional_plays(qc, target)
+
+    missing_names = _missing_names_in_dag(dag, target)
+    _raise_for_unregistered_conditional_plays(qc, missing_names)
+    if missing_names:
+        raise ValueError(
+            f"Circuit {qc.name!r} uses operation(s) {sorted(missing_names)} that the given Target "
+            "does not define. Transpile the circuit against that target before compiling it."
+        )
+
+    # Every name is defined, so the mismatch is in qubits or parameters: find it.
     unsupported = _first_unsupported_operation(qc, target)
     detail = (
         f": {unsupported[0].name!r} on qubit(s) {unsupported[1]} with params {list(unsupported[0].params)}"
@@ -271,8 +326,8 @@ def ensure_native_operations(qc: QuantumCircuit, target: Target) -> None:
         else ""
     )
     raise ValueError(
-        f"Circuit {qc.name!r} contains an operation not supported by the given Target{detail}. "
-        "Transpile the circuit against that target before compiling it."
+        f"Circuit {qc.name!r} uses an operation on qubits or with parameters the given Target "
+        f"does not support{detail}. Transpile the circuit against that target before compiling it."
     )
 
 

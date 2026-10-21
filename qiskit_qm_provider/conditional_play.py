@@ -46,6 +46,9 @@ __all__ = [
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
+#: Prefix of every conditional-play operation name (see :func:`conditional_play_operation_name`).
+CONDITIONAL_PLAY_PREFIX = "qm_conditional_play_"
+
 
 def conditional_play_operation_name(pulse_name: str) -> str:
     """Return the stable OpenQASM-safe operation name for ``pulse_name``.
@@ -68,11 +71,11 @@ def conditional_play_operation_name(pulse_name: str) -> str:
         raise ValueError("pulse_name must be a non-empty string")
 
     if _IDENTIFIER.fullmatch(pulse_name):
-        return f"qm_conditional_play_{pulse_name}"
+        return f"{CONDITIONAL_PLAY_PREFIX}{pulse_name}"
 
     minus_substituted = pulse_name.replace("-", "minus_")
     if _IDENTIFIER.fullmatch(minus_substituted):
-        return f"qm_conditional_play_{minus_substituted}"
+        return f"{CONDITIONAL_PLAY_PREFIX}{minus_substituted}"
 
     readable = re.sub(r"[^A-Za-z0-9_]", "_", minus_substituted).strip("_")
     if not readable:
@@ -81,7 +84,7 @@ def conditional_play_operation_name(pulse_name: str) -> str:
         readable = f"pulse_{readable}"
     readable = readable[:48].rstrip("_") or "pulse"
     digest = sha256(pulse_name.encode("utf-8")).hexdigest()[:16]
-    return f"qm_conditional_play_{readable}_{digest}"
+    return f"{CONDITIONAL_PLAY_PREFIX}{readable}_{digest}"
 
 
 class _ConditionalPlay(Instruction):

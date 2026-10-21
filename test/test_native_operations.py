@@ -74,10 +74,13 @@ def test_run_path_circuit_is_native(backend):
     ``backend.run``/the Sampler, passes the native-operation check."""
     qc = QuantumCircuit(2, 2)
     flag = qc.add_input("flag", types.Bool())
+    seen = qc.add_var("seen", False)
     qc.h(0)
     qc.sdg(1)
     qc.delay(100, 0)
+    qc.barrier()
     qc.measure(1, 0)
+    qc.store(seen, expr.lift(qc.clbits[0]))
     qc.conditional_play("x180", expr.logic_and(flag, qc.clbits[0]), 0)
     with qc.if_test(expr.lift(qc.clbits[0])):
         qc.x(1)
@@ -87,6 +90,9 @@ def test_run_path_circuit_is_native(backend):
     [validated] = validate_circuits(transpiled)
 
     _check(validated, backend)
+    qasm = backend.qasm3_exporter.dumps(validated)
+    assert any(line in qasm for line in ("barrier $0, $1;", "barrier $1, $0;"))
+    assert "seen = c[0];" in qasm
 
 
 def test_estimator_prepared_circuit_is_native(backend):
@@ -112,5 +118,31 @@ def test_non_native_operation_is_named_in_the_error(backend):
     with transpiled.if_test(expr.lift(True)):
         transpiled.h(1)
 
-    with pytest.raises(ValueError, match=r"'h' on qubit\(s\) \(1,\)"):
+    with pytest.raises(ValueError, match=r"\['h'\] that the given Target does not define"):
         ensure_native_operations(transpiled, backend.target)
+
+
+def test_qubit_mapping_uses_quam_element_names(backend):
+    """The base backend maps each physical qubit to its channels' QUA element names."""
+    assert backend.qubit_mapping == {
+        index: (f"q{index}.xy", f"q{index}.resonator", f"q{index}.z") for index in range(2)
+    }
+
+
+def test_barrier_compiles_to_an_align_over_its_qubits(backend):
+    """quantum_circuit_to_qua keeps barriers, and qm-qasm lowers one to a QUA align over
+    every element of the barrier's qubits."""
+    from qm import generate_qua_script
+
+    qc = QuantumCircuit(2, 2)
+    qc.x(0)
+    qc.barrier()
+    qc.x(1)
+    qc.measure([0, 1], [0, 1])
+    transpiled = transpile(qc, backend, optimization_level=0, initial_layout=[0, 1])
+
+    script = generate_qua_script(backend.quantum_circuit_to_qua(transpiled).qua_program)
+
+    lines = [line.strip() for line in script.splitlines()]
+    first, second = lines.index("play('x180', 'q0.xy')"), lines.index("play('x180', 'q1.xy')")
+    assert "align('q0.resonator', 'q0.xy', 'q0.z', 'q1.resonator', 'q1.xy', 'q1.z')" in lines[first:second]

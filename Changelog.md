@@ -11,17 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Conditional pulse plays (`conditional_play`)** — apply a fixed QuAM pulse conditionally on a real-time Boolean Qiskit expression (`expr.Expr`), lowered directly to QUA `pulse.play(condition=...)` without a Qiskit `if_test` or QUA branching. Use `QuantumCircuit.conditional_play(pulse_name, condition, qubit)` or the standalone `add_conditional_play(qc, pulse_name, condition, qubit)`, after registering the pulse(s) on the backend with `backend.register_conditional_play(*pulse_names)` (several pulses in one call are resolved all-or-nothing and synchronized once). Each play is wrapped in a Qiskit `box` so that the condition's classical dependencies are tracked by the DAG and cannot be reordered by `transpile()`; the OpenQASM 3 exporter rejects a conditional-play box whose contents were altered. Registering two pulse labels that map to the same operation name (e.g. `"-y90"` and `"minus_y90"`) emits a warning.
 - **`y` and `sxdg` basis gates** — `add_basic_macros()` now also maps `y` to the `y180` pulse and `sxdg` to the `-x90` pulse (both standard in the flux-tunable transmon pipeline it targets).
+- **`barrier` and `store` in the backend `Target`** — QM backend Targets now define both as global, variable-width operations (like control flow), so native-operation checks treat them as genuinely supported rather than special-casing them. Neither enters the qm-qasm operations mapping: qm-qasm lowers `store` to a QUA assignment and `barrier` to a QUA `align`.
+- **`missing_operation_names(qc, target)`** (`backend_utils.py`) — returns the operation names in a circuit, including those nested in control flow, that a `Target` does not define; used by `validate_conditional_plays` and `ensure_native_operations`.
 
 ### Changed
 
 - **Breaking: `quantum_circuit_to_qua()` only accepts circuits transpiled for the backend** — the OpenQASM 3 lowering needs circuits expressed in native operations on physical qubits, so `quantum_circuit_to_qua()` (and everything built on it, such as `backend.run()` and the primitives) now raises `ValueError` unless the circuit:
   - has been laid out on the backend's physical qubits: it carries a `TranspileLayout` and a single canonical `q` register of exactly `backend.num_qubits` qubits (`ensure_circuit_physical` in `backend_utils.py`);
-  - uses only operations supported by `backend.target` on the qubits they act on, as checked by Qiskit's `GatesInBasis` pass (`ensure_native_operations` in `backend_utils.py`; an unregistered conditional play gets a dedicated error from `validate_conditional_plays`).
+  - uses only operations supported by `backend.target` on the qubits they act on, as checked by Qiskit's `GatesInBasis` pass (`ensure_native_operations` in `backend_utils.py`). Errors name what is wrong: unregistered conditional-play pulses, then operation names the Target does not define, then the first operation used on unsupported qubits or parameters.
 
   Circuits that previously compiled without transpilation (hand-built `QuantumCircuit(n)`, or `transpile(..., basis_gates=...)` without the backend) must now be transpiled against the backend first. Both checks only inspect the circuit and never modify it.
+- **Barriers now compile to QUA `align`** — `quantum_circuit_to_qua()` no longer strips `barrier` statements from the exported OpenQASM 3; qm-qasm lowers each one to an `align` over every element of the barrier's qubits. Circuits containing barriers (including those `transpile` or `measure_all` insert) now synchronize those qubits at that point.
 - **Minimum Qiskit version is now 2.2** — the OpenQASM 3 exporter relies on `qiskit.qasm3.DefcalInstruction`/implicit defcals and the physical-circuit form introduced in Qiskit 2.2.
 - **TLS-secured QM SaaS connection** — `QmSaasProvider.get_backend()` now builds its `QuantumMachinesManager` with `QuantumMachinesManager(**instance.qmm_connection_params)`, which adds the TLS credentials required by the QM cloud simulator from QOP 3.8.1 onwards (connections without them fail after the October 8th, 2026 server update). Replaces the deprecated `host`/`port`/`default_connection_headers` form.
 - **`qm-saas` extra** now requires `qm-saas>=1.2.0,<2` (first release exposing `qmm_connection_params`).
+
+### Fixed
+
+- **`QMBackend.qubit_mapping` element names** — the base backend mapped each qubit to its `channels` dict keys (`"xy"`, `"z"`, ...) instead of the channels' QUA element names (`"q0.xy"`, ...), so every `align` qm-qasm emitted targeted non-existent elements. `FluxTunableTransmonBackend` already overrode this correctly.
 
 ## [0.3.5] - 2026-09-23
 

@@ -45,26 +45,31 @@ def _unwrap_conditional_play(operation: Instruction) -> _ConditionalPlay:
     return inner.operation
 
 
-def _backend_with_pulse(*, get_pulse_side_effect=None):
+def _mock_qubit(name, pulse, get_pulse_side_effect=None):
     qubit = Mock(spec=Qubit)
-    qubit.name = "q0"
+    qubit.name = name
     qubit.T1 = qubit.T2echo = qubit.f_01 = None
     qubit.macros = {}
-    qubit.channels = []
-    pulse = Mock()
-    pulse.length = 32
+    qubit.channels = {}
     if get_pulse_side_effect is None:
         qubit.get_pulse.return_value = pulse
     else:
         qubit.get_pulse.side_effect = get_pulse_side_effect
+    return qubit
+
+
+def _backend_with_pulse(*, get_pulse_side_effect=None, num_qubits=1):
+    pulse = Mock()
+    pulse.length = 32
+    qubits = [_mock_qubit(f"q{index}", pulse, get_pulse_side_effect) for index in range(num_qubits)]
     machine = SimpleNamespace(
         qubits={},
         qubit_pairs={},
-        active_qubits=[qubit],
+        active_qubits=qubits,
         active_qubit_pairs=[],
         network={},
     )
-    return QMBackend(machine), qubit, pulse
+    return QMBackend(machine), qubits[0], pulse
 
 
 class TestConditionalPlay:
@@ -369,6 +374,29 @@ class TestConditionalPlayRegistration:
         assert conditional_play_operation_name("x180") not in backend.target.operation_names
         assert not backend._conditional_play_pulses
 
+    def test_collision_within_one_batch_warns(self):
+        """Two labels sharing an operation name in the same call: the second still
+        replaces the first, and must say so."""
+        backend, _, _ = _backend_with_pulse()
+
+        with pytest.warns(UserWarning, match="same operation name"):
+            backend.register_conditional_play("-y90", "minus_y90")
+
+        assert backend._conditional_play_pulses[conditional_play_operation_name("-y90")] == "minus_y90"
+
+    def test_batch_with_an_unsupported_existing_qarg_registers_nothing(self):
+        """If one pulse's operation already exists in the Target without an active
+        qubit, no pulse in the batch is installed and the mapping stays in sync."""
+        backend, _, _ = _backend_with_pulse(num_qubits=2)
+        stale = conditional_play_operation_name("-y90")
+        backend.target.add_instruction(_ConditionalPlay.target_operation("-y90"), {(1,): None}, name=stale)
+
+        with pytest.raises(ValueError, match="not supported by the target"):
+            backend.register_conditional_play("x180", "-y90")
+
+        assert conditional_play_operation_name("x180") not in backend.target.operation_names
+        assert not backend._conditional_play_pulses
+
     def test_registration_needs_a_pulse_name(self):
         backend, _, _ = _backend_with_pulse()
         with pytest.raises(ValueError, match="at least one pulse name"):
@@ -419,7 +447,7 @@ class TestConditionalPlayRegistration:
         qc.h(0)
         qc.ensure_physical(backend.num_qubits)
 
-        with pytest.raises(ValueError, match="not supported by the given Target"):
+        with pytest.raises(ValueError, match=r"\['h'\] that the given Target does not define"):
             backend.quantum_circuit_to_qua(qc)
 
     def test_transpile_then_export_matches_the_documented_qasm(self):
@@ -436,3 +464,15 @@ class TestConditionalPlayRegistration:
 
         qasm = backend.qasm3_exporter.dumps(transpiled)
         assert "box {\n  qm_conditional_play_x180(creg_0[0] == false) $0;\n}" in qasm
+
+
+class TestBackendTargetBuiltins:
+    def test_barrier_and_store_are_global_target_operations_outside_the_qua_mapping(self):
+        backend, _, _ = _backend_with_pulse(num_qubits=2)
+        backend.update_target()
+
+        for name in ("barrier", "store"):
+            assert name in backend.target.operation_names
+            assert backend.target.instruction_supported(name, (0, 1))
+            assert not any(key[0] == name for key in backend._operation_mapping_QUA)
+            assert name not in backend.qm_qasm_basis_gates

@@ -59,6 +59,7 @@ from .backend_utils import (
     look_for_standard_op,
     get_extended_gate_name_mapping,
     control_flow_name_mapping,
+    variadic_builtin_instructions,
     qasm3_keyword_instructions,
     operation_key,
     ensure_circuit_physical,
@@ -345,7 +346,12 @@ class QMBackend(Backend):
         Build the qubit to quantum elements mapping for the backend.
         Should be of the form {qubit_index: (quantum_element1, quantum_element2, ...)}
         """
-        return {i: tuple(channel for channel in qubit.channels) for i, qubit in enumerate(self.machine.active_qubits)}
+        # ``Qubit.channels`` maps attribute names ("xy", "z", ...) to channels; the QUA
+        # element of a channel is its ``name`` (e.g. "q0.xy"), not the dict key.
+        return {
+            i: tuple(channel.name for channel in qubit.channels.values())
+            for i, qubit in enumerate(self.machine.active_qubits)
+        }
 
     @property
     def qubit_index_dict(self):
@@ -534,9 +540,11 @@ class QMBackend(Backend):
         for op, properties in operations_dict.items():
             self._add_or_update_target_instruction(op, name_to_op_dict[op], properties)
 
-        for flow_op_name, control_flow_op in control_flow_name_mapping.items():
-            if flow_op_name not in self._target.operation_names:
-                self._target.add_instruction(control_flow_op, name=flow_op_name)
+        # Control flow, barrier and store are variable-width, so they are added as global
+        # operations (an instruction class, no per-qubit properties).
+        for global_op_name, global_op_class in {**control_flow_name_mapping, **variadic_builtin_instructions}.items():
+            if global_op_name not in self._target.operation_names:
+                self._target.add_instruction(global_op_class, name=global_op_name)
         self._coupling_map = CouplingMap(coupling_map)
 
     @requires_qiskit_pulse
@@ -767,8 +775,9 @@ class QMBackend(Backend):
 
         # Step 2: Sync operations from Target to _operation_mapping_QUA (overwrites existing entries)
         for op_name, op_properties in self.target.items():
-            # Skip control flow operations (they're handled separately)
-            if op_name in CONTROL_FLOW_OP_NAMES:
+            # Skip control flow, barrier and store: qm-qasm lowers them itself, and it ignores
+            # (and deprecates) a "barrier" entry in the operations database.
+            if op_name in CONTROL_FLOW_OP_NAMES or op_name in variadic_builtin_instructions:
                 continue
 
             for qubits, properties in op_properties.items():
@@ -841,9 +850,11 @@ class QMBackend(Backend):
 
         Call this before transpiling a circuit that uses
         :meth:`qiskit.circuit.QuantumCircuit.conditional_play`. Registering several
-        pulses in one call resolves all of them first (so a lookup error registers
-        none) and synchronizes the qm-qasm operation mapping once. Calling this again
-        for an already-registered pulse is safe and just refreshes its Target properties.
+        pulses in one call resolves and validates all of them before touching the
+        Target, so a QuAM lookup error, or a pulse whose operation already exists in the
+        Target without one of the active qubits, registers none of them. The qm-qasm
+        operation mapping is then synchronized once. Calling this again for an
+        already-registered pulse is safe and just refreshes its Target properties.
 
         Args:
             *pulse_names: QuAM pulse labels to register, e.g. ``"x180"``, ``"-y90"``.
@@ -869,6 +880,17 @@ class QMBackend(Backend):
                     qua_pulse_macro=_conditional_play_macro(qubit, pulse_name),
                 )
             resolved[pulse_name] = (operation_name, properties)
+
+        # Check every update against the existing Target before mutating anything, so
+        # _add_or_update_target_instruction cannot fail midway and leave the Target ahead
+        # of the qm-qasm operation mapping.
+        for operation_name, properties in resolved.values():
+            if self.target.instruction_supported(operation_name):
+                for qargs in properties:
+                    if not self.target.instruction_supported(operation_name, qargs):
+                        raise ValueError(
+                            f"Instruction {operation_name} with qargs {qargs} is not supported by the target"
+                        )
 
         for pulse_name, (operation_name, properties) in resolved.items():
             # Every pulse has resolved, so this replacement is certain to happen.
@@ -982,10 +1004,9 @@ class QMBackend(Backend):
             basis_gates=basis_gates,
             disable_constants=True,
         )
+        # Barriers are kept: qm-qasm lowers each one to a QUA ``align`` over the elements
+        # of the barrier's qubits.
         open_qasm_code = exporter.dumps(qc)
-        open_qasm_code = "\n".join(
-            line for line in open_qasm_code.splitlines() if not line.strip().startswith(("barrier",))
-        )
         inputs = None
         if param_table is not None:
             inputs = {}

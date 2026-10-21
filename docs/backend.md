@@ -179,6 +179,13 @@ backend.update_target()  # mandatory — syncs qm_qasm with the Target
 
 Whenever you modify `backend.target`, call `update_target` so both transpilation and `quantum_circuit_to_qua` see the same gate set.
 
+## Barrier and store
+
+Besides the QUA-backed operations above, every QM backend `Target` defines `barrier` and `store` as global, variable-width operations, just as it defines control flow (`if_else`, `box`, ...). They have no QUA macro of their own and never appear in the qm-qasm operations mapping, because qm-qasm lowers them itself:
+
+- `store` (a real-time classical assignment, `qc.store(var, value)`) becomes a QUA assignment.
+- `barrier` becomes a QUA `align` over every element of the barrier's qubits (as given by `backend.qubit_mapping`), so the operations after it start together. Only the elements mapped to those qubits are aligned: map couplers or other shared elements to the qubits they act on if a barrier should align them too.
+
 ## Conditional pulse plays
 
 A conditional play applies one fixed QuAM pulse when a run-time Boolean Qiskit expression is true. It lowers directly to QUA `pulse.play(condition=...)`; it does not introduce a Qiskit `if_test` or an enclosing QUA branch. Build one with `QuantumCircuit.conditional_play(...)` (shown below) or the equivalent standalone `add_conditional_play(qc, ...)` function.
