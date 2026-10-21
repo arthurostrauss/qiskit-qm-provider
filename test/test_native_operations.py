@@ -40,9 +40,7 @@ _CANONICAL_PULSES = [
 ]
 
 
-@pytest.fixture
-def backend(tmp_path, monkeypatch):
-    monkeypatch.setenv("QUAM_STATE_PATH", str(tmp_path))
+def _machine():
     machine = FluxTunableQuam(ports=FEMPortsContainer())
     for index in range(2):
         add_qubit(
@@ -57,8 +55,13 @@ def backend(tmp_path, monkeypatch):
     for qubit in machine.active_qubits:
         for name, amplitude, axis_angle in _CANONICAL_PULSES:
             qubit.xy.operations[name] = SquarePulse(length=40, amplitude=amplitude, axis_angle=axis_angle)
+    return machine
 
-    backend = QMBackend(machine)
+
+@pytest.fixture
+def backend(tmp_path, monkeypatch):
+    monkeypatch.setenv("QUAM_STATE_PATH", str(tmp_path))
+    backend = QMBackend(_machine())
     add_basic_macros(backend)
     backend.register_conditional_play("x180", "-y90")
     return backend
@@ -146,3 +149,14 @@ def test_barrier_compiles_to_an_align_over_its_qubits(backend):
     lines = [line.strip() for line in script.splitlines()]
     first, second = lines.index("play('x180', 'q0.xy')"), lines.index("play('x180', 'q1.xy')")
     assert "align('q0.resonator', 'q0.xy', 'q0.z', 'q1.resonator', 'q1.xy', 'q1.z')" in lines[first:second]
+
+
+def test_flux_tunable_qubit_mapping_extends_the_base_mapping(tmp_path, monkeypatch):
+    """FluxTunableTransmonBackend reuses QMBackend.qubit_mapping and only adds TWPA
+    pumps; this machine has none, so the two mappings coincide."""
+    from qiskit_qm_provider.backend.flux_tunable_transmon_backend import FluxTunableTransmonBackend
+
+    monkeypatch.setenv("QUAM_STATE_PATH", str(tmp_path))
+    machine = _machine()
+
+    assert FluxTunableTransmonBackend(machine).qubit_mapping == QMBackend(machine).qubit_mapping

@@ -713,6 +713,16 @@ class TestEnsureNativeOperations:
         with pytest.raises(ValueError, match=message):
             ensure_native_operations(qc, _x_target([(0,), (1,)]))
 
+    def test_prefixed_name_that_is_not_a_conditional_play_gets_the_generic_error(self):
+        from qiskit.circuit import Instruction
+
+        qc = QuantumCircuit(2)
+        qc.append(Instruction("qm_conditional_play_x180", 1, 0, []), [0])
+        qc.ensure_physical(2)
+
+        with pytest.raises(ValueError, match=r"\['qm_conditional_play_x180'\] that the given Target does not define"):
+            ensure_native_operations(qc, _x_target([(0,), (1,)]))
+
     def test_missing_names_are_listed(self):
         qc = QuantumCircuit(2)
         qc.h(0)

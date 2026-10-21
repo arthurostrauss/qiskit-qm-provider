@@ -230,6 +230,9 @@ def _raise_for_unregistered_conditional_plays(qc: QuantumCircuit, missing_names:
     pulse_names = list(
         dict.fromkeys(operation.pulse_name for operation, _ in _iter_conditional_plays(qc) if operation.name in missing_names)
     )
+    if not pulse_names:
+        # A prefixed name that is not a conditional play: leave it to the generic error.
+        return
     raise ValueError(
         f"ConditionalPlay pulse(s) {', '.join(map(repr, pulse_names))} are not registered. "
         f"Call backend.register_conditional_play({', '.join(map(repr, pulse_names))}) before compiling."
