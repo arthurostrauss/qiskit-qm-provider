@@ -41,6 +41,22 @@ job = estimator.run([(circuit, observables, parameter_values)])
 result = job.result()
 ```
 
+### Which qubits are measured
+
+As in Qiskit, observables span the full physical register: transpile the circuit, then call `observable.apply_layout(circuit.layout)`. The estimator measures exactly the **original qubits that an observable acts on**. These are the final physical positions of the circuit's virtual qubits (`circuit.layout.final_index_layout(filter_ancillas=True)`), or every qubit when the circuit has no layout.
+
+- An original qubit that no gate touches is still measured if an observable acts on it.
+- Ancillas added by the transpiler are never measured, even if routing used them. `apply_layout` pads them with identity.
+- Qubits that carry gates but no observable support are not measured, which saves their basis switch and readout.
+
+### How observables reach the OPX
+
+Each measured qubit gets one basis code per measurement group: 0 for Z or I, 1 for X, 2 for Y. These codes are packed 2 bits per qubit, 15 qubits per 32-bit word. For each parameter binding, the program receives one int row, `[number of groups, packed words...]`, and unpacks it in QUA with shifts and masks.
+
+- **Input streams:** one push per binding. A row shared by every binding is sent once.
+- **IO1/IO2:** only the used part of the row is exchanged.
+- **Compile time (`input_type=None`):** the same rows are preloaded into the program.
+
 ## Options at a glance
 
 | Option | Sampler | Estimator | Meaning |
@@ -72,7 +88,7 @@ Set `max_circuits=None` to disable splitting and always build a single program r
 
 ## Running on IQCC Cloud
 
-When the backend is an IQCC cloud backend, `QMSamplerV2.run()` / `QMEstimatorV2.run()` return an `IQCCSamplerJob` / `IQCCEstimatorJob`. For streamed `input_type`s, the job submits the QUA program together with an auto-generated **sync hook** — a small Python script that runs on the cloud side and pushes the per-pub parameter values (and, for the Estimator, the observable indices) into the running program cycle-by-cycle.
+When the backend is an IQCC cloud backend, `QMSamplerV2.run()` / `QMEstimatorV2.run()` return an `IQCCSamplerJob` / `IQCCEstimatorJob`. For streamed `input_type`s, the job submits the QUA program together with an auto-generated **sync hook** — a small Python script that runs on the cloud side and pushes, in program order, each PUB's parameter rows (and, for the Estimator, its packed observable rows) into the running program.
 
 **The sync hook is fully self-contained.** It imports only:
 
@@ -147,7 +163,7 @@ You can also inspect `job.run_data` after submission without calling `result()` 
 
 Every primitive job and `backend.run()` exposes the compiled QUA programs via `get_program()` (single/default) or by iterating `job.programs` (all chunks). See the [Jobs guide](jobs.md) for the full accessor table (`qm_jobs`, `get_qm_job()`, `get_program()`, `get_result_handles()`, `pubs`, IQCC `run_data`, …).
 
-For [`QMEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.QMEstimatorJob.rst), the compiled execution plans are also available on **`job.runtime_pubs`** — one [`_ExecutionPlan`](apidocs/stubs/qiskit_qm_provider.job.qm_estimator_job._ExecutionPlan.rst) per input PUB, showing how observables were grouped and what will be streamed to the OPX.
+Both primitive jobs also expose their execution plans on **`job.runtime_pubs`**: one `SamplerPlan` or `EstimatorPlan` (from `qiskit_qm_provider.job.primitive_plans`) per input PUB. An `EstimatorPlan` shows the measured qubits, how observables were grouped (`metadata`, `obs_codes`) and the packed rows streamed to the OPX (`obs_rows`).
 
 ```python
 from qm import generate_qua_script

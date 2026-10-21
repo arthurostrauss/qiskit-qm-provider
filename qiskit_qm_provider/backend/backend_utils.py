@@ -26,6 +26,7 @@ from __future__ import annotations
 import warnings
 from typing import Any, List, TYPE_CHECKING, Dict, Type
 
+import numpy as np
 from qiskit.circuit import QuantumCircuit, Parameter
 from qiskit.circuit.controlflow import (
     ControlFlowOp,
@@ -602,27 +603,46 @@ def logically_active_qubits(circuit):
     return sorted(active, key=lambda q: circuit.find_bit(q).index)
 
 
+def estimator_measured_qubits(circuit: QuantumCircuit, observables) -> list:
+    """Qubits the estimator must measure for ``observables`` on ``circuit``, by circuit index.
+
+    Observables span the full physical register (Qiskit's ``apply_layout`` convention). The
+    measured qubits are the *original* qubits an observable acts on non-trivially: the final
+    physical positions of the circuit's virtual qubits (``layout.final_index_layout`` with
+    ancillas filtered out), or every qubit when the circuit has no layout. Support on ancillas
+    is ignored, and an original qubit is measured even when no gate touches it. If no original
+    qubit is observed, the first original qubit is measured (as in Qiskit's
+    ``BackendEstimatorV2``).
+    """
+    from qiskit.primitives.containers.observables_array import ObservablesArray
+
+    if circuit.layout is not None:
+        original = sorted(circuit.layout.final_index_layout(filter_ancillas=True))
+    else:
+        original = list(range(circuit.num_qubits))
+    observed = set()
+    for observable in ObservablesArray.coerce(observables).ravel().tolist():
+        for label in observable:
+            pauli = Pauli(label)
+            observed.update(int(i) for i in np.flatnonzero(pauli.x | pauli.z))
+    measured = [i for i in original if i in observed] or original[:1]
+    return [circuit.qubits[i] for i in measured]
+
+
 def get_non_trivial_observables(observables: PauliList, active_qubit_indices: List[int]) -> PauliList:
-    """Restrict observables to logically active qubits.
+    """Restrict observables to the given qubits.
 
     Args:
         observables: Pauli observables defined on the full qubit register.
-        active_qubit_indices: Indices of qubits that participate in the circuit.
+        active_qubit_indices: Indices of the qubits to keep, in the order of the result.
 
     Returns:
-        A :class:`~qiskit.quantum_info.PauliList` with inactive qubits replaced
-        by identity.
+        A :class:`~qiskit.quantum_info.PauliList` on ``len(active_qubit_indices)`` qubits whose
+        qubit ``j`` is qubit ``active_qubit_indices[j]`` of the input; other qubits are dropped.
     """
-    new_observables = []
-    for observable in observables:
-        label = observable.to_label()
-        new_pauli_label = ""
-        for j in range(observable.num_qubits):
-            if j in active_qubit_indices:
-                new_pauli_label += label[-j - 1]
-        new_observables.append(Pauli(new_pauli_label))
-
-    return PauliList(new_observables)
+    observables = PauliList(observables)
+    indices = list(active_qubit_indices)
+    return PauliList.from_symplectic(observables.z[:, indices], observables.x[:, indices], observables.phase)
 
 
 def get_qua_script(

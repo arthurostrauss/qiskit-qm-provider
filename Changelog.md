@@ -15,7 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Array binding consistency** — sampler/estimator PUBs now pack vector values by parameter identity for compile-time assignment, local streaming and IQCC hooks, zero-filling unused vector entries. Ambiguous input names are rejected, dictionary bindings accept whole vectors in array mode, and singleton array row copies now work.
+- **Array binding consistency** — sampler/estimator PUBs bind vector values by parameter identity for compile-time assignment, local streaming and IQCC hooks, zero-filling unused vector entries. Ambiguous input names are rejected, dictionary bindings accept whole vectors in array mode (and string keys such as `"t[2]"` or `"t"` follow the same rules as the objects), and singleton array row copies now work.
+- **Dense parameter rows for primitives** — with `INPUT_STREAM`/`IO1`/`IO2`, each binding now travels as one raw row of `len(circuit.parameters)` floats (one push and one advance per binding instead of one per parameter), scattered in QUA into the circuit's fields; only used entries are assigned. On stock Qiskit, vector fields are created only for elements the circuit uses (matching the exporter).
+- **Execution plans for both primitives** — `QMSamplerJob` and `QMEstimatorJob` build one plan per PUB (`SamplerPlan` / `EstimatorPlan` in `qiskit_qm_provider.job.primitive_plans`, sharing a `PrimitivePlan` base), exposed on `job.runtime_pubs`. The QUA builders (`sampler_program`, `estimator_program`, `plan_*_programs`) and the sync-hook generators now take plans; both primitives share one sync-hook template. `_ExecutionPlan` remains as an alias of `EstimatorPlan`.
+- **Packed estimator observables** — per-qubit basis codes are packed 2 bits per qubit (15 qubits per word) into one int row per binding, `[n_groups, words...]`, unpacked in QUA with shifts and masks. This replaces one push per qubit per observable plus the shared `obs_length_var`; IO1/IO2 exchange only the used part of a row, and a row shared by every binding is sent once. Estimator observables over OPNIC now raise `NotImplementedError`.
+- **Estimator measured qubits** — the estimator now measures the original qubits that an observable acts on (from `circuit.layout`, ancillas excluded), including original qubits no gate touches, instead of every qubit carrying a gate. New helper `backend_utils.estimator_measured_qubits`.
+- **`job/_pub_parameters.py`** renamed to `job/pub_parameters.py` (internal; not exported).
 - **`ParameterVector` handling in `ParameterTable.from_qiskit`** — when the installed Qiskit provides `types.Array`, a `ParameterVector` becomes **one** array `Parameter` named after the vector, matching the branch's OpenQASM 3 export (`input array[float[64], N]`). Stock Qiskit keeps the previous per-element `_name_i_` fields. The mode is detected automatically from `types.Array` (no switch: the branch always exports full-length vector arrays, even when only some elements are used). In array mode the full vector is declared whenever the `filter_function` keeps any of its used elements. Names are used verbatim as OpenQASM 3 identifiers: pick ASCII `Parameter`/`ParameterVector` names that are not gate names or OpenQASM keywords.
 - **Qiskit requirement** tightened from `qiskit<3` to `qiskit>=2,<3`.
 - **quam-builder** — the installation instructions now point to `v0.6.0`, which needs `qualang-tools>=0.22.0` and `quam>=0.4.0`. Both are compatible with this package's requirements.
@@ -23,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **TLS-secured QM SaaS connection** — `QmSaasProvider.get_backend()` now builds its `QuantumMachinesManager` with `QuantumMachinesManager(**instance.qmm_connection_params)`, which adds the TLS credentials required by the QM cloud simulator from QOP 3.8.1 onwards (connections without them fail after the October 8th, 2026 server update). Replaces the deprecated `host`/`port`/`default_connection_headers` form.
 - **`qm-saas` extra** now requires `qm-saas>=1.2.0,<2` (first release exposing `qmm_connection_params`).
+
+### Fixed
+
+- **Estimator expectation values on multi-qubit observables** — three ordering errors combined to give wrong results whenever an observable acted on more than one qubit: `get_non_trivial_observables` reversed the qubit order of the basis rotations, `counts_from_estimator_stream` read `__c` big-endian, and measured Paulis were compacted with Qiskit's per-basis measurement indices although `__c` holds every measured qubit. Grouping now happens once per binding, so metadata, basis codes and the `__c` stream share one order (`abelian_grouping=False` no longer misreads or crashes).
+- **Estimator result shape** — parameter indices are broadcast against the observables before post-processing, as in Qiskit; PUBs with more observables than bindings (e.g. several observables, no parameters) no longer fail in `result()`.
+- **Estimator run options** — `simulate` and `compiler_options` nested under the estimator's `run_options` now reach program submission.
+- **IQCC estimator sync hook** — attached whenever a PUB streams inputs, including PUBs that stream observables but have no circuit parameters.
+- **Estimator table names** — tables are named by PUB index, fixing duplicate pool registration when two PUBs share a circuit name.
 
 ## [0.3.5] - 2026-09-23
 

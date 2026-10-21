@@ -255,28 +255,19 @@ def _mixed_vector_pub():
     return SamplerPub(qc, BindingsArray({(vec[2], scalar): [[0.2, 0.1]]}), shots=2)
 
 
-def _push_with(primitive, pub, circuit_table, delivery_table):
-    from qiskit_qm_provider.job.qm_sampler_job import QMSamplerJob
-    from qiskit_qm_provider.job.qm_estimator_job import QMEstimatorJob
+def _plan(primitive, pub, circuit_table, delivery_table):
+    from qiskit_qm_provider.job.primitive_plans import EstimatorPlan, SamplerPlan
 
-    backend = SimpleNamespace(qm=None)
-    if primitive == "sampler":
-        job = SimpleNamespace(
-            _pubs=[pub], _param_tables=[delivery_table], _circuit_tables=[circuit_table], _backend=backend
-        )
-        QMSamplerJob._push_parameters(job, None, [0])
-    else:
-        job = SimpleNamespace(_backend=backend)
-        plan = SimpleNamespace(
-            pub=pub, param_table=delivery_table, circuit_table=circuit_table,
-            observables_var=SimpleNamespace(input_type=None),
-        )
-        QMEstimatorJob._push_plan_data(job, None, plan)
+    return (SamplerPlan if primitive == "sampler" else EstimatorPlan)(pub, 0, circuit_table, delivery_table)
+
+
+def _push_with(primitive, pub, circuit_table, delivery_table):
+    _plan(primitive, pub, circuit_table, delivery_table).push(None)
 
 
 @pytest.mark.parametrize("primitive", ["sampler", "estimator"])
 def test_vector_pub_dense_row_streaming(array_mode, primitive, monkeypatch):
-    from qiskit_qm_provider.job._pub_parameters import build_pub_tables
+    from qiskit_qm_provider.job.pub_parameters import build_pub_tables
 
     pub = _mixed_vector_pub()
     circuit_table, delivery_table = build_pub_tables(pub.circuit, InputType.INPUT_STREAM, "pt")
@@ -304,20 +295,17 @@ def test_vector_pub_packed_streaming(array_mode, primitive, monkeypatch):
 @pytest.mark.parametrize("primitive", ["sampler", "estimator"])
 def test_vector_pub_qua_scatter(array_mode, primitive, input_type, monkeypatch):
     from qiskit_qm_provider.job import qua_programs
-    from qiskit_qm_provider.job._pub_parameters import build_pub_tables
+    from qiskit_qm_provider.job.pub_parameters import build_pub_tables
 
     pub = _mixed_vector_pub()
     circuit_table, delivery_table = build_pub_tables(pub.circuit, input_type, "pt")
     monkeypatch.setattr(qua_programs, "_process_circuit", lambda *args, **kwargs: None)
     monkeypatch.setattr(qua_programs, "_process_observables_with_circuit", lambda *args, **kwargs: None)
+    plan = _plan(primitive, pub, circuit_table, delivery_table)
     with qua.program() as prog:
         if primitive == "sampler":
-            qua_programs._process_sampler_pub(pub, None, delivery_table, circuit_table)
+            qua_programs._process_sampler_pub(plan, None)
         else:
-            plan = SimpleNamespace(
-                pub=pub, param_table=delivery_table, circuit_table=circuit_table,
-                observables_var=SimpleNamespace(input_type=InputType.INPUT_STREAM),
-            )
             qua_programs._process_estimator_pub(plan, None)
     script = generate_qua_script(prog)
     # Only the two bound entries are assigned per binding; unused vector elements are not rewritten.
@@ -408,7 +396,7 @@ def test_dictionary_string_keys_follow_object_rules(array_mode):
 
 def test_unmarked_table_is_not_a_row(monkeypatch):
     # A separately built table that is not the circuit table must not be mistaken for a dense row.
-    from qiskit_qm_provider.job._pub_parameters import build_pub_tables, is_row_delivery
+    from qiskit_qm_provider.job.pub_parameters import build_pub_tables, is_row_delivery
 
     pub = _mixed_vector_pub()
     circuit_table, row_table = build_pub_tables(pub.circuit, InputType.INPUT_STREAM, "pt")
@@ -422,12 +410,12 @@ def test_unmarked_table_is_not_a_row(monkeypatch):
 
 
 def test_row_table_rejects_mismatched_circuit():
-    from qiskit_qm_provider.job._pub_parameters import build_pub_tables, push_pub_rows
+    from qiskit_qm_provider.job.pub_parameters import build_pub_tables, delivery_rows
 
     pub = _mixed_vector_pub()
     _, row_table = build_pub_tables(pub.circuit, InputType.INPUT_STREAM, "pt")
     with pytest.raises(ValueError, match="does not match the circuit"):
-        push_pub_rows(pub, row_table, row_table, job=None)
+        delivery_rows(pub, row_table, row_table)
 
 
 def test_estimator_row_tables_named_by_plan_index():

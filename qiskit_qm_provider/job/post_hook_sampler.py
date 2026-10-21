@@ -15,46 +15,19 @@
 """Sync-hook generation for the sampler.
 
 The emitted hook depends only on ``iqcc_cloud_client.runtime.get_qm_job`` — it does
-not import ``qiskit_qm_provider`` or ``numpy``. Parameter tables are reduced to plain
-data here and the push logic is rendered from a Jinja template.
+not import ``qiskit_qm_provider`` or ``numpy``. Each plan reduces its pushes to plain
+data and the push loop is rendered from a Jinja template.
 
 Author: Arthur Strauss
 Date: 2026-02-08
 """
 
-from typing import List, Optional
+from typing import List
 
-from qiskit.primitives.containers.sampler_pub import SamplerPub
-
-from qiskit_qm_provider.parameter_table import ParameterTable
-from ._pub_parameters import delivery_rows
-from ._sync_hook_common import jinja_env, serialize_table, to_py_literal
+from ._sync_hook_common import render_sync_hook
+from .primitive_plans import SamplerPlan
 
 
-def generate_sync_hook_sampler(
-    pubs: List[SamplerPub],
-    parameter_tables: List[ParameterTable],
-    circuit_tables: Optional[List[Optional[ParameterTable]]] = None,
-) -> str:
-    """Generate the sync hook code for the sampler.
-
-    ``parameter_tables`` are the delivery tables; ``circuit_tables`` (default: the same)
-    tell whether a PUB's bindings travel as dense rows (see ``_pub_parameters``).
-    """
-    circuit_tables = circuit_tables if circuit_tables is not None else parameter_tables
-    pubs_data = []
-    for pub, parameter_table, circuit_table in zip(pubs, parameter_tables, circuit_tables):
-        table = serialize_table(parameter_table)
-        if table is None:
-            pubs_data.append(None)
-            continue
-        pubs_data.append(
-            {
-                "input_type": table["input_type"],
-                "params": table["params"],
-                "values": delivery_rows(pub, circuit_table, parameter_table),
-            }
-        )
-
-    template = jinja_env().get_template("sync_hook_sampler.py.jinja")
-    return template.render(pubs_literal=to_py_literal(pubs_data))
+def generate_sync_hook_sampler(plans: List[SamplerPlan]) -> str:
+    """Generate the sync hook code pushing the sampler plans' streamed inputs."""
+    return render_sync_hook(plans)

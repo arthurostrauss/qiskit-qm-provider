@@ -15,9 +15,9 @@
 """Sync-hook generation for estimator jobs (e.g. IQCC cloud).
 
 The emitted hook depends only on ``iqcc_cloud_client.runtime.get_qm_job`` — it does
-not import ``qiskit_qm_provider`` or ``numpy``. Execution plans (parameters and
-observable indices) are reduced to plain data here and the push logic is rendered
-from a Jinja template.
+not import ``qiskit_qm_provider`` or ``numpy``. Each plan reduces its pushes
+(parameter rows and packed observable rows) to plain data and the push loop is
+rendered from a Jinja template.
 
 Author: Arthur Strauss
 Date: 2026-02-08
@@ -25,43 +25,10 @@ Date: 2026-02-08
 
 from typing import List
 
-from qiskit_qm_provider.parameter_table import Parameter as QuaParameter
-from ._pub_parameters import delivery_rows
-from ._sync_hook_common import jinja_env, serialize_table, to_py_literal
-from .qm_estimator_job import _ExecutionPlan
+from ._sync_hook_common import render_sync_hook
+from .primitive_plans import EstimatorPlan
 
 
-def _serialize_obs_indices(obs_indices: List[List[tuple]]) -> list:
-    """Convert nested obs indices to plain Python lists of ``int``."""
-    return [[[int(v) for v in obs_tuple] for obs_tuple in inner_list] for inner_list in obs_indices]
-
-
-def generate_sync_hook_estimator(execution_plans: List[_ExecutionPlan], obs_length_var: QuaParameter) -> str:
-    """Generate the sync hook code for the estimator."""
-    plans_data = []
-    for plan in execution_plans:
-        param_table = serialize_table(plan.param_table)
-        if param_table is not None:
-            parameter_values = delivery_rows(plan.pub, plan.circuit_table, plan.param_table)
-        else:
-            parameter_values = []
-        plans_data.append(
-            {
-                "param_table": param_table,
-                "observables_var": serialize_table(plan.observables_var),
-                "parameter_values": parameter_values,
-                "obs_indices": _serialize_obs_indices(plan.obs_indices),
-            }
-        )
-
-    obs_length_var_data = {
-        "name": obs_length_var.name,
-        "input_type": obs_length_var.input_type.value if obs_length_var.input_type is not None else None,
-        "qua_type": "int",
-    }
-
-    template = jinja_env().get_template("sync_hook_estimator.py.jinja")
-    return template.render(
-        plans_literal=to_py_literal(plans_data),
-        obs_length_var_literal=to_py_literal(obs_length_var_data),
-    )
+def generate_sync_hook_estimator(plans: List[EstimatorPlan]) -> str:
+    """Generate the sync hook code pushing the estimator plans' streamed inputs."""
+    return render_sync_hook(plans)

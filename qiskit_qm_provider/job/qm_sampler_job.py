@@ -37,7 +37,7 @@ from qm.jobs.running_qm_job import RunningQmJob
 from ..backend import QMBackend
 from ..backend.backend_utils import measurement_output_bit_sizes, require_classified_meas_level
 from ..parameter_table import InputType, ParameterPool
-from ._pub_parameters import build_pub_tables, push_pub_rows
+from .primitive_plans import SamplerPlan
 from .iqcc_job_mixin import IQCCJobMixin
 from .qm_execution_options import (
     await_running_jobs,
@@ -81,17 +81,10 @@ class QMSamplerJob(QMPrimitiveJob):
             context="QMSamplerJob",
         )
         ParameterPool.reset()
-        # (circuit table, delivery table) per pub; see _pub_parameters.
-        tables = [build_pub_tables(pub.circuit, self._input_type, f"param_table_{i}") for i, pub in enumerate(self._pubs)]
-        self._circuit_tables = [circuit_table for circuit_table, _ in tables]
-        self._param_tables = [delivery_table for _, delivery_table in tables]
-        programs, self._chunk_layout = plan_sampler_programs(
-            self._backend,
-            self._pubs,
-            self._param_tables,
-            self._circuit_tables,
-            **self.metadata,
-        )
+        self._plans: List[SamplerPlan] = [
+            SamplerPlan.from_pub(pub, self._input_type, i) for i, pub in enumerate(self._pubs)
+        ]
+        programs, self._chunk_layout = plan_sampler_programs(self._backend, self._plans, **self.metadata)
         self._programs = programs
         self._locator = compute_locator(self._chunk_layout)
 
@@ -139,13 +132,16 @@ class QMSamplerJob(QMPrimitiveJob):
         for job, chunk in zip(self._qm_jobs, self._chunk_layout):
             self._push_parameters(job, chunk)
 
+    @property
+    def runtime_pubs(self) -> List[SamplerPlan]:
+        """Execution plans for this sampler job: one
+        :class:`~qiskit_qm_provider.job.primitive_plans.SamplerPlan` per input PUB."""
+        return self._plans
+
     def _push_parameters(self, qm_job, chunk: List[int]) -> None:
         """Stream circuit parameters to the OPX for the given chunk of pub indices."""
         for global_idx in chunk:
-            pub = self._pubs[global_idx]
-            param_table = self._param_tables[global_idx]
-            if param_table is not None and param_table.input_type is not None:
-                push_pub_rows(pub, self._circuit_tables[global_idx], param_table, qm_job, self._backend.qm)
+            self._plans[global_idx].push(qm_job, self._backend.qm)
 
     def result(self) -> PrimitiveResult[SamplerPubResult]:
         """Build and return classified measurement counts for all pubs.
@@ -193,14 +189,11 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
         self._qm_jobs = []
 
         for prog, chunk in zip(programs, self._chunk_layout):
-            chunk_pubs = [self._pubs[g] for g in chunk]
-            chunk_tables = [self._param_tables[g] for g in chunk]
+            chunk_plans = [self._plans[g] for g in chunk]
 
             sync_hook_path = None
-            if any(t is not None and t.input_type is not None for t in chunk_tables):
-                sync_hook_code = generate_sync_hook_sampler(
-                    chunk_pubs, chunk_tables, [self._circuit_tables[g] for g in chunk]
-                )
+            if any(p.streams_inputs for p in chunk_plans):
+                sync_hook_code = generate_sync_hook_sampler(chunk_plans)
                 with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
                     f.write(sync_hook_code)
                     sync_hook_path = f.name

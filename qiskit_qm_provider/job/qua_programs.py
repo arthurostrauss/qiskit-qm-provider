@@ -25,55 +25,11 @@ from ..backend.backend_utils import has_conflicting_calibrations
 from qiskit import QuantumCircuit
 from qm import Program
 from qm.qua import *
-from qiskit.primitives.containers.sampler_pub import SamplerPub
-from ..parameter_table import ParameterTable, QUA2DArray
-from ._pub_parameters import assign_qiskit_row, load_pub_row
+from ..parameter_table import ParameterTable
 from typing import Dict, List, Optional, TYPE_CHECKING
-import numpy as np
 
 if TYPE_CHECKING:
-    from .qm_estimator_job import _ExecutionPlan
-
-
-def _estimator_process_param_table(plan: _ExecutionPlan):
-    if plan.circuit_table is not None:
-        return [plan.circuit_table, plan.observables_var]
-    return plan.observables_var
-
-
-def _obs_indices_flat(plan: _ExecutionPlan) -> np.ndarray:
-    return np.vstack([np.array(group, dtype=np.int32) for group in plan.obs_indices])
-
-
-def _declare_obs_indices_all(plan: _ExecutionPlan, name: str) -> QUA2DArray:
-    obs_indices_all = QUA2DArray(name, _obs_indices_flat(plan), qua_type=int)
-    obs_indices_all.declare()
-    return obs_indices_all
-
-
-def _declare_compile_time_obs_arrays(plan: _ExecutionPlan, name_prefix: str):
-    """Length, offset, and index tables for a compile-time parameter sweep."""
-    obs_lengths = np.array([len(group) for group in plan.obs_indices], dtype=np.int32)
-    obs_offsets = np.concatenate([[0], np.cumsum(obs_lengths[:-1])]).astype(np.int32)
-    obs_lengths_qua = QUA2DArray(
-        f"obs_lengths_{name_prefix}",
-        obs_lengths.reshape(-1, 1),
-        qua_type=int,
-    )
-    obs_offsets_qua = QUA2DArray(
-        f"obs_offsets_{name_prefix}",
-        obs_offsets.reshape(-1, 1),
-        qua_type=int,
-    )
-    obs_indices_all = QUA2DArray(
-        f"obs_indices_{name_prefix}",
-        _obs_indices_flat(plan),
-        qua_type=int,
-    )
-    obs_lengths_qua.declare()
-    obs_offsets_qua.declare()
-    obs_indices_all.declare()
-    return obs_lengths_qua, obs_offsets_qua, obs_indices_all
+    from .primitive_plans import EstimatorPlan, SamplerPlan
 
 
 def _process_circuit(
@@ -104,230 +60,68 @@ def _process_circuit(
     return outputs
 
 
-def _process_sampler_pub(
-    pub: SamplerPub,
-    backend: QMBackend,
-    param_table: Optional[ParameterTable] = None,
-    circuit_table: Optional[ParameterTable] = None,
-    **kwargs,
-):
-    """
-    Process the given PUB with the given backend.
-    If the parameter table is not provided, the circuit is processed without parameters.
-    If the parameter table is provided, the circuit is processed with parameters.
-    ``param_table`` is the delivery table and ``circuit_table`` the fields the circuit reads
-    (defaults to ``param_table``); see :mod:`._pub_parameters`.
-    This is a QUA macro that is used to process the circuit.
-    """
-    if param_table is None:
-        outputs = _process_circuit(
-            pub.circuit,
-            backend,
-            pub.shots,
-            **kwargs,
-        )
-    else:
-        circuit_table = circuit_table if circuit_table is not None else param_table
-        circuit_table.declare()
-        if param_table is not circuit_table:
-            param_table.declare()
-        p = declare(int)
-
-        with for_(p, 0, p < pub.parameter_values.ravel().size, p + 1):
-            if param_table.input_type is None:
-                # Declare the parameters at compile time
-                param_values_qua = QUA2DArray(
-                    "param_values", pub.parameter_values.ravel().as_array(pub.circuit.parameters)
-                )
-                param_values_qua.declare()
-                assign_qiskit_row(pub.circuit, circuit_table, param_values_qua[p])
-            else:
-                load_pub_row(pub.circuit, circuit_table, param_table)
-            outputs = _process_circuit(
-                pub.circuit,
-                backend,
-                pub.shots,
-                circuit_table,
-                **kwargs,
-            )
+def _process_sampler_pub(plan: SamplerPlan, backend: QMBackend, **kwargs):
+    """QUA macro: run one sampler PUB, looping over its bindings when it has parameters."""
+    if plan.circuit_table is None:
+        return _process_circuit(plan.pub.circuit, backend, plan.shots, **kwargs)
+    plan.declare_params()
+    p = declare(int)
+    with for_(p, 0, p < plan.num_bindings, p + 1):
+        plan.load_params(p)
+        outputs = _process_circuit(plan.pub.circuit, backend, plan.shots, plan.circuit_table, **kwargs)
     return outputs
 
 
-def sampler_program(
-    backend: QMBackend,
-    pubs: List[SamplerPub],
-    param_tables: List[ParameterTable],
-    circuit_tables: Optional[List[Optional[ParameterTable]]] = None,
-    **kwargs,
-) -> Program:
-    """Return the QUA program for the given PUBs."""
-    circuit_tables = circuit_tables if circuit_tables is not None else param_tables
-    circuits = [pub.circuit for pub in pubs]
-    num_circuits = len(circuits)
+def sampler_program(backend: QMBackend, plans: List[SamplerPlan], **kwargs) -> Program:
+    """Return the QUA program for the given sampler plans."""
     # TODO: Handle OPNIC case where circuits share parameters (loading might not work)
     outputs_tables = []
     with program() as sampler_prog:
         backend.init_macro()
-
-        for i in range(num_circuits):
-            outputs = _process_sampler_pub(
-                pubs[i],
-                backend,
-                param_tables[i],
-                circuit_tables[i],
-                **kwargs,
-            )
-            outputs_tables.append(outputs)
+        for plan in plans:
+            outputs_tables.append(_process_sampler_pub(plan, backend, **kwargs))
         with stream_processing():
             for i, outputs in enumerate(outputs_tables):
                 for creg_name, field in outputs.table.items():
-                    field.stream.buffer(pubs[i].shots).save_all(f"{creg_name}_{i}")
+                    field.stream.buffer(plans[i].shots).save_all(f"{creg_name}_{i}")
     return sampler_prog
 
 
-def _process_observables_with_circuit(
-    plan: _ExecutionPlan,
-    backend: QMBackend,
-    **kwargs,
-):
-    """
-    QUA macro to process observables and execute the circuit.
-    Handles both cases where observables_var.input_type is None (compile-time)
-    or not None (runtime input).
-
-    Args:
-        plan: The ExecutionPlan containing the circuit
-        backend: The QMBackend to use
-        observables_var: ParameterTable for observables
-        param_table: Optional additional ParameterTable to pass to _process_circuit
-        **kwargs: Additional arguments for _process_circuit
-    """
-    # obs_length_var is a single Parameter shared by every plan in the enclosing
-    # QUA program (one program can hold several plans when chunked). It is
-    # declared once, up front, by the caller (estimator_program) — declaring it
-    # again here per-plan would raise "Variable already declared" starting on the
-    # second plan. Only rcv() (which loads a fresh value each time) belongs here.
-    obs_length_var = kwargs.pop("obs_length_var", None)
-    param_binding_var = kwargs.pop("param_binding_var", None)
-    obs_lengths_qua = kwargs.pop("obs_lengths_qua", None)
-    obs_offsets_qua = kwargs.pop("obs_offsets_qua", None)
-    obs_indices_all = kwargs.pop("obs_indices_all", None)
-    obs_idx = declare(int)
-    num_qubits = len(plan.active_qubit_indices)
-    plan.observables_var.declare()
-
-    process_param_table = _estimator_process_param_table(plan)
-    circuit_kwargs = {
-        "param_table": process_param_table,
-        "compute_state_int": False,
-    }
-
-    if plan.observables_var.input_type is None:
-        per_binding = param_binding_var is not None and obs_lengths_qua is not None
-        if obs_indices_all is None:
-            obs_indices_all = _declare_obs_indices_all(plan, "obs_indices_all")
-        obs_loop_count = (
-            obs_lengths_qua[param_binding_var, 0] if per_binding else obs_indices_all.n_rows
-        )
-
-        with for_(obs_idx, 0, obs_idx < obs_loop_count, obs_idx + 1):
-            obs_row = (
-                obs_offsets_qua[param_binding_var, 0] + obs_idx if per_binding else obs_idx
-            )
-            plan.observables_var.assign_parameters(
-                {f"obs_{i}": obs_indices_all[obs_row, i] for i in range(num_qubits)}
-            )
-            outputs = _process_circuit(plan.pub.circuit, backend, plan.shots, **circuit_kwargs)
-    else:
-        if obs_length_var is not None:
-            obs_length_var.rcv()
-        with for_(obs_idx, 0, obs_idx < obs_length_var.var, obs_idx + 1):
-            plan.observables_var.rcv()
-            outputs = _process_circuit(plan.pub.circuit, backend, plan.shots, **circuit_kwargs)
-
+def _process_observables_with_circuit(plan: EstimatorPlan, backend: QMBackend, p, **kwargs):
+    """QUA macro: for binding ``p``, run the circuit once per observable group of its row."""
+    _, obs_idx, _ = plan._obs_scratch
+    row = plan.load_obs_row(p, before_loop=False)
+    tables = [t for t in (plan.circuit_table, plan.obs_table) if t is not None]
+    with for_(obs_idx, 0, obs_idx < row[0], obs_idx + 1):
+        plan.assign_observable(row, obs_idx)
+        outputs = _process_circuit(plan.pub.circuit, backend, plan.shots, tables, compute_state_int=False, **kwargs)
     return outputs
 
 
-def _process_estimator_pub(
-    plan: _ExecutionPlan,
-    backend: QMBackend,
-    **kwargs,
-):
-    """
-    Process the given EstimatorPub with the given backend.
-    If the parameter table is not provided, the circuit is processed without parameters.
-    If the parameter table is provided, the circuit is processed with parameters.
-    This is a QUA macro that is used to process the circuit.
-    """
-    if plan.param_table is None:
-        # Process observables only (no additional param_table)
-        outputs = _process_observables_with_circuit(
-            plan,
-            backend,
-            **kwargs,
-        )
-    else:
-        p = declare(int)
-        plan.circuit_table.declare()
-        if plan.param_table is not plan.circuit_table:
-            plan.param_table.declare()
-        param_values_qua = None
-        obs_lengths_qua = obs_offsets_qua = obs_indices_all = None
-        if plan.param_table.input_type is None:
-            param_values_qua = QUA2DArray(
-                f"param_values_{plan.param_table.name}",
-                plan.pub.parameter_values.ravel().as_array(plan.pub.circuit.parameters),
-            )
-            param_values_qua.declare()
-            if plan.observables_var.input_type is None:
-                obs_lengths_qua, obs_offsets_qua, obs_indices_all = _declare_compile_time_obs_arrays(
-                    plan, plan.param_table.name
-                )
+def _process_estimator_pub(plan: EstimatorPlan, backend: QMBackend, **kwargs):
+    """QUA macro: run one estimator PUB, binding-major, one circuit run per measurement group.
 
-        with for_(p, 0, p < plan.pub.parameter_values.ravel().size, p + 1):
-            if plan.param_table.input_type is None:
-                assign_qiskit_row(plan.pub.circuit, plan.circuit_table, param_values_qua[p])
-            else:
-                load_pub_row(plan.pub.circuit, plan.circuit_table, plan.param_table)
-
-            outputs = _process_observables_with_circuit(
-                plan,
-                backend,
-                param_binding_var=p if obs_lengths_qua is not None else None,
-                obs_lengths_qua=obs_lengths_qua,
-                obs_offsets_qua=obs_offsets_qua,
-                obs_indices_all=obs_indices_all,
-                **kwargs,
-            )
+    Per binding: load its parameters, then its packed observable row (a row shared by every
+    binding is received once, before the loop), and unpack each group into the ``obs_j``
+    inputs before running the circuit. This matches :meth:`EstimatorPlan.push` order.
+    """
+    plan.declare_params()
+    plan.declare_observables()
+    plan.load_obs_row(None, before_loop=True)
+    p = declare(int)
+    with for_(p, 0, p < plan.num_bindings, p + 1):
+        plan.load_params(p)
+        outputs = _process_observables_with_circuit(plan, backend, p, **kwargs)
     return outputs
 
 
-def estimator_program(backend: QMBackend, execution_plans: List[_ExecutionPlan], **kwargs) -> Program:
-    """
-    Return the QUA program for the estimator primitive based on pre-computed plans.
-    """
-    # obs_length_var (when provided) is a single Parameter shared across every plan
-    # processed in this program — it must be declared exactly once per program, not
-    # once per plan, otherwise the second plan's declaration raises "Variable
-    # already declared". Declare it here, before the per-plan loop, and forward the
-    # already-declared object down so each plan can still rcv() a fresh value.
-    obs_length_var = kwargs.pop("obs_length_var", None)
-    # The execution plans are generated in the 'submit' method and passed here.
+def estimator_program(backend: QMBackend, plans: List[EstimatorPlan], **kwargs) -> Program:
+    """Return the QUA program for the given estimator plans."""
     outputs_tables = []
     with program() as estimator_prog:
         backend.init_macro()
-        if obs_length_var is not None:
-            obs_length_var.declare()
-
-        # Loop over each PUB/circuit
-        for plan in execution_plans:
-            outputs = _process_estimator_pub(
-                plan,
-                backend,
-                obs_length_var=obs_length_var,
-                **kwargs,
-            )
-            outputs_tables.append(outputs)
+        for plan in plans:
+            outputs_tables.append(_process_estimator_pub(plan, backend, **kwargs))
 
         with stream_processing():
             for i, outputs in enumerate(outputs_tables):
@@ -335,9 +129,9 @@ def estimator_program(backend: QMBackend, execution_plans: List[_ExecutionPlan],
                     bool_stream = field.stream.boolean_to_int()
                     # Array register → (shots, n_bits); scalar output (length 0) → (shots,).
                     if field.is_array:
-                        bool_stream.buffer(execution_plans[i].shots, field.length).save_all(f"{creg_name}_{i}")
+                        bool_stream.buffer(plans[i].shots, field.length).save_all(f"{creg_name}_{i}")
                     else:
-                        bool_stream.buffer(execution_plans[i].shots).save_all(f"{creg_name}_{i}")
+                        bool_stream.buffer(plans[i].shots).save_all(f"{creg_name}_{i}")
 
     return estimator_prog
 
@@ -454,9 +248,7 @@ def plan_run_programs(
 
 def plan_sampler_programs(
     backend: QMBackend,
-    pubs: List[SamplerPub],
-    param_tables: List[ParameterTable],
-    circuit_tables: Optional[List[Optional[ParameterTable]]] = None,
+    plans: List[SamplerPlan],
     **kwargs,
 ) -> tuple[List[Program], List[List[int]]]:
     """Plan the QUA program(s) for ``QMSamplerV2``.
@@ -470,37 +262,25 @@ def plan_sampler_programs(
 
     Args:
         backend: The QMBackend to use.
-        pubs: List of SamplerPub objects.
-        param_tables: Matching list of delivery ParameterTables (one per pub).
-        circuit_tables: Matching list of circuit ParameterTables; defaults to ``param_tables``.
+        plans: One :class:`~qiskit_qm_provider.job.primitive_plans.SamplerPlan` per pub.
         **kwargs: Forwarded to :func:`sampler_program`.
 
     Returns:
         Tuple of (list of QUA programs, chunk layout).
     """
-    chunk_layout = compute_chunk_layout(len(pubs), max_circuits=backend.options.max_circuits)
-    circuit_tables = circuit_tables if circuit_tables is not None else param_tables
-    programs = [
-        sampler_program(
-            backend,
-            [pubs[g] for g in chunk],
-            [param_tables[g] for g in chunk],
-            [circuit_tables[g] for g in chunk],
-            **kwargs,
-        )
-        for chunk in chunk_layout
-    ]
+    chunk_layout = compute_chunk_layout(len(plans), max_circuits=backend.options.max_circuits)
+    programs = [sampler_program(backend, [plans[g] for g in chunk], **kwargs) for chunk in chunk_layout]
     return programs, chunk_layout
 
 
 def plan_estimator_programs(
     backend: QMBackend,
-    execution_plans: List["_ExecutionPlan"],
+    plans: List[EstimatorPlan],
     **kwargs,
 ) -> tuple[List[Program], List[List[int]]]:
     """Plan the QUA program(s) for ``QMEstimatorV2``.
 
-    When the number of execution plans (one per EstimatorPub) exceeds
+    When the number of plans (one per EstimatorPub) exceeds
     ``backend.options.max_circuits``, the list is split into consecutive chunks,
     each compiled into its own QUA program.  Results are stitched back by the
     caller using the returned ``chunk_layout``.
@@ -510,17 +290,16 @@ def plan_estimator_programs(
 
     Args:
         backend: The QMBackend to use.
-        execution_plans: Pre-computed ``_ExecutionPlan`` objects (one per pub).
-        **kwargs: Forwarded to :func:`estimator_program`.
+        plans: One :class:`~qiskit_qm_provider.job.primitive_plans.EstimatorPlan` per pub.
+        **kwargs: Forwarded to :func:`estimator_program`. A legacy ``obs_length_var``
+            is ignored: observable counts now travel inside each packed observable row.
 
     Returns:
         Tuple of (list of QUA programs, chunk layout).
     """
-    chunk_layout = compute_chunk_layout(len(execution_plans), max_circuits=backend.options.max_circuits)
-    programs = [
-        estimator_program(backend, [execution_plans[g] for g in chunk], **kwargs)
-        for chunk in chunk_layout
-    ]
+    kwargs.pop("obs_length_var", None)
+    chunk_layout = compute_chunk_layout(len(plans), max_circuits=backend.options.max_circuits)
+    programs = [estimator_program(backend, [plans[g] for g in chunk], **kwargs) for chunk in chunk_layout]
     return programs, chunk_layout
 
 

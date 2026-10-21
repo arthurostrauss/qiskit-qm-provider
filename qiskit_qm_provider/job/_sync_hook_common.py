@@ -82,3 +82,13 @@ def to_py_literal(obj) -> str:
     Python source.
     """
     return repr(obj)
+
+
+def render_sync_hook(plans) -> str:
+    """Render the sync hook pushing every plan's streamed inputs, in program order.
+
+    Each plan contributes its :meth:`~qiskit_qm_provider.job.primitive_plans.PrimitivePlan.sync_hook_pushes`,
+    so the cloud push order is the one the local job uses.
+    """
+    pushes = [push for plan in plans for push in plan.sync_hook_pushes()]
+    return jinja_env().get_template("sync_hook.py.jinja").render(pushes_literal=to_py_literal(pushes))

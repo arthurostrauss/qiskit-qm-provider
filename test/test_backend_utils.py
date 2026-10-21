@@ -491,15 +491,20 @@ class TestGetNonTrivialObservables:
         active_indices = [0, 1, 2]
         result = get_non_trivial_observables(observables, active_indices)
         assert len(result) == 1
-        # The function builds the label by forward-iterating over qubits
-        # extracting from the reversed label, resulting in reversed order
-        assert result[0] == Pauli("ZYX")
+        # Qubit j of the result is qubit active_indices[j]: the order is preserved.
+        assert result[0] == Pauli("XYZ")
 
     def test_subset_of_qubits(self):
         observables = PauliList([Pauli("XIYIZ")])
         active_indices = [0, 2, 4]
         result = get_non_trivial_observables(observables, active_indices)
         assert len(result) == 1
+        assert result[0] == Pauli("XYZ")
+
+    def test_subset_keeps_qubit_order(self):
+        # Qubit 0 is Z, qubit 2 is X: restricting to [0, 2] gives label "XZ" (qubit 0 rightmost).
+        result = get_non_trivial_observables(PauliList([Pauli("XIZ")]), [0, 2])
+        assert result[0] == Pauli("XZ")
 
 
 class TestOperationKey:
