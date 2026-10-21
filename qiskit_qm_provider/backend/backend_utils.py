@@ -36,7 +36,7 @@ from qiskit.circuit.controlflow import (
     SwitchCaseOp,
 )
 from qiskit.circuit.library import get_standard_gate_name_mapping
-from qiskit.quantum_info import Pauli, PauliList
+from qiskit.quantum_info import PauliList
 
 from quam.components import Qubit, QubitPair
 from quam.core import QuamRoot
@@ -603,29 +603,38 @@ def logically_active_qubits(circuit):
     return sorted(active, key=lambda q: circuit.find_bit(q).index)
 
 
-def estimator_measured_qubits(circuit: QuantumCircuit, observables) -> list:
-    """Qubits the estimator must measure for ``observables`` on ``circuit``, by circuit index.
+def observables_support(observables) -> np.ndarray:
+    """Boolean mask over qubits: ``True`` where any Pauli term of ``observables`` acts non-trivially.
 
-    Observables span the full physical register (Qiskit's ``apply_layout`` convention). The
-    measured qubits are the *original* qubits an observable acts on non-trivially: the final
-    physical positions of the circuit's virtual qubits (``layout.final_index_layout`` with
-    ancillas filtered out), or every qubit when the circuit has no layout. Support on ancillas
-    is ignored, and an original qubit is measured even when no gate touches it. If no original
-    qubit is observed, the first original qubit is measured (as in Qiskit's
-    ``BackendEstimatorV2``).
+    ``observables`` is anything :class:`~qiskit.primitives.containers.observables_array.ObservablesArray`
+    can coerce; terms are deduplicated before the symplectic reduction.
     """
     from qiskit.primitives.containers.observables_array import ObservablesArray
 
-    if circuit.layout is not None:
-        original = sorted(circuit.layout.final_index_layout(filter_ancillas=True))
-    else:
-        original = list(range(circuit.num_qubits))
-    observed = set()
-    for observable in ObservablesArray.coerce(observables).ravel().tolist():
-        for label in observable:
-            pauli = Pauli(label)
-            observed.update(int(i) for i in np.flatnonzero(pauli.x | pauli.z))
-    measured = [i for i in original if i in observed] or original[:1]
+    observables = ObservablesArray.coerce(observables)
+    labels = {label for observable in observables.ravel().tolist() for label in observable}
+    if not labels:
+        return np.zeros(observables.num_qubits, dtype=bool)
+    paulis = PauliList(sorted(labels))
+    return np.logical_or.reduce(paulis.x | paulis.z, axis=0)
+
+
+def estimator_measured_qubits(circuit: QuantumCircuit, observables) -> list:
+    """Qubits the estimator must measure for ``observables`` on ``circuit``, by circuit index.
+
+    Circuit and observables are taken as ISA: observables span the circuit's full physical
+    register (Qiskit's ``apply_layout`` convention). A qubit is measured iff some term of some
+    observable in the PUB's observables array acts non-trivially on it, whether or not a gate
+    touches it and whether or not it is an ancilla. Every other qubit only ever carries an
+    identity, so it cannot change any expectation value and is not read. If every observable
+    is the identity, a single qubit is measured (as in Qiskit's ``BackendEstimatorV2``): the
+    first qubit of the circuit's virtual layout, or qubit 0 without a layout.
+    """
+    support = observables_support(observables)
+    measured = [int(i) for i in np.flatnonzero(support)]
+    if not measured:
+        layout = circuit.layout.final_index_layout(filter_ancillas=True) if circuit.layout is not None else [0]
+        measured = [min(layout)]
     return [circuit.qubits[i] for i in measured]
 
 

@@ -140,7 +140,7 @@ def test_local_push_matches_sync_hook_order(monkeypatch):
     monkeypatch.setattr(plan.param_table, "push_to_opx", lambda values, *a: pushed.append(("params", values)))
     monkeypatch.setattr(plan.obs_row, "push_to_opx", lambda values, *a: pushed.append(("obs", values)))
     plan.push(None)
-    hook = [(name, value) for _, name, _, value in plan.sync_hook_pushes()]
+    hook = [(spec[1], value) for spec, value in plan.sync_hook_pushes()]
     assert [v for _, v in pushed] == [
         {"param_table_0_row": [0.1]},
         plan.obs_rows[0],
@@ -167,3 +167,81 @@ def test_iqcc_estimator_attaches_hook_for_observables_only():
     )
     job.submit()
     assert "sync_hook" in executed[0]
+
+
+# ---------------------------------------------------------------------------------------------
+# Plan contract and edge cases
+# ---------------------------------------------------------------------------------------------
+
+
+def test_empty_bindings_rejected():
+    import numpy as np
+
+    with pytest.raises(ValueError, match="empty bindings array"):
+        _estimator_plan([SparsePauliOp("ZX")], values=np.zeros((0, 1)))
+
+
+@pytest.mark.parametrize("missing", ["__c", "obs_1"])
+def test_circuit_without_estimator_readout_rejected(missing):
+    qc = QuantumCircuit(2)
+    if missing != "__c":
+        qc.add_register(ClassicalRegister(2, "__c"))
+        qc.add_input("obs_0", types.Uint(4))
+        qc.measure([0, 1], [0, 1])
+    pub = EstimatorPub.coerce((qc, [SparsePauliOp("ZX")]), precision=0.1)
+    with pytest.raises(ValueError, match="validate_estimator_pubs"):
+        EstimatorPlan.from_pub(pub, QMEstimatorOptions(), plan_index=0)
+
+
+def test_observable_on_unmeasured_qubit_rejected():
+    qc = QuantumCircuit(3)
+    qc.add_register(ClassicalRegister(2, "__c"))
+    for j in range(2):
+        qc.add_input(f"obs_{j}", types.Uint(4))
+    qc.measure([0, 1], [0, 1])
+    pub = EstimatorPub.coerce((qc, [SparsePauliOp("ZIX")]), precision=0.1)  # Z on unmeasured qubit 2
+    with pytest.raises(ValueError, match=r"act on qubits \[2\]"):
+        EstimatorPlan.from_pub(pub, QMEstimatorOptions(), plan_index=0)
+
+
+def test_grouping_done_once_per_distinct_term_set(monkeypatch):
+    from qiskit.quantum_info import PauliList
+
+    calls = []
+    original = PauliList.group_commuting
+    monkeypatch.setattr(PauliList, "group_commuting", lambda self, *a, **k: calls.append(1) or original(self, *a, **k))
+    plan = _estimator_plan([SparsePauliOp(["ZX", "XZ", "YY"])], values=[[0.1 * i] for i in range(50)])
+    assert len(calls) == 1
+    assert plan.shared_obs_row and len(plan.metadata) == 50 * len(plan.obs_codes[0])
+
+
+def test_sync_hook_lists_each_target_once():
+    from qiskit_qm_provider.job.sync_hook import generate_sync_hook
+
+    plan = _estimator_plan([SparsePauliOp("XY"), SparsePauliOp(["ZZ", "XX"])], values=[[0.1], [0.2]])
+    code = generate_sync_hook([plan])
+    assert code.count("'param_table_0_row'") == 1 and code.count("'obs_row_0'") == 1
+    assert "PUSHES = [[0, [0.1]], [1, " in code
+
+
+def test_io_obs_row_needs_qm_for_legacy_jobs():
+    from qiskit_qm_provider.job.pub_parameters import push_obs_row
+
+    plan = _estimator_plan([SparsePauliOp("XY")], input_type=InputType.IO1)
+    job = SimpleNamespace(is_paused=lambda: True, resume=lambda: None)  # not a JobApi
+    with pytest.raises(ValueError, match="QuantumMachine object is required"):
+        push_obs_row(plan.obs_row, plan.obs_rows[0], plan.words_per_obs, job, qm=None)
+    sent = []
+    qm = SimpleNamespace(set_io_values=lambda **kw: sent.append(kw))
+    push_obs_row(plan.obs_row, plan.obs_rows[0], plan.words_per_obs, job, qm=qm)
+    assert sent == [{"io1": v} for v in plan.obs_rows[0][:2]]
+
+
+def test_estimator_job_run_options_none():
+    from qiskit_qm_provider.job.qm_estimator_job import QMEstimatorJob
+
+    job = object.__new__(QMEstimatorJob)
+    job.metadata = {"run_options": None, "abelian_grouping": True}
+    assert job._run_options == {"abelian_grouping": True}
+    job.metadata = {"run_options": {"simulate": "cfg"}, "abelian_grouping": True}
+    assert job._run_options == {"simulate": "cfg", "abelian_grouping": True}

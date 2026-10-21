@@ -40,7 +40,7 @@ def _sampler_pubs(backend, count):
 
 
 def _estimator_pubs(backend, count):
-    """Return ``count`` fully-validated EstimatorPubs ready for _ExecutionPlan.
+    """Return ``count`` fully-validated EstimatorPubs ready for EstimatorPlan.
 
     Each pub gets a circuit with a unique name so that ParameterTable names
     derived from it (e.g. "observables_var_{name}_pub{i}") are globally unique.

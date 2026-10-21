@@ -87,17 +87,6 @@ def sampler_program(backend: QMBackend, plans: List[SamplerPlan], **kwargs) -> P
     return sampler_prog
 
 
-def _process_observables_with_circuit(plan: EstimatorPlan, backend: QMBackend, p, **kwargs):
-    """QUA macro: for binding ``p``, run the circuit once per observable group of its row."""
-    _, obs_idx, _ = plan._obs_scratch
-    row = plan.load_obs_row(p, before_loop=False)
-    tables = [t for t in (plan.circuit_table, plan.obs_table) if t is not None]
-    with for_(obs_idx, 0, obs_idx < row[0], obs_idx + 1):
-        plan.assign_observable(row, obs_idx)
-        outputs = _process_circuit(plan.pub.circuit, backend, plan.shots, tables, compute_state_int=False, **kwargs)
-    return outputs
-
-
 def _process_estimator_pub(plan: EstimatorPlan, backend: QMBackend, **kwargs):
     """QUA macro: run one estimator PUB, binding-major, one circuit run per measurement group.
 
@@ -107,11 +96,12 @@ def _process_estimator_pub(plan: EstimatorPlan, backend: QMBackend, **kwargs):
     """
     plan.declare_params()
     plan.declare_observables()
-    plan.load_obs_row(None, before_loop=True)
+    tables = [t for t in (plan.circuit_table, plan.obs_table) if t is not None]
     p = declare(int)
     with for_(p, 0, p < plan.num_bindings, p + 1):
         plan.load_params(p)
-        outputs = _process_observables_with_circuit(plan, backend, p, **kwargs)
+        with plan.observable_groups(p):
+            outputs = _process_circuit(plan.pub.circuit, backend, plan.shots, tables, compute_state_int=False, **kwargs)
     return outputs
 
 
@@ -291,13 +281,11 @@ def plan_estimator_programs(
     Args:
         backend: The QMBackend to use.
         plans: One :class:`~qiskit_qm_provider.job.primitive_plans.EstimatorPlan` per pub.
-        **kwargs: Forwarded to :func:`estimator_program`. A legacy ``obs_length_var``
-            is ignored: observable counts now travel inside each packed observable row.
+        **kwargs: Forwarded to :func:`estimator_program`.
 
     Returns:
         Tuple of (list of QUA programs, chunk layout).
     """
-    kwargs.pop("obs_length_var", None)
     chunk_layout = compute_chunk_layout(len(plans), max_circuits=backend.options.max_circuits)
     programs = [estimator_program(backend, [plans[g] for g in chunk], **kwargs) for chunk in chunk_layout]
     return programs, chunk_layout

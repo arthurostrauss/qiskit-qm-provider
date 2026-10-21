@@ -31,8 +31,7 @@ from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit.quantum_info import SparsePauliOp
 
 from qiskit_qm_provider.parameter_table import InputType, ParameterPool, ParameterTable
-from qiskit_qm_provider.job.post_hook_sampler import generate_sync_hook_sampler
-from qiskit_qm_provider.job.post_hook_estimator import generate_sync_hook_estimator
+from qiskit_qm_provider.job.sync_hook import generate_sync_hook
 from qiskit_qm_provider.job.primitive_plans import EstimatorPlan, SamplerPlan
 from qiskit_qm_provider.job.pub_parameters import unpack_obs_codes
 from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
@@ -133,7 +132,7 @@ def test_sampler_input_stream_pushes_with_coercion():
         name="t",
     )
     pub = _FakePub([[0.1, 2.0], [0.3, 4.0]], names=("x", "n"))
-    code = generate_sync_hook_sampler([_table_plan(pub, table)])
+    code = generate_sync_hook([_table_plan(pub, table)])
     _assert_no_provider_imports(code)
 
     job = _StubJob()
@@ -147,7 +146,7 @@ def test_sampler_input_stream_pushes_with_coercion():
 
 def test_sampler_dense_row_one_push_per_binding():
     pub = _FakePub([[0.1, 2.0], [0.3, 4.0]], names=("x", "y"))
-    code = generate_sync_hook_sampler([SamplerPlan.from_pub(pub, InputType.INPUT_STREAM, 0)])
+    code = generate_sync_hook([SamplerPlan.from_pub(pub, InputType.INPUT_STREAM, 0)])
     _assert_no_provider_imports(code)
 
     job = _StubJob()
@@ -159,7 +158,7 @@ def test_sampler_dense_row_one_push_per_binding():
 
 def test_sampler_dense_row_io_pushes_elementwise():
     pub = _FakePub([[0.5, 0.25]], names=("x", "y"))
-    code = generate_sync_hook_sampler([SamplerPlan.from_pub(pub, InputType.IO1, 0)])
+    code = generate_sync_hook([SamplerPlan.from_pub(pub, InputType.IO1, 0)])
 
     job = _StubJob()
     _exec_hook(code, job)
@@ -171,7 +170,7 @@ def test_sampler_dense_row_io_pushes_elementwise():
 def test_sampler_io_pushes_pause_resume():
     table = ParameterTable({"a": (0.0, fixed, InputType.IO1)}, name="io")
     pub = _FakePub([[0.5]], names=("a",))
-    code = generate_sync_hook_sampler([_table_plan(pub, table)])
+    code = generate_sync_hook([_table_plan(pub, table)])
     _assert_no_provider_imports(code)
 
     job = _StubJob()
@@ -183,7 +182,7 @@ def test_sampler_io_pushes_pause_resume():
 
 def test_sampler_none_table_pushes_nothing():
     pub = _FakePub([[0.1]])
-    code = generate_sync_hook_sampler([SamplerPlan(pub, 0, None, None)])
+    code = generate_sync_hook([SamplerPlan(pub, 0, None, None)])
     _assert_no_provider_imports(code)
 
     job = _StubJob()
@@ -209,9 +208,7 @@ def test_array_pub_sync_hook(primitive, input_type, monkeypatch):
     pub.parameter_values = BindingsArray({(vec[2], scalar): [[0.2, 0.1]]})
     table = ParameterTable.from_qiskit(qc, input_type=input_type)
     plan_cls = SamplerPlan if primitive == "sampler" else EstimatorPlan
-    code = (generate_sync_hook_sampler if primitive == "sampler" else generate_sync_hook_estimator)(
-        [plan_cls(pub, 0, table, table)]
-    )
+    code = generate_sync_hook([plan_cls(pub, 0, table, table)])
     job = _StubJob()
     _exec_hook(code, job)
     if input_type == InputType.INPUT_STREAM:
@@ -229,7 +226,7 @@ def test_estimator_pushes_param_row_then_packed_obs_row():
     assert plan.obs_rows[0] == [1, 2 | (1 << 2), 0]  # [n_obs, word(obs_0), padding]
     assert [unpack_obs_codes([w], 2) for w in plan.obs_rows[1][1:]] == [list(c) for c in plan.obs_codes[1]]
 
-    code = generate_sync_hook_estimator([plan])
+    code = generate_sync_hook([plan])
     _assert_no_provider_imports(code)
     job = _StubJob()
     _exec_hook(code, job)
@@ -247,7 +244,7 @@ def test_estimator_observables_only_shared_row():
     plan = _estimator_plan([SparsePauliOp(["ZX", "XZ"])])
     assert plan.shared_obs_row and plan.streams_inputs and not plan.streams_params
 
-    code = generate_sync_hook_estimator([plan])
+    code = generate_sync_hook([plan])
     _assert_no_provider_imports(code)
     job = _StubJob()
     _exec_hook(code, job)
@@ -258,7 +255,7 @@ def test_estimator_observables_only_shared_row():
 
 def test_estimator_io_obs_row_sends_only_used_prefix():
     plan = _estimator_plan([SparsePauliOp("XY"), SparsePauliOp(["ZZ", "XX"])], values=[[0.1], [0.2]], input_type=InputType.IO1)
-    code = generate_sync_hook_estimator([plan])
+    code = generate_sync_hook([plan])
     job = _StubJob()
     _exec_hook(code, job)
 

@@ -179,7 +179,7 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
         Results from all chunks are stitched back by :meth:`_result_function`
         using the locator built at construction time.
         """
-        from .post_hook_sampler import generate_sync_hook_sampler
+        from .sync_hook import generate_sync_hook
 
         if self._qm_jobs is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
@@ -193,7 +193,7 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
 
             sync_hook_path = None
             if any(p.streams_inputs for p in chunk_plans):
-                sync_hook_code = generate_sync_hook_sampler(chunk_plans)
+                sync_hook_code = generate_sync_hook(chunk_plans)
                 with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
                     f.write(sync_hook_code)
                     sync_hook_path = f.name

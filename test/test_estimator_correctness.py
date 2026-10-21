@@ -19,7 +19,8 @@ from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit.quantum_info import SparsePauliOp, Statevector
 from qiskit.transpiler import CouplingMap
 
-from qiskit_qm_provider.job.qm_estimator_job import _ExecutionPlan, estimator_pub_result
+from qiskit_qm_provider.job.primitive_plans import EstimatorPlan
+from qiskit_qm_provider.job.qm_estimator_job import estimator_pub_result
 from qiskit_qm_provider.parameter_table import ParameterPool
 from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
 
@@ -46,7 +47,7 @@ def _with_estimator_readout(circuit: QuantumCircuit, measured: list[int]) -> Qua
 
 def _emulate_stream(plan, state_circuit: QuantumCircuit, measured: list[int], seed: int = 7) -> np.ndarray:
     rng = np.random.default_rng(seed)
-    buffers = [codes for group in plan.obs_indices for codes in group]
+    buffers = [codes for group in plan.obs_codes for codes in group]
     raw = np.zeros((len(buffers), plan.shots, len(measured)), dtype=int)
     for b, codes in enumerate(buffers):
         rotated = state_circuit.copy()
@@ -77,7 +78,7 @@ def _plan(state: QuantumCircuit, measured: list[int], observables, **options):
     qc = _with_estimator_readout(state, measured)
     _STATE[qc.name], _MEAS[qc.name] = state, measured
     pub = EstimatorPub.coerce((qc, observables), precision=PRECISION)
-    return _ExecutionPlan.from_pub(pub, QMEstimatorOptions(**options))
+    return EstimatorPlan.from_pub(pub, QMEstimatorOptions(**options))
 
 
 def _product_state() -> QuantumCircuit:
@@ -108,7 +109,7 @@ def test_stream_layout_matches_metadata_without_grouping():
     state = _product_state()
     # Qubit-wise commuting terms: grouped they share one basis, ungrouped they do not.
     plan = _plan(state, [0, 1, 2, 3], [SparsePauliOp(["IIIZ", "IIZI", "IZII"])], abelian_grouping=False)
-    assert plan.stream_buffer_count == len(plan.metadata) == 3
+    assert len(plan.metadata) == 3
 
 
 def test_parameter_sweep_expectation_values():
@@ -123,10 +124,10 @@ def test_parameter_sweep_expectation_values():
     observables = [SparsePauliOp("IZX"), SparsePauliOp("ZXI"), SparsePauliOp("ZZZ")]
     qc = _with_estimator_readout(state, [0, 1, 2])
     pub = EstimatorPub.coerce((qc, observables, values), precision=PRECISION)
-    plan = _ExecutionPlan.from_pub(pub, QMEstimatorOptions())
+    plan = EstimatorPlan.from_pub(pub, QMEstimatorOptions())
 
     rng_seed = 11
-    buffers = [(p, codes) for p, group in enumerate(plan.obs_indices) for codes in group]
+    buffers = [(p, codes) for p, group in enumerate(plan.obs_codes) for codes in group]
     raw = np.zeros((len(buffers), plan.shots, 3), dtype=int)
     rng = np.random.default_rng(rng_seed)
     for b, (p, codes) in enumerate(buffers):
@@ -164,7 +165,7 @@ def _transpiled_with_ancillas():
     return tqc
 
 
-def test_measured_qubits_include_idle_virtual_exclude_ancillas():
+def test_measured_qubits_include_idle_virtual_skip_unobserved_ancillas():
     from qiskit_qm_provider.backend.backend_utils import estimator_measured_qubits
 
     tqc = _transpiled_with_ancillas()
@@ -172,7 +173,7 @@ def test_measured_qubits_include_idle_virtual_exclude_ancillas():
     obs = SparsePauliOp("ZX").apply_layout(tqc.layout)  # X on virtual q0, Z on idle virtual q1
     measured = [tqc.find_bit(q).index for q in estimator_measured_qubits(tqc, [obs])]
     assert physical_q1 in measured  # idle in the virtual circuit, but observed
-    assert measured == sorted(tqc.layout.final_index_layout(filter_ancillas=True))  # no ancilla
+    assert measured == sorted(tqc.layout.final_index_layout(filter_ancillas=True))  # ancillas unobserved
 
 
 def test_measured_qubits_skip_unobserved_active_qubit():
@@ -204,3 +205,33 @@ def test_idle_observed_qubit_is_measured_not_assumed():
     evs = _estimate(plan)
     exact = np.array([Statevector(state).expectation_value(obs).real for obs in observables])
     np.testing.assert_allclose(evs, exact, atol=TOL)
+
+
+def test_measured_qubits_include_observed_ancilla():
+    from qiskit_qm_provider.backend.backend_utils import estimator_measured_qubits
+
+    tqc = _transpiled_with_ancillas()
+    virtual_q0 = tqc.layout.final_index_layout(filter_ancillas=True)[0]
+    ancilla = next(q for q in range(tqc.num_qubits) if q not in tqc.layout.final_index_layout(filter_ancillas=True))
+    label = ["I"] * tqc.num_qubits
+    label[virtual_q0], label[ancilla] = "X", "Z"
+    obs = SparsePauliOp("".join(reversed(label)))  # ISA observable with support on an ancilla
+    measured = [tqc.find_bit(q).index for q in estimator_measured_qubits(tqc, [obs])]
+    assert measured == sorted([virtual_q0, ancilla])
+
+
+def test_measured_qubits_union_over_observables_array():
+    from qiskit_qm_provider.backend.backend_utils import estimator_measured_qubits
+
+    qc = QuantumCircuit(4)
+    observables = [[SparsePauliOp("IIIZ")], [SparsePauliOp(["IXII", "IIII"])]]
+    assert [qc.find_bit(q).index for q in estimator_measured_qubits(qc, observables)] == [0, 2]
+
+
+def test_ancilla_observable_expectation_value():
+    # q2 plays an ancilla: never touched, observed with Z (+1) alongside X on q0 (+1).
+    state = QuantumCircuit(3, name="ancilla")
+    state.h(0)
+    observables = [SparsePauliOp("ZIX"), SparsePauliOp("ZII")]
+    plan = _plan(state, [0, 2], observables)
+    np.testing.assert_allclose(_estimate(plan), [1.0, 1.0], atol=TOL)

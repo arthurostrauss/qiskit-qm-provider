@@ -3,11 +3,15 @@ from iqcc_cloud_client.runtime import get_qm_job
 
 job = get_qm_job()
 
-# Every push the QUA program expects, in order: [input_type, name, qua_type, value].
+# Push targets: [input_type, name, qua_type].
+SPECS = {{ specs_literal }}
+
+# Every push the QUA program expects, in order: [index into SPECS, value].
 PUSHES = {{ pushes_literal }}
 
 
 {% include "_push_helpers.py.jinja" %}
 
-for input_type, name, qua_type, value in PUSHES:
+for spec, value in PUSHES:
+    input_type, name, qua_type = SPECS[spec]
     _push(job, input_type, name, _coerce(value, qua_type))

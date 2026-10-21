@@ -50,10 +50,6 @@ if TYPE_CHECKING:
     from iqcc_cloud_client.qmm_cloud import CloudJob
 
 
-# Kept for callers (and notebooks) that import the former private name.
-_ExecutionPlan = EstimatorPlan
-
-
 def counts_from_estimator_stream(plan: EstimatorPlan, raw) -> List[Counts]:
     """Build per-metadata :class:`~qiskit.result.Counts` from the ``__c`` stream."""
     data = np.asarray(raw, dtype=int)
@@ -66,22 +62,13 @@ def counts_from_estimator_stream(plan: EstimatorPlan, raw) -> List[Counts]:
             f"shots×num_qubits ({shots}×{num_qubits}={unit})."
         )
     stream_count = data.size // unit
-    expected = plan.stream_buffer_count
-    if stream_count != expected:
-        raise ValueError(
-            f"Estimator stream has {stream_count} buffers but expected {expected} "
-            f"(compile-time params={plan.uses_compile_time_param_bindings})."
-        )
+    if stream_count != len(plan.metadata):
+        raise ValueError(f"Estimator stream has {stream_count} buffers but expected {len(plan.metadata)}.")
 
-    bitstrings = data.reshape(stream_count, shots, num_qubits)
-    bitstrings_bool = np.asarray(bitstrings, dtype=bool)
-    # Column j is __c[j], i.e. clbit j: little-endian, as Pauli labels and counts expect.
-    bit_array = BitArray.from_bool_array(bitstrings_bool, order="little")
-    return [
-        Counts(bit_array.get_counts(loc=(stream_idx,)))
-        for stream_idx in plan.stream_indices_for_metadata()
-    ]
-
+    # Buffer k is metadata task k. Column j is __c[j], i.e. clbit j: little-endian, as Pauli
+    # labels and counts expect.
+    bit_array = BitArray.from_bool_array(data.reshape(stream_count, shots, num_qubits).astype(bool), order="little")
+    return [Counts(bit_array.get_counts(loc=(k,))) for k in range(stream_count)]
 
 
 def estimator_pub_result(plan: EstimatorPlan, raw) -> PubResult:
@@ -94,46 +81,6 @@ def estimator_pub_result(plan: EstimatorPlan, raw) -> PubResult:
     expval_map = QMEstimatorJob._calc_expval_map(counts_list, plan.metadata)
     bc_param_ind, bc_obs = np.broadcast_arrays(plan.param_indices, plan.pub.observables)
     return QMEstimatorJob._postprocess_pub(plan.pub, expval_map, bc_param_ind, bc_obs, plan.shots)
-
-def observables_to_indices(
-    observables: List[SparsePauliOp | Pauli | str] | SparsePauliOp | PauliList | Pauli | str,
-    abelian_grouping: bool = True,
-) -> List[Tuple[int, ...]]:
-    """
-    Get single qubit indices of Pauli observables for the reward computation.
-
-    Args:
-        observables: Pauli observables to sample
-
-    Returns:
-        List of tuples of single qubit indices for each qubit-wise commuting group of observables.
-    """
-    if isinstance(observables, (str, Pauli)):
-        observables = PauliList(Pauli(observables) if isinstance(observables, str) else observables)
-    elif isinstance(observables, List) and all(isinstance(obs, (str, Pauli)) for obs in observables):
-        observables = PauliList([Pauli(obs) if isinstance(obs, str) else obs for obs in observables])
-    observable_indices = []
-    if abelian_grouping:
-        observables_grouping = (
-            observables.group_commuting(qubit_wise=True)
-            if isinstance(observables, (SparsePauliOp, PauliList))
-            else observables
-        )
-    else:
-        observables_grouping = observables
-    for obs_group in observables_grouping:  # Get indices of Pauli observables
-        current_indices = []
-        paulis = obs_group.paulis if isinstance(obs_group, SparsePauliOp) else obs_group
-        reference_pauli = Pauli((np.logical_or.reduce(paulis.z), np.logical_or.reduce(paulis.x)))
-        for pauli_term in reversed(reference_pauli.to_label()):  # Get individual qubit indices for each Pauli term
-            if pauli_term == "I" or pauli_term == "Z":
-                current_indices.append(0)
-            elif pauli_term == "X":
-                current_indices.append(1)
-            elif pauli_term == "Y":
-                current_indices.append(2)
-        observable_indices.append(tuple(current_indices))
-    return observable_indices
 
 
 class QMEstimatorJob(QMPrimitiveJob):
@@ -164,10 +111,6 @@ class QMEstimatorJob(QMPrimitiveJob):
         observable rows that drive the per-qubit basis switches. Inspect it to see how
         observables were grouped or what is streamed per binding.
         """
-        return self._plans
-
-    @property
-    def _execution_plans(self) -> List[EstimatorPlan]:
         return self._plans
 
     def __init__(
@@ -202,7 +145,8 @@ class QMEstimatorJob(QMPrimitiveJob):
     def _run_options(self) -> Dict:
         """Backend run options (``simulate``, ``compiler_options``, ...), which the estimator
         nests under ``run_options``, flattened with the top-level metadata."""
-        return {**self.metadata.get("run_options", {}), **{k: v for k, v in self.metadata.items() if k != "run_options"}}
+        nested = self.metadata.get("run_options") or {}
+        return {**nested, **{k: v for k, v in self.metadata.items() if k != "run_options"}}
 
     def submit(self):
         """Submit the job to the backend.
@@ -386,7 +330,7 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
         Results from all chunks are stitched back by the inherited
         :meth:`_result_function` using the locator built at construction time.
         """
-        from .post_hook_estimator import generate_sync_hook_estimator
+        from .sync_hook import generate_sync_hook
 
         if self._qm_jobs is not None:
             raise RuntimeError("IQCC QM job has already been submitted")
@@ -400,7 +344,7 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
 
             sync_hook_path = None
             if any(p.streams_inputs for p in chunk_plans):
-                sync_hook_code = generate_sync_hook_estimator(chunk_plans)
+                sync_hook_code = generate_sync_hook(chunk_plans)
                 with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
                     f.write(sync_hook_code)
                     sync_hook_path = f.name

@@ -43,11 +43,14 @@ result = job.result()
 
 ### Which qubits are measured
 
-As in Qiskit, observables span the full physical register: transpile the circuit, then call `observable.apply_layout(circuit.layout)`. The estimator measures exactly the **original qubits that an observable acts on**. These are the final physical positions of the circuit's virtual qubits (`circuit.layout.final_index_layout(filter_ancillas=True)`), or every qubit when the circuit has no layout.
+Circuits and observables are taken as ISA: observables span the full physical register, as in Qiskit (transpile the circuit, then call `observable.apply_layout(circuit.layout)`). The estimator measures a qubit **if and only if some term of some observable in the PUB acts non-trivially on it**. The set is the union over the PUB's whole observables array, because one compiled circuit serves every observable and binding of the PUB; on the other qubits every observable is the identity, so they cannot change any expectation value.
 
-- An original qubit that no gate touches is still measured if an observable acts on it.
-- Ancillas added by the transpiler are never measured, even if routing used them. `apply_layout` pads them with identity.
+- A qubit that no gate touches is still measured if an observable acts on it.
+- Ancillas are treated like any other qubit: `apply_layout` pads them with identity, so they are normally not measured, but an observable that acts on one is measured faithfully.
 - Qubits that carry gates but no observable support are not measured, which saves their basis switch and readout.
+- If every observable is the identity, one qubit is measured (the first qubit of the circuit's layout), as in Qiskit's `BackendEstimatorV2`.
+
+Per measured qubit `q_j`, the prepared circuit has a basis switch driven by an input `obs_j` (0: none, 1: `h`, 2: `sdg; h`) followed by a measurement into bit `j` of a `__c` register. `EstimatorPlan.from_pub` requires this readout (it rejects circuits without it, and observables acting on a qubit outside `__c`); `QMEstimatorV2.run` adds it through `validate_estimator_pubs`. A PUB with an empty bindings array is rejected.
 
 ### How observables reach the OPX
 

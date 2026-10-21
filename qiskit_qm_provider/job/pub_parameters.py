@@ -44,8 +44,6 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 from qm.qua import IO1, IO2, assign, fixed, for_, pause
-from qm.api.v2.job_api import JobApi
-from qualang_tools.results import wait_until_job_is_paused
 
 from ..parameter_table import Direction, InputType, Parameter, ParameterTable
 from ..parameter_table.qiskit_classical import (
@@ -199,13 +197,10 @@ def rcv_obs_row(row_param: Parameter, words_per_obs: int, counter) -> None:
         row_param.rcv()
 
 
-def push_obs_row(row_param: Parameter, row: list[int], words_per_obs: int, job, qm=None, time_out: int = 90) -> None:
+def push_obs_row(row_param: Parameter, row: list[int], words_per_obs: int, job, qm=None) -> None:
     """Host counterpart of :func:`rcv_obs_row`."""
+    row = [int(v) for v in row]
     if row_param.input_type in (InputType.IO1, InputType.IO2):
-        io = "io1" if row_param.input_type == InputType.IO1 else "io2"
-        for value in row[: 1 + row[0] * words_per_obs]:
-            wait_until_job_is_paused(job, time_out)
-            (job if isinstance(job, JobApi) else qm).set_io_values(**{io: int(value)})
-            job.resume()
+        row_param.push_io_values(row[: 1 + row[0] * words_per_obs], job, qm)
     else:
-        row_param.push_to_opx([int(v) for v in row], job, qm)
+        row_param.push_to_opx(row, job, qm)

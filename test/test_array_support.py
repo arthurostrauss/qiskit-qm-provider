@@ -7,6 +7,7 @@ stock Qiskit, and tests that need the stock per-element exporter are skipped on 
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -300,8 +301,11 @@ def test_vector_pub_qua_scatter(array_mode, primitive, input_type, monkeypatch):
     pub = _mixed_vector_pub()
     circuit_table, delivery_table = build_pub_tables(pub.circuit, input_type, "pt")
     monkeypatch.setattr(qua_programs, "_process_circuit", lambda *args, **kwargs: None)
-    monkeypatch.setattr(qua_programs, "_process_observables_with_circuit", lambda *args, **kwargs: None)
     plan = _plan(primitive, pub, circuit_table, delivery_table)
+    if primitive == "estimator":  # only parameter scatter is inspected here
+        monkeypatch.setattr(plan, "declare_observables", lambda: None)
+        monkeypatch.setattr(plan, "observable_groups", lambda p: nullcontext())
+        monkeypatch.setattr(type(plan), "shots", 1)  # the PUB here is a SamplerPub (no precision)
     with qua.program() as prog:
         if primitive == "sampler":
             qua_programs._process_sampler_pub(plan, None)
@@ -421,7 +425,8 @@ def test_row_table_rejects_mismatched_circuit():
 def test_estimator_row_tables_named_by_plan_index():
     from qiskit.primitives.containers.estimator_pub import EstimatorPub
     from qiskit.quantum_info import SparsePauliOp
-    from qiskit_qm_provider.job.qm_estimator_job import _ExecutionPlan
+    from qiskit.circuit import ClassicalRegister
+    from qiskit_qm_provider.job.primitive_plans import EstimatorPlan
     from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
 
     plans = []
@@ -429,6 +434,9 @@ def test_estimator_row_tables_named_by_plan_index():
         qc = QuantumCircuit(1, name="ansatz")  # same name, different parameter counts
         for p in ParameterVector(f"v{i}", size):
             qc.rx(p, 0)
+        qc.add_register(ClassicalRegister(1, "__c"))
+        qc.add_input("obs_0", types.Uint(4))
+        qc.measure(0, 0)
         pub = EstimatorPub.coerce((qc, SparsePauliOp(["Z"]), [[0.1] * size]))
-        plans.append(_ExecutionPlan.from_pub(pub, QMEstimatorOptions(input_type=InputType.INPUT_STREAM), plan_index=i))
+        plans.append(EstimatorPlan.from_pub(pub, QMEstimatorOptions(input_type=InputType.INPUT_STREAM), plan_index=i))
     assert [list(plan.param_table.table) for plan in plans] == [["param_table_0_row"], ["param_table_1_row"]]

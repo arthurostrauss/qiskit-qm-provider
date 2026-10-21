@@ -200,7 +200,7 @@ class QMEstimatorV2(BaseEstimatorV2):
                     "'__c', which is reserved for estimator Pauli readout."
                 )
 
-            # Measure the original qubits the observables act on (see estimator_measured_qubits).
+            # Measure every qubit some observable acts on non-trivially (see estimator_measured_qubits).
             measured = [pub.circuit.find_bit(q).index for q in estimator_measured_qubits(pub.circuit, pub.observables)]
             qc = pub.circuit.remove_final_measurements(inplace=False)
             qc.name = f'{pub.circuit.name}_pub{i}'
