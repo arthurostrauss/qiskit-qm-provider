@@ -33,11 +33,19 @@ The core entry point is `QMBackend.quantum_circuit_to_qua()` (Qiskit circuit →
   expected failures in this environment; everything else passes.
 - Hardware-backed test fixtures (`quam_machine`, `flux_tunable_backend`, `qm_provider` in
   `test/conftest.py`) require the `QUAM_STATE_PATH` env var to point at a QuAM state directory and
-  are **skipped** when it is unset (~120 tests). You can also build a machine in memory with the
-  quam-builder wirer (see the hello-world pattern below) instead of maintaining a state folder.
+  are **skipped** when it is unset. For hardware-free tests, use
+  `test/dummy_quam.py`: `build_dummy_quam_for_qubits(n, FluxTunableQuam)` returns a complete,
+  config-valid QuAM with `n` qubits (default pulses, a DragCosine gate set aliased to
+  `x180`/`x90`/..., default macros, `cz` on neighbouring pairs, placeholder frequencies);
+  `test/_in_memory_quam.build_backend(n)` wraps it in a `FluxTunableTransmonBackend`. It needs a
+  quam-builder newer than v0.4.0.
 
 ### How to test / build / run
-- Tests: `.venv/bin/python -m pytest` (expected: ~294 passed, ~123 skipped, 2 quarc failures).
+- Tests: `.venv/bin/python -m pytest`. Expected: only the 2 quarc failures above; everything else
+  passes or is skipped. Skips are the `QUAM_STATE_PATH` fixtures (including the `quam_state`
+  variants of `test/test_barrier_lowering.py`) and, with quam-builder v0.4.0, the whole
+  dummy-QuAM modules (`test_dummy_quam.py`, `test_native_operations.py`, `test_barrier_lowering.py`).
+  Exact counts change as tests are added, so compare failures, not totals.
 - Docs build (this repo's only "build" step, run with warnings-as-errors in CI):
   `.venv/bin/python -m sphinx -b html -W docs docs/_build/html`.
 - **No linter is configured** in this repo (no ruff/black/flake8/mypy config in `pyproject.toml`).

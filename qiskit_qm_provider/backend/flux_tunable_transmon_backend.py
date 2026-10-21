@@ -99,20 +99,22 @@ class FluxTunableTransmonBackend(QMBackend):
     def qubit_mapping(self) -> QubitsMapping:
         """
         Retrieve the qubit to quantum elements mapping for the backend.
+
+        Extends :attr:`QMBackend.qubit_mapping` (each qubit's channel elements) with the
+        pump element of every TWPA on the qubit's readout line.
         """
-        mapping = {}
+        mapping = dict(super().qubit_mapping)
+        if not hasattr(self.machine, "twpas"):
+            return mapping
 
         for i, qubit in enumerate(self.machine.active_qubits):
-            channels = [ch.name for ch in qubit.channels.values()]
-            name = qubit.name
-            line_number = name[1]
-
-            if hasattr(self.machine, "twpas"):
-                for twpa in self.machine.twpas.values():
-                    if hasattr(twpa, "pump") and twpa.name[-1] == line_number:
-                        channels.append(twpa.pump.name)
-
-            mapping[i] = tuple(channels)
+            line_number = qubit.name[1]
+            pumps = tuple(
+                twpa.pump.name
+                for twpa in self.machine.twpas.values()
+                if hasattr(twpa, "pump") and twpa.name[-1] == line_number
+            )
+            mapping[i] += pumps
 
         return mapping
 

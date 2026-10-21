@@ -179,6 +179,65 @@ backend.update_target()  # mandatory — syncs qm_qasm with the Target
 
 Whenever you modify `backend.target`, call `update_target` so both transpilation and `quantum_circuit_to_qua` see the same gate set.
 
+## Barrier and store
+
+Besides the QUA-backed operations above, every QM backend `Target` defines `barrier` and `store` as global, variable-width operations, just as it defines control flow (`if_else`, `box`, ...). They have no QUA macro of their own and never appear in the qm-qasm operations mapping, because qm-qasm lowers them itself:
+
+- `store` (a real-time classical assignment, `qc.store(var, value)`) becomes a QUA assignment.
+- `barrier` becomes a QUA `align` over every element of the barrier's qubits (as given by `backend.qubit_mapping`), so the operations after it start together. Only the elements mapped to those qubits are aligned: map couplers or other shared elements to the qubits they act on if a barrier should align them too.
+
+## Conditional pulse plays
+
+A conditional play applies one fixed QuAM pulse when a run-time Boolean Qiskit expression is true. It lowers directly to QUA `pulse.play(condition=...)`; it does not introduce a Qiskit `if_test` or an enclosing QUA branch. Build one with `QuantumCircuit.conditional_play(...)` (shown below) or the equivalent standalone `add_conditional_play(qc, ...)` function.
+
+The construct has two deliberately separate inputs:
+
+- `pulse_name` is compile-time metadata. It selects the QuAM pulse and must resolve uniquely through `qubit.get_pulse(pulse_name)` on every active physical qubit.
+- `condition` is a run-time `qiskit.circuit.classical.expr.Expr` whose type must be Boolean. It is lowered through Qiskit's typed classical-expression AST, not through a numeric Qiskit `Parameter`.
+
+Internally this is a private provider `Instruction`, always wrapped in a `box` by `conditional_play`/`add_conditional_play` (there is no supported way to construct one directly) and exported through Qiskit's implicit-`defcal` call path. The emitted OpenQASM operation name is `qm_conditional_play_x180` when `pulse_name` is already a valid OpenQASM 3 identifier (the common case), or `qm_conditional_play_minus_x90` for the `"-x90"`/`"-y90"` negated-pulse convention. A pulse label using any other character falls back to a sanitized name with a digest suffix. The one known collision is between a `-`-prefixed label and one spelled out with `minus_` (for example `"-y90"` and `"minus_y90"`): both map to `qm_conditional_play_minus_y90`, and `register_conditional_play` warns when the second one replaces the first. The pulse label is never passed as a run-time argument.
+
+### Registration and compilation
+
+Register a pulse label once before transpiling. Registration resolves the label on all active qubits, installs one per-qubit Target mapping, and synchronizes the qm-qasm operation mapping. There is no need to call `update_target()` again after a successful registration. To register several labels, pass them in one call, e.g. `backend.register_conditional_play("x180", "-y90")`: all of them are resolved before any is installed (a lookup error registers none), and the operation mapping is synchronized once.
+
+```python
+from qiskit import transpile
+from qiskit.circuit import ClassicalRegister, QuantumCircuit, QuantumRegister
+from qiskit.circuit.classical import expr
+
+backend.register_conditional_play("x180")
+
+creg = ClassicalRegister(1, "creg")
+qreg = QuantumRegister(1, "qreg")
+qc = QuantumCircuit(qreg, creg)
+
+condition = expr.equal(creg[0], expr.lift(False))
+qc.conditional_play("x180", condition=condition, qubit=qreg[0])
+
+transpiled = transpile(qc, backend, initial_layout=[0])
+comp = backend.quantum_circuit_to_qua(transpiled)
+```
+
+The exported OpenQASM wraps the call in its `box` and addresses the physical qubit directly (`creg` is a reserved OpenQASM keyword, so the exporter escapes the register name to `creg_0`):
+
+```
+box {
+  qm_conditional_play_x180(creg_0[0] == false) $0;
+}
+```
+
+qm-qasm receives this as an ordinary provider operation call. Its registered per-qubit macro re-resolves the compile-time pulse and executes `qubit.get_pulse("x180").play(condition=qua_condition)`.
+
+### Constraints and errors
+
+- Only Boolean `expr.Expr` conditions are accepted. Use Qiskit's `expr` constructors for comparisons, logical operations, and typed input variables.
+- Run-time selection among pulse names is not supported; register each pulse label separately and choose it while building the circuit.
+- Inversion and quantum controls are deliberately unsupported. The condition is classical and acts at the QUA pulse-play level.
+- Registration propagates QuAM errors when the pulse is missing or ambiguous on any active qubit. `backend.quantum_circuit_to_qua(...)` rejects an unregistered pulse or a conditional play placed on a physical qubit that has no registered mapping, as part of its general check that every operation is native to `backend.target`.
+- QUA conditions the analog pulse only; associated digital markers follow QUA's normal behavior.
+- That rejection is `quantum_circuit_to_qua`'s responsibility, not the exporter's: `backend.qasm3_exporter` (or any `QMOpenQASM3Exporter`) has no `Target` of its own and does not check registration at all. Calling `.dumps(qc)` on it directly, instead of going through `quantum_circuit_to_qua`, will happily export a `ConditionalPlay` that was never registered -- the resulting OpenQASM 3 simply fails to lower to QUA later.
+
 ## Pulse support (Qiskit 1.x legacy)
 
 ## Pulse support (Qiskit 1.x legacy)
