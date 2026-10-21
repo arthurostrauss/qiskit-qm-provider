@@ -7,7 +7,7 @@ free of any QuAM/hardware fixtures so they run in any environment.
 
 import pytest
 
-from qiskit import QuantumCircuit
+from qiskit import QuantumCircuit, transpile
 from qm import Program
 
 from qiskit_qm_provider.job.qua_programs import (
@@ -109,11 +109,14 @@ class TestResultLocator:
         assert len(set(locator.values())) == 61
 
 
-def _measure_circuit():
+def _measure_circuits(backend, count):
+    """``count`` copies of a one-qubit measurement, transpiled once: quantum_circuit_to_qua
+    only accepts physical, native circuits."""
     qc = QuantumCircuit(1, 1)
     qc.x(0)
     qc.measure(0, 0)
-    return qc
+    transpiled = transpile(qc, backend)
+    return [transpiled.copy() for _ in range(count)]
 
 
 class TestPlanRunPrograms:
@@ -121,7 +124,7 @@ class TestPlanRunPrograms:
 
     def test_splits_into_multiple_programs(self, flux_tunable_backend):
         flux_tunable_backend.set_options(max_circuits=3)
-        circuits = [_measure_circuit() for _ in range(7)]
+        circuits = _measure_circuits(flux_tunable_backend, 7)
         programs, layout = plan_run_programs(flux_tunable_backend, 100, circuits)
         assert layout == [[0, 1, 2], [3, 4, 5], [6]]
         assert len(programs) == 3
@@ -129,7 +132,7 @@ class TestPlanRunPrograms:
 
     def test_single_program_under_limit(self, flux_tunable_backend):
         flux_tunable_backend.set_options(max_circuits=30)
-        circuits = [_measure_circuit() for _ in range(3)]
+        circuits = _measure_circuits(flux_tunable_backend, 3)
         programs, layout = plan_run_programs(flux_tunable_backend, 100, circuits)
         assert layout == [[0, 1, 2]]
         assert len(programs) == 1
@@ -140,13 +143,13 @@ class TestPlanRunPrograms:
     ):
         # Backward-compat wrapper: a single program is returned bare (not a list).
         flux_tunable_backend.set_options(max_circuits=100)
-        circuits = [_measure_circuit() for _ in range(40)]
+        circuits = _measure_circuits(flux_tunable_backend, 40)
         prog = get_run_program(flux_tunable_backend, 100, circuits)
         assert isinstance(prog, Program)
 
     def test_max_circuits_one_gives_one_program_per_circuit(self, flux_tunable_backend):
         flux_tunable_backend.set_options(max_circuits=1)
-        circuits = [_measure_circuit() for _ in range(4)]
+        circuits = _measure_circuits(flux_tunable_backend, 4)
         programs, layout = plan_run_programs(flux_tunable_backend, 100, circuits)
         assert layout == [[0], [1], [2], [3]]
         assert len(programs) == 4
