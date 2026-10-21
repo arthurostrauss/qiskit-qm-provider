@@ -104,7 +104,7 @@ def test_partially_used_vector_layout(array_mode):
         assert list(table.table) == ["t"]
         assert table.get_parameter("t").length == 5
     else:
-        assert list(table.table) == [f"_t_{i}_" for i in range(5)]
+        assert list(table.table) == ["_t_2_"]  # stock exporter emits only used elements
 
 
 def test_filter_split_vector(array_mode):
@@ -114,8 +114,8 @@ def test_filter_split_vector(array_mode):
         qc.rx(p, 0)
     keep_first = lambda p: getattr(p, "index", None) == 0  # noqa: E731
     table = ParameterTable.from_qiskit(qc, filter_function=keep_first)
-    # array mode: the full vector is declared; stock: all elements (as on main)
-    assert list(table.table) == (["t"] if array_mode else [f"_t_{i}_" for i in range(3)])
+    # array mode: the full vector is declared; stock: only the kept element
+    assert list(table.table) == (["t"] if array_mode else ["_t_0_"])
 
 
 def test_filter_whole_vector(array_mode):
@@ -255,47 +255,75 @@ def _mixed_vector_pub():
     return SamplerPub(qc, BindingsArray({(vec[2], scalar): [[0.2, 0.1]]}), shots=2)
 
 
-@pytest.mark.parametrize("primitive", ["sampler", "estimator"])
-def test_vector_pub_local_streaming(array_mode, primitive, monkeypatch):
+def _push_with(primitive, pub, circuit_table, delivery_table):
     from qiskit_qm_provider.job.qm_sampler_job import QMSamplerJob
     from qiskit_qm_provider.job.qm_estimator_job import QMEstimatorJob
 
+    backend = SimpleNamespace(qm=None)
+    if primitive == "sampler":
+        job = SimpleNamespace(
+            _pubs=[pub], _param_tables=[delivery_table], _circuit_tables=[circuit_table], _backend=backend
+        )
+        QMSamplerJob._push_parameters(job, None, [0])
+    else:
+        job = SimpleNamespace(_backend=backend)
+        plan = SimpleNamespace(
+            pub=pub, param_table=delivery_table, circuit_table=circuit_table,
+            observables_var=SimpleNamespace(input_type=None),
+        )
+        QMEstimatorJob._push_plan_data(job, None, plan)
+
+
+@pytest.mark.parametrize("primitive", ["sampler", "estimator"])
+def test_vector_pub_dense_row_streaming(array_mode, primitive, monkeypatch):
+    from qiskit_qm_provider.job._pub_parameters import build_pub_tables
+
+    pub = _mixed_vector_pub()
+    circuit_table, delivery_table = build_pub_tables(pub.circuit, InputType.INPUT_STREAM, "pt")
+    assert circuit_table.input_type is None and list(delivery_table.table) == ["pt_row"]
+    pushed = []
+    monkeypatch.setattr(delivery_table, "push_to_opx", lambda values, *args: pushed.append(values))
+    _push_with(primitive, pub, circuit_table, delivery_table)
+    # Raw row in circuit-parameter order (a, theta[2]), independent of the vector layout.
+    assert pushed == [{"pt_row": [0.1, 0.2]}]
+
+
+@pytest.mark.parametrize("primitive", ["sampler", "estimator"])
+def test_vector_pub_packed_streaming(array_mode, primitive, monkeypatch):
+    # A table that delivers its own fields (OPNIC-style) still receives packed values.
     pub = _mixed_vector_pub()
     table = ParameterTable.from_qiskit(pub.circuit, input_type=InputType.INPUT_STREAM)
     pushed = []
     monkeypatch.setattr(table, "push_to_opx", lambda values, *args: pushed.append(values))
-    backend = SimpleNamespace(qm=None)
-    if primitive == "sampler":
-        job = SimpleNamespace(_pubs=[pub], _param_tables=[table], _backend=backend)
-        QMSamplerJob._push_parameters(job, None, [0])
-    else:
-        job = SimpleNamespace(_backend=backend)
-        plan = SimpleNamespace(pub=pub, param_table=table, observables_var=SimpleNamespace(input_type=None))
-        QMEstimatorJob._push_plan_data(job, None, plan)
-    expected = {"a": 0.1, "theta": [0.0, 0.0, 0.2, 0.0]} if array_mode else {
-        "a": 0.1, "_theta_0_": 0.0, "_theta_1_": 0.0, "_theta_2_": 0.2, "_theta_3_": 0.0,
-    }
+    _push_with(primitive, pub, table, table)
+    expected = {"a": 0.1, "theta": [0.0, 0.0, 0.2, 0.0]} if array_mode else {"a": 0.1, "_theta_2_": 0.2}
     assert pushed == [expected]
 
 
+@pytest.mark.parametrize("input_type", [None, InputType.INPUT_STREAM], ids=["compile_time", "dense_row"])
 @pytest.mark.parametrize("primitive", ["sampler", "estimator"])
-def test_vector_pub_compile_time_assignment(array_mode, primitive, monkeypatch):
+def test_vector_pub_qua_scatter(array_mode, primitive, input_type, monkeypatch):
     from qiskit_qm_provider.job import qua_programs
+    from qiskit_qm_provider.job._pub_parameters import build_pub_tables
 
     pub = _mixed_vector_pub()
-    table = ParameterTable.from_qiskit(pub.circuit)
+    circuit_table, delivery_table = build_pub_tables(pub.circuit, input_type, "pt")
     monkeypatch.setattr(qua_programs, "_process_circuit", lambda *args, **kwargs: None)
     monkeypatch.setattr(qua_programs, "_process_observables_with_circuit", lambda *args, **kwargs: None)
     with qua.program() as prog:
         if primitive == "sampler":
-            qua_programs._process_sampler_pub(pub, None, table)
+            qua_programs._process_sampler_pub(pub, None, delivery_table, circuit_table)
         else:
             plan = SimpleNamespace(
-                pub=pub, param_table=table,
+                pub=pub, param_table=delivery_table, circuit_table=circuit_table,
                 observables_var=SimpleNamespace(input_type=InputType.INPUT_STREAM),
             )
             qua_programs._process_estimator_pub(plan, None)
-    assert "assign(" in generate_qua_script(prog)
+    script = generate_qua_script(prog)
+    # Only the two bound entries are assigned per binding; unused vector elements are not rewritten.
+    assert script.count("assign(") == 2
+    if input_type is not None:
+        assert "advance_input_stream" in script and "pt_row" in script
 
 
 def test_array_mode_input_name_collision_rejected(monkeypatch):
@@ -331,3 +359,88 @@ def test_singleton_row_copy():
         grid.declare()
         p.assign(grid[1])
     assert "for_(" in generate_qua_script(prog)
+
+
+def test_from_qiskit_accepts_pulse_schedule(array_mode):
+    pulse = pytest.importorskip("qiskit.pulse")
+    amp = QiskitParameter("amp")
+    with pulse.build(name="sched") as sched:
+        pulse.play(pulse.Constant(16, amp), pulse.DriveChannel(0))
+    table = ParameterTable.from_qiskit(sched)
+    assert list(table.table) == ["amp"]
+
+
+def test_packer_typed_zeros_and_shape_check(array_mode):
+    from qiskit_qm_provider import Parameter
+    from qiskit_qm_provider.parameter_table.qiskit_classical import qiskit_parameter_packer
+
+    qc, vec = _partial_vector_circuit(name="t", size=3)
+    flag = Parameter("flag", qua_type=bool)
+    table = ParameterTable([*ParameterTable.from_qiskit(qc).parameters, flag])
+    packed = qiskit_parameter_packer(qc, table)([0.5])
+    assert packed["flag"] is False
+    if array_mode:
+        assert packed["t"] == [0.0, 0.0, 0.5]
+        bad = ParameterTable([Parameter("t", 0.0)], name="bad")
+        with pytest.raises(ValueError, match="must be an array of length 3"):
+            qiskit_parameter_packer(qc, bad)
+    else:
+        assert packed["_t_2_"] == 0.5
+
+
+def test_dictionary_string_keys_follow_object_rules(array_mode):
+    qc, vec = _partial_vector_circuit()
+    compiler = _RecordingCompiler()
+    with qua.program():
+        if array_mode:
+            source = qua.declare(qua.fixed, value=[0.0] * len(vec))
+            _compile(qc, {"t": source}, compiler)
+            assert compiler.calls[-1].inputs == {"t": source}
+            with pytest.raises(ValueError, match="whole ParameterVector"):
+                _compile(qc, {"t[2]": source[2]}, compiler)
+        else:
+            x = qua.declare(qua.fixed)
+            _compile(qc, {"t[2]": x}, compiler)
+            assert compiler.calls[-1].inputs == {"_t_2_": x}
+            with pytest.raises(ValueError, match="require Qiskit array support"):
+                _compile(qc, {"t": x}, compiler)
+
+
+def test_unmarked_table_is_not_a_row(monkeypatch):
+    # A separately built table that is not the circuit table must not be mistaken for a dense row.
+    from qiskit_qm_provider.job._pub_parameters import build_pub_tables, is_row_delivery
+
+    pub = _mixed_vector_pub()
+    circuit_table, row_table = build_pub_tables(pub.circuit, InputType.INPUT_STREAM, "pt")
+    assert is_row_delivery(row_table) and not is_row_delivery(circuit_table)
+    other = ParameterTable.from_qiskit(pub.circuit, input_type=InputType.INPUT_STREAM, name="other")
+    assert not is_row_delivery(other)
+    pushed = []
+    monkeypatch.setattr(other, "push_to_opx", lambda values, *args: pushed.append(values))
+    _push_with("sampler", pub, circuit_table, other)
+    assert set(pushed[0]) == set(other.table)  # packed into its own fields, not {first_field: row}
+
+
+def test_row_table_rejects_mismatched_circuit():
+    from qiskit_qm_provider.job._pub_parameters import build_pub_tables, push_pub_rows
+
+    pub = _mixed_vector_pub()
+    _, row_table = build_pub_tables(pub.circuit, InputType.INPUT_STREAM, "pt")
+    with pytest.raises(ValueError, match="does not match the circuit"):
+        push_pub_rows(pub, row_table, row_table, job=None)
+
+
+def test_estimator_row_tables_named_by_plan_index():
+    from qiskit.primitives.containers.estimator_pub import EstimatorPub
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_qm_provider.job.qm_estimator_job import _ExecutionPlan
+    from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
+
+    plans = []
+    for i, size in enumerate((1, 2)):
+        qc = QuantumCircuit(1, name="ansatz")  # same name, different parameter counts
+        for p in ParameterVector(f"v{i}", size):
+            qc.rx(p, 0)
+        pub = EstimatorPub.coerce((qc, SparsePauliOp(["Z"]), [[0.1] * size]))
+        plans.append(_ExecutionPlan.from_pub(pub, QMEstimatorOptions(input_type=InputType.INPUT_STREAM), plan_index=i))
+    assert [list(plan.param_table.table) for plan in plans] == [["param_table_0_row"], ["param_table_1_row"]]

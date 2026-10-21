@@ -22,19 +22,28 @@ Author: Arthur Strauss
 Date: 2026-02-08
 """
 
-from typing import List
+from typing import List, Optional
 
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 
 from qiskit_qm_provider.parameter_table import ParameterTable
-from qiskit_qm_provider.parameter_table.qiskit_classical import packed_qiskit_parameter_rows
+from ._pub_parameters import delivery_rows
 from ._sync_hook_common import jinja_env, serialize_table, to_py_literal
 
 
-def generate_sync_hook_sampler(pubs: List[SamplerPub], parameter_tables: List[ParameterTable]) -> str:
-    """Generate the sync hook code for the sampler."""
+def generate_sync_hook_sampler(
+    pubs: List[SamplerPub],
+    parameter_tables: List[ParameterTable],
+    circuit_tables: Optional[List[Optional[ParameterTable]]] = None,
+) -> str:
+    """Generate the sync hook code for the sampler.
+
+    ``parameter_tables`` are the delivery tables; ``circuit_tables`` (default: the same)
+    tell whether a PUB's bindings travel as dense rows (see ``_pub_parameters``).
+    """
+    circuit_tables = circuit_tables if circuit_tables is not None else parameter_tables
     pubs_data = []
-    for pub, parameter_table in zip(pubs, parameter_tables):
+    for pub, parameter_table, circuit_table in zip(pubs, parameter_tables, circuit_tables):
         table = serialize_table(parameter_table)
         if table is None:
             pubs_data.append(None)
@@ -43,7 +52,7 @@ def generate_sync_hook_sampler(pubs: List[SamplerPub], parameter_tables: List[Pa
             {
                 "input_type": table["input_type"],
                 "params": table["params"],
-                "values": packed_qiskit_parameter_rows(pub, parameter_table),
+                "values": delivery_rows(pub, circuit_table, parameter_table),
             }
         )
 

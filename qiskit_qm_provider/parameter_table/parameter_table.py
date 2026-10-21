@@ -970,8 +970,9 @@ class ParameterTable(QuaFieldTable):
           each vector is one array ``Parameter`` of length ``N`` named after the vector, matching
           the exporter's full-length ``input array[float[64], N]`` -- even if only some elements
           are used in the circuit.
-        * **Stock Qiskit**: each element is its own scalar field ``_name_i_`` (the identifier the
-          OpenQASM 3 exporter emits for ``name[i]``).
+        * **Stock Qiskit**: each element used in the circuit (and kept by ``filter_function``) is
+          its own scalar field ``_name_i_`` (the identifier the OpenQASM 3 exporter emits for
+          ``name[i]``); unused elements are not exported, so they get no field.
 
         Names are used as-is in the exported OpenQASM 3: choose ASCII Parameter/ParameterVector
         names that are not gate names or OpenQASM reserved keywords.
@@ -992,7 +993,8 @@ class ParameterTable(QuaFieldTable):
         from qiskit.circuit.parametervector import ParameterVectorElement
         from qiskit.circuit.classical import types
         from .qiskit_classical import (
-            qiskit_has_array, qiskit_input_key, unsupported_classical_type_error, validate_qiskit_input_names,
+            qiskit_has_array, qiskit_input_key, qua_zero, unsupported_classical_type_error,
+            validate_qiskit_input_names,
         )
 
         validate_qiskit_input_names(qc)
@@ -1002,41 +1004,31 @@ class ParameterTable(QuaFieldTable):
         for parameter in qc.parameters:
             if filter_function is not None and not filter_function(parameter):
                 continue
-            if isinstance(parameter, ParameterVectorElement):
+            if array_mode and isinstance(parameter, ParameterVectorElement):
                 param_vec = parameter.vector
                 if param_vec in param_vector_set:
                     continue
                 param_vector_set.add(param_vec)
-                if array_mode:
-                    param_list.append(
-                        Parameter(
-                            param_vec.name,
-                            value=[0.0] * len(param_vec),
-                            qua_type=fixed,
-                            input_type=input_type,
-                            direction=Direction.INCOMING,
-                        )
+                param_list.append(
+                    Parameter(
+                        param_vec.name,
+                        value=[0.0] * len(param_vec),
+                        qua_type=fixed,
+                        input_type=input_type,
+                        direction=Direction.INCOMING,
                     )
-                else:
-                    param_list.extend(
-                        Parameter(
-                            qiskit_input_key(elem),
-                            qua_type=fixed,
-                            input_type=input_type,
-                            direction=Direction.INCOMING,
-                        )
-                        for elem in param_vec
-                    )
+                )
                 continue
             param_list.append(
                 Parameter(
-                    parameter.name,
+                    qiskit_input_key(parameter),
                     qua_type=fixed,
                     input_type=input_type,
                     direction=Direction.INCOMING,
                 )
             )
         if isinstance(qc, QuantumCircuit):
+            scalar_map = {types.Uint: int, types.Bool: bool, types.Float: fixed}
             for var in qc.iter_input_vars():
                 if filter_function is not None and not filter_function(var):
                     continue
@@ -1044,7 +1036,6 @@ class ParameterTable(QuaFieldTable):
                 if error is not None:
                     raise error
                 kind = var.type.kind
-                scalar_map = {types.Uint: int, types.Bool: bool, types.Float: fixed}
                 if kind in scalar_map:
                     param_list.append(
                         Parameter(
@@ -1058,11 +1049,10 @@ class ParameterTable(QuaFieldTable):
                     element_type = scalar_map.get(var.type.element.kind)
                     if element_type is None:
                         raise ValueError(f"Unsupported element type: {var.type.element.kind}")
-                    value = [0.0 if element_type is fixed else element_type(0) for _ in range(var.type.size)]
                     param_list.append(
                         Parameter(
                             var.name,
-                            value=value,
+                            value=[qua_zero(element_type)] * var.type.size,
                             qua_type=element_type,
                             input_type=input_type,
                             direction=Direction.INCOMING,

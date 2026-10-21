@@ -113,7 +113,13 @@ When the fork is installed, two things change in this provider:
 - [`ParameterTable.from_qiskit`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) maps an `Array` input to **one array-valued `Parameter`** (a QUA array of `int`, `bool` or `fixed`).
 - A `ParameterVector` is collapsed into **one** array `Parameter` named after the vector. The fork's OpenQASM 3 exporter emits a matching `input array[float[64], N]`; every element is exported even if only some are used, so the full vector is included whenever `filter_function` keeps any used element.
 
-Sampler and estimator PUBs still supply values only for parameters used by the circuit. The provider orders those values by parameter identity, packs each vector into its full-length array and fills unused entries with zero. The same mapping is used for compile-time bindings, local streaming and IQCC sync hooks.
+Sampler and estimator PUBs still supply values only for parameters used by the circuit, ordered as `circuit.parameters`. The circuit always sees the full-length vector array; unused entries hold zero and are never read, since gate parameters cannot index an array at run time. How a binding reaches it depends on `input_type`:
+
+- `INPUT_STREAM`, `IO1`, `IO2`: each binding travels as **one dense row** of `len(circuit.parameters)` floats on a per-PUB `<table>_row` input (one push and one `advance_input_stream` per binding over an input stream). In QUA the row is scattered into the circuit's fields, assigning only the used entries. Unused vector elements are never transferred, and a vector shared by several PUBs needs no shared stream.
+- `None` (compile-time): the rows are preloaded as a `QUA2DArray` and scattered the same way.
+- `OPNIC`: the circuit's table is pushed as one struct packet, with each vector packed into its full-length array.
+
+The same layout is used for local streaming and IQCC sync hooks.
 
 For dictionary bindings to `quantum_circuit_to_qua`, use `{vector: qua_array}` or `{vector.name: qua_array}` in array mode. Supply the full vector length; individual `vector[i]` keys are rejected because the exported input is an array. Give scalars, vectors and classical inputs distinct names: a scalar `theta` and a vector `theta` would collide, so the provider raises `ValueError` before export instead of silently dropping one field.
 

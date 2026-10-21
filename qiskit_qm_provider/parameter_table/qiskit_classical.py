@@ -52,17 +52,18 @@ def qiskit_input_key(obj) -> str:
     return obj.name
 
 
-def validate_qiskit_input_names(qc: "QuantumCircuit") -> None:
+def validate_qiskit_input_names(qc: QuantumCircuit) -> None:
     """Reject ambiguous input names before the exporter renames or a table drops them.
 
     Qiskit permits a scalar ``theta`` alongside ``theta[0]``, but in array mode both
     would become a field named ``theta``. The provider requires distinct input names.
+    Pulse schedules (no input vars) are checked on their parameters only.
     """
     from qiskit.circuit.parametervector import ParameterVectorElement
 
     array_mode = qiskit_has_array()
     names = {}
-    for obj in (*qc.parameters, *qc.iter_input_vars()):
+    for obj in (*qc.parameters, *getattr(qc, "iter_input_vars", tuple)()):
         owner = obj.vector if array_mode and isinstance(obj, ParameterVectorElement) else obj
         name = qiskit_input_key(obj)
         if name in names and names[name] != owner:
@@ -73,33 +74,70 @@ def validate_qiskit_input_names(qc: "QuantumCircuit") -> None:
         names[name] = owner
 
 
-def map_qiskit_parameter_values(qc, table, row) -> dict:
-    """Pack a row ordered as ``qc.parameters`` into scalar/array table fields.
+def qua_zero(qua_type):
+    """Zero value of a table field's QUA type (``int``, ``bool`` or ``fixed``)."""
+    return {int: 0, bool: False}.get(qua_type, 0.0)
 
-    Unused vector elements are zero-filled: the fork exports the full vector even
-    though PUBs contain only the circuit's used parameters. Works with Python values
-    and QUA2DArray row elements, so all primitive execution paths share this layout.
+
+def qiskit_row_layout(qc, table) -> list[tuple[int, str, int | None]]:
+    """``(column, field, index)`` for each ``qc.parameters`` column bound to a ``table`` field.
+
+    ``index`` is the element index for a vector packed into an array field (array mode),
+    ``None`` for a scalar field. Raises ``ValueError`` if a vector's field is not an array
+    of the vector's length.
     """
     from qiskit.circuit.parametervector import ParameterVectorElement
 
     array_mode = qiskit_has_array()
-    values = {p.name: [0.0] * p.length if p.is_array else 0.0 for p in table.parameters}
+    fields = {p.name: p for p in table.parameters}
+    layout = []
     for column, parameter in enumerate(qc.parameters):
         key = qiskit_input_key(parameter)
-        if key not in values:
+        field = fields.get(key)
+        if field is None:
             continue
         if array_mode and isinstance(parameter, ParameterVectorElement):
-            values[key][parameter.index] = row[column]
+            if not field.is_array or field.length != len(parameter.vector):
+                raise ValueError(
+                    f"Table field '{key}' must be an array of length {len(parameter.vector)} "
+                    f"to hold ParameterVector '{parameter.vector.name}'."
+                )
+            layout.append((column, key, parameter.index))
         else:
-            values[key] = row[column]
-    return values
+            layout.append((column, key, None))
+    return layout
+
+
+def qiskit_parameter_packer(qc, table):
+    """Return ``row -> dict`` packing a row ordered as ``qc.parameters`` into table fields.
+
+    The column layout is computed (and validated) once, so build the packer outside
+    per-row loops. Unused vector elements and fields the row does not bind are filled
+    with typed zeros: the fork exports the full vector even though PUBs contain only
+    the circuit's used parameters.
+    """
+    layout = qiskit_row_layout(qc, table)
+    defaults = {
+        p.name: [qua_zero(p.type)] * p.length if p.is_array else qua_zero(p.type) for p in table.parameters
+    }
+
+    def pack(row) -> dict:
+        values = {name: list(value) if isinstance(value, list) else value for name, value in defaults.items()}
+        for column, key, index in layout:
+            if index is None:
+                values[key] = row[column]
+            else:
+                values[key][index] = row[column]
+        return values
+
+    return pack
 
 
 def packed_qiskit_parameter_rows(pub, table) -> list[list]:
     """Return PUB bindings packed in table order, suitable for a cloud sync hook."""
+    pack = qiskit_parameter_packer(pub.circuit, table)
     return [
-        list(map_qiskit_parameter_values(pub.circuit, table, row).values())
-        for row in pub.parameter_values.ravel().as_array(pub.circuit.parameters).tolist()
+        list(pack(row).values()) for row in pub.parameter_values.ravel().as_array(pub.circuit.parameters).tolist()
     ]
 
 
@@ -133,21 +171,21 @@ def unsupported_classical_type_error(name: str, ty) -> ValueError | None:
     return ValueError(f"Unsupported classical type {ty} for variable '{name}': {reason}.")
 
 
-def _iter_circuits(qc: "QuantumCircuit") -> Iterator["QuantumCircuit"]:
+def _iter_circuits(qc: QuantumCircuit) -> Iterator[QuantumCircuit]:
+    if not hasattr(qc, "iter_vars"):  # pulse schedules carry no classical Vars
+        return
     yield qc
     for instruction in qc.data:
         for block in getattr(instruction.operation, "blocks", ()):
             yield from _iter_circuits(block)
 
 
-def validate_classical_types(qc: "QuantumCircuit") -> None:
+def validate_classical_types(qc: QuantumCircuit) -> None:
     """Raise ``ValueError`` if ``qc`` (or a nested control-flow block) declares, captures or
     takes as input a ``Var`` of a type QUA cannot represent (Duration/Stretch, zero-size arrays,
     Duration arrays). Stores into such variables are covered since their target is such a Var.
     """
     for circuit in _iter_circuits(qc):
-        if not hasattr(circuit, "iter_vars"):
-            continue
         for var in circuit.iter_vars():
             error = unsupported_classical_type_error(var.name, var.type)
             if error is not None:

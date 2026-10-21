@@ -58,6 +58,7 @@ class _FakePlan:
     def __init__(self, pub, param_table, observables_var, obs_indices):
         self.pub = pub
         self.param_table = param_table
+        self.circuit_table = param_table
         self.observables_var = observables_var
         self.obs_indices = obs_indices
 
@@ -132,6 +133,35 @@ def test_sampler_input_stream_pushes_with_coercion():
     assert job.streamed == [("x", 0.1), ("n", 2), ("x", 0.3), ("n", 4)]
     assert all(isinstance(v, float) for (n, v) in job.streamed if n == "x")
     assert all(isinstance(v, int) for (n, v) in job.streamed if n == "n")
+
+
+def test_sampler_dense_row_one_push_per_binding():
+    from qiskit_qm_provider.job._pub_parameters import build_pub_tables
+
+    pub = _FakePub([[0.1, 2.0], [0.3, 4.0]], names=("x", "y"))
+    circuit_table, delivery_table = build_pub_tables(pub.circuit, InputType.INPUT_STREAM, "pt")
+    code = generate_sync_hook_sampler([pub], [delivery_table], [circuit_table])
+    _assert_no_provider_imports(code)
+
+    job = _StubJob()
+    _exec_hook(code, job)
+
+    # One push of the whole raw row per binding, in circuit-parameter order.
+    assert job.streamed == [("pt_row", [0.1, 2.0]), ("pt_row", [0.3, 4.0])]
+
+
+def test_sampler_dense_row_io_pushes_elementwise():
+    from qiskit_qm_provider.job._pub_parameters import build_pub_tables
+
+    pub = _FakePub([[0.5, 0.25]], names=("x", "y"))
+    circuit_table, delivery_table = build_pub_tables(pub.circuit, InputType.IO1, "pt")
+    code = generate_sync_hook_sampler([pub], [delivery_table], [circuit_table])
+
+    job = _StubJob()
+    _exec_hook(code, job)
+
+    assert job.io_values == [{"io1": 0.5}, {"io1": 0.25}]
+    assert job.resumed == 2
 
 
 def test_sampler_io_pushes_pause_resume():

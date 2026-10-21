@@ -918,7 +918,15 @@ class QMBackend(Backend):
                     variables = table.variables_dict if isinstance(table, ParameterTable) else {table.name: table.var}
                     inputs.update(variables)
             elif isinstance(param_table, Dict):
+                # String keys naming a circuit parameter (``"t[2]"``) or vector (``"t"``) get the
+                # same validation and renaming as the corresponding objects.
+                named_inputs = {
+                    p.vector.name: p.vector for p in qc.parameters if isinstance(p, ParameterVectorElement)
+                }
+                named_inputs.update((p.name, p) for p in qc.parameters)
                 for key, value in param_table.items():
+                    if isinstance(key, str):
+                        key = named_inputs.get(key, key)
                     if qiskit_has_array() and isinstance(key, ParameterVectorElement):
                         raise ValueError(
                             "Array-mode dictionary bindings require a whole ParameterVector or its name "
