@@ -32,7 +32,7 @@ dependencies = [
     "qm-qua >=1.2.3",
     "openqasm3",
     "qiskit_qasm3_import",
-    "qm-qasm>=1.7.7"
+    "qm-qasm>=1.8.0"
 ]
 
 [project.optional-dependencies]
