@@ -29,7 +29,8 @@ from qm import generate_qua_script  # noqa: E402
 
 OPTIMIZATION_LEVELS = [0, 1, 2, 3]
 _ALIGN = re.compile(r"align\((?P<elements>[^)]*)\)")
-_ELEMENT = re.compile(r"'([^']+)'")
+# QM script generation can use either Python string delimiter.
+_ELEMENT = re.compile(r'''["']([^"']+)["']''')
 
 
 @pytest.fixture(scope="module")
