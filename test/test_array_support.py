@@ -11,14 +11,13 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
-from qiskit import QuantumCircuit
+from qiskit import QuantumCircuit, transpile
 from qiskit.circuit import Parameter as QiskitParameter, ParameterVector
 from qiskit.circuit.classical import expr, types
 from qiskit.qasm3 import Exporter
 from qm import qua, generate_qua_script
 
 from qiskit_qm_provider import InputType, ParameterPool, ParameterTable, QUA2DArray
-from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qiskit_qm_provider.parameter_table import qiskit_classical
 from qiskit_qm_provider.parameter_table.qiskit_classical import qiskit_has_array
 
@@ -63,19 +62,19 @@ class _RecordingCompiler:
         return SimpleNamespace(name=compilation_name, result_program=None, uuid="0", source_code=qasm)
 
 
-def _real_compiler():
-    from qm_qasm import Compiler, HardwareConfig, OperationIdentifier
+@pytest.fixture
+def compile_circuit(compilation_backend, monkeypatch):
+    """Compile through a real machine-derived target; replace only the compiler when
+    inspecting input mappings that deliberately emulate the other Qiskit variant.
+    """
+    def compile(qc, table, compiler=None):
+        physical = transpile(qc, compilation_backend, optimization_level=0)
+        with monkeypatch.context() as patch:
+            if compiler is not None:
+                patch.setattr(type(compilation_backend), "compiler", property(lambda self: compiler))
+            return compilation_backend.quantum_circuit_to_qua(physical, table)
 
-    ops = {
-        OperationIdentifier("rx", 1, (0,)): lambda t: qua.frame_rotation(t, "q0"),
-        OperationIdentifier("rz", 1, (0,)): lambda t: qua.frame_rotation(t, "q0"),
-    }
-    return Compiler(hardware_config=HardwareConfig(quantum_operations_db=ops, physical_qubits={0: ("q0",)}))
-
-
-def _compile(qc, table, compiler):
-    fake_backend = SimpleNamespace(qm_qasm_basis_gates=BASIS, compiler=compiler)
-    return QMBackend.quantum_circuit_to_qua(fake_backend, qc, table)
+    return compile
 
 
 # ---------------------------------------------------------------------------------------------
@@ -133,7 +132,7 @@ def test_filter_whole_vector(array_mode):
 
 
 @pytest.mark.parametrize("make_type", ["duration", "stretch"])
-def test_duration_stretch_input_rejected(make_type):
+def test_duration_stretch_input_rejected(make_type, compile_circuit):
     ty = types.Duration() if make_type == "duration" else getattr(types, "Stretch", lambda: None)()
     if ty is None:
         pytest.skip("types.Stretch unavailable")
@@ -145,14 +144,14 @@ def test_duration_stretch_input_rejected(make_type):
     with pytest.raises(ValueError, match="Unsupported classical type"):
         ParameterTable.from_qiskit(qc)
     with pytest.raises(ValueError, match="Unsupported classical type"):
-        _compile(qc, None, _RecordingCompiler())
+        compile_circuit(qc, None, _RecordingCompiler())
 
 
-def test_duration_declared_var_rejected_in_compile():
+def test_duration_declared_var_rejected_in_compile(compile_circuit):
     qc = QuantumCircuit(1)
     qc.add_var("d", expr.Value(10, types.Duration()))
     with pytest.raises(ValueError, match="Unsupported classical type"):
-        _compile(qc, None, _RecordingCompiler())
+        compile_circuit(qc, None, _RecordingCompiler())
 
 
 # ---------------------------------------------------------------------------------------------
@@ -170,13 +169,13 @@ def test_array_input_var_maps_to_array_parameter():
 
 
 @fork_only
-def test_zero_size_array_rejected():
+def test_zero_size_array_rejected(compile_circuit):
     qc = QuantumCircuit(1)
     qc.add_input("arr", types.Array(types.Float(), 0))
     with pytest.raises(ValueError, match="zero-size"):
         ParameterTable.from_qiskit(qc)
     with pytest.raises(ValueError, match="zero-size"):
-        _compile(qc, None, _RecordingCompiler())
+        compile_circuit(qc, None, _RecordingCompiler())
 
 
 @fork_only
@@ -193,25 +192,25 @@ def test_duration_array_rejected():
 
 
 @fork_only
-def test_e2e_fork_partial_vector_with_qua2d_row():
-    qc, vec = _partial_vector_circuit(name="x")
+def test_e2e_fork_partial_vector_with_qua2d_row(compile_circuit):
+    qc, vec = _partial_vector_circuit(name="theta")
     table = ParameterTable.from_qiskit(qc)
     grid = QUA2DArray("grid", [[0.1] * 5, [0.2] * 5])
     compiler = _RecordingCompiler()
     with qua.program() as prog:
         table.declare(pause_program=False)
         grid.declare()
-        table.get_parameter("x").assign(grid[1])
-        _compile(qc, table, compiler)
-        assert compiler.calls[0].inputs["x"] is table.get_parameter("x").var
+        table.get_parameter("theta").assign(grid[1])
+        compile_circuit(qc, table, compiler)
+        assert compiler.calls[0].inputs["theta"] is table.get_parameter("theta").var
     call = compiler.calls[0]
-    assert "input array[float[64], 5] x;" in call.qasm
-    assert list(call.inputs) == ["x"]
+    assert "input array[float[64], 5] theta;" in call.qasm
+    assert list(call.inputs) == ["theta"]
     assert "for_(" in generate_qua_script(prog)
 
 
 @fork_only
-def test_e2e_fork_real_compiler():
+def test_e2e_fork_real_compiler(compile_circuit):
     from packaging.version import Version
     from importlib.metadata import version
 
@@ -220,16 +219,16 @@ def test_e2e_fork_real_compiler():
     qc, _ = _partial_vector_circuit()
     table = ParameterTable.from_qiskit(qc)
     with qua.program():
-        _compile(qc, table, _real_compiler())
+        compile_circuit(qc, table)
 
 
 @stock_only
-def test_e2e_stock_real_compiler():
+def test_e2e_stock_real_compiler(compile_circuit):
     qc, _ = _partial_vector_circuit()
     qc.rz(QiskitParameter("a"), 0)
     table = ParameterTable.from_qiskit(qc)
     with qua.program() as prog:
-        _compile(qc, table, _real_compiler())
+        compile_circuit(qc, table)
     assert "frame_rotation" in generate_qua_script(prog)
 
 
@@ -318,7 +317,7 @@ def test_vector_pub_qua_scatter(array_mode, primitive, input_type, monkeypatch):
         assert "advance_input_stream" in script and "pt_row" in script
 
 
-def test_array_mode_input_name_collision_rejected(monkeypatch):
+def test_array_mode_input_name_collision_rejected(monkeypatch, compile_circuit):
     monkeypatch.setattr(qiskit_classical, "qiskit_has_array", lambda: True)
     qc, _ = _partial_vector_circuit(name="theta")
     qc.rz(QiskitParameter("theta"), 0)
@@ -326,20 +325,20 @@ def test_array_mode_input_name_collision_rejected(monkeypatch):
         ParameterTable.from_qiskit(qc)
     compiler = _RecordingCompiler()
     with pytest.raises(ValueError, match="Ambiguous Qiskit input name"):
-        _compile(qc, None, compiler)
+        compile_circuit(qc, None, compiler)
     assert not compiler.calls
 
 
-def test_array_mode_dictionary_vector_binding(monkeypatch):
+def test_array_mode_dictionary_vector_binding(monkeypatch, compile_circuit):
     monkeypatch.setattr(qiskit_classical, "qiskit_has_array", lambda: True)
     qc, vec = _partial_vector_circuit()
     compiler = _RecordingCompiler()
     with qua.program():
         source = qua.declare(qua.fixed, value=[0.0] * len(vec))
-        _compile(qc, {vec: source}, compiler)
+        compile_circuit(qc, {vec: source}, compiler)
         assert compiler.calls[-1].inputs == {vec.name: source}
         with pytest.raises(ValueError, match="whole ParameterVector"):
-            _compile(qc, {vec[2]: source[2]}, compiler)
+            compile_circuit(qc, {vec[2]: source[2]}, compiler)
 
 
 def test_singleton_row_copy():
@@ -380,22 +379,22 @@ def test_packer_typed_zeros_and_shape_check(array_mode):
         assert packed["_t_2_"] == 0.5
 
 
-def test_dictionary_string_keys_follow_object_rules(array_mode):
+def test_dictionary_string_keys_follow_object_rules(array_mode, compile_circuit):
     qc, vec = _partial_vector_circuit()
     compiler = _RecordingCompiler()
     with qua.program():
         if array_mode:
             source = qua.declare(qua.fixed, value=[0.0] * len(vec))
-            _compile(qc, {"t": source}, compiler)
+            compile_circuit(qc, {"t": source}, compiler)
             assert compiler.calls[-1].inputs == {"t": source}
             with pytest.raises(ValueError, match="whole ParameterVector"):
-                _compile(qc, {"t[2]": source[2]}, compiler)
+                compile_circuit(qc, {"t[2]": source[2]}, compiler)
         else:
             x = qua.declare(qua.fixed)
-            _compile(qc, {"t[2]": x}, compiler)
+            compile_circuit(qc, {"t[2]": x}, compiler)
             assert compiler.calls[-1].inputs == {"_t_2_": x}
             with pytest.raises(ValueError, match="require Qiskit array support"):
-                _compile(qc, {"t": x}, compiler)
+                compile_circuit(qc, {"t": x}, compiler)
 
 
 def test_unmarked_table_is_not_a_row(monkeypatch):
