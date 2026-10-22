@@ -25,14 +25,14 @@ classifiers=[
 ]
 
 dependencies = [
-    "qiskit>=2,<3",
+    "qiskit>=2.2,<3.0",
     "qualang-tools>=0.16.0",
     "quam >=0.4.2",
     "sympy>=1.14.0",
     "qm-qua >=1.2.3",
     "openqasm3",
     "qiskit_qasm3_import",
-    "qm-qasm>=1.7.7"
+    "qm-qasm>=1.8.0"
 ]
 
 [project.optional-dependencies]

@@ -40,10 +40,12 @@ def add_basic_macros(
     Also re-exported from :mod:`qiskit_qm_provider` and
     :mod:`qiskit_qm_provider.backend.backend_utils` for backward compatibility.
 
-    Adds ``x``, ``sx``, ``rz``, ``sy``, ``sydg``, ``measure``, ``reset``, ``delay``,
-    ``id``, and ``cz`` macros. These definitions are **tailored to flux-tunable
-    transmon** hardware and assume pulse naming from ``FluxTunableQuam`` /
-    quam-builder (e.g. ``x180``, ``x90``, readout pulses, ``CZGate`` on pairs).
+    Adds ``x``, ``y``, ``sx``, ``sxdg``, ``rz``, ``sy``, ``sydg``, ``measure``, ``reset``,
+    ``delay``, ``id``, and ``cz`` macros. These definitions are **tailored to flux-tunable
+    transmon** hardware and assume the standard pulse naming from ``FluxTunableQuam`` /
+    quam-builder: ``x180``, ``y180``, ``x90``, ``-x90``, ``y90``, ``-y90``, ``readout``, and
+    ``CZGate`` on pairs. Every one of those pulses must exist on each active qubit; machines
+    for other platforms should define their own macros instead of calling this.
 
     Single-qubit macros are imported from ``quam-builder`` when available; otherwise
     the provider falls back to local copies under
@@ -97,7 +99,9 @@ def add_basic_macros(
     machine = backend.machine if isinstance(backend, QMBackend) else backend
     pulse_gate_map = {
         "x": "x180",
+        "y": "y180",
         "sx": "x90",
+        "sxdg": "-x90",
         "sy": "y90",
         "sydg": "-y90",
     }
