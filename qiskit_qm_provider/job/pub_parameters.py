@@ -32,6 +32,9 @@ row, i.e. one struct with a single array field, not one field per parameter. Ena
 adding OPNIC to ``_DENSE_INPUT_TYPES`` (mind Quarc's promotion of one-field structs to
 standalone parameters).
 
+Every circuit parameter lands in a QUA ``fixed`` (signed 4.28 fixed point), so each bound value
+must lie in ``[FIXED_MIN, FIXED_MAX]``; :func:`check_fixed_range` rejects a PUB otherwise.
+
 Estimator observables travel the same way: per binding, one int row
 ``[n_obs, words(obs_0), ..., words(obs_{L-1})]`` padded to the plan's largest ``L``, where each
 observable's per-qubit basis codes (0: Z/I, 1: X, 2: Y) are packed 2 bits per qubit,
@@ -43,6 +46,7 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
+import numpy as np
 from qm.qua import IO1, IO2, assign, fixed, for_, pause
 
 from ..parameter_table import Direction, InputType, Parameter, ParameterTable
@@ -53,6 +57,33 @@ from ..parameter_table.qiskit_classical import (
 )
 
 _DENSE_INPUT_TYPES = (InputType.INPUT_STREAM, InputType.IO1, InputType.IO2)
+
+FIXED_MIN = -8.0
+FIXED_MAX = 8.0 - 2.0**-28
+"""Range of QUA ``fixed`` (signed 4.28 fixed point): every circuit parameter value must lie in it."""
+
+
+def check_fixed_range(pub, index) -> None:
+    """Reject a PUB with a parameter value outside ``[FIXED_MIN, FIXED_MAX]`` (or not finite).
+
+    Circuit parameters are delivered and stored as QUA ``fixed`` on every path (compile-time
+    rows, dense streamed rows, packed tables), and a value outside that range cannot be
+    represented. Such values are not supported: rescale the parameter instead (see the
+    *Parameter values and fixed-point range* section of the primitives guide).
+    """
+    parameters = pub.circuit.parameters
+    if not len(parameters) or pub.parameter_values.size == 0:
+        return
+    values = np.asarray(pub.parameter_values.ravel().as_array(parameters), dtype=float)
+    bad = ~((values >= FIXED_MIN) & (values <= FIXED_MAX))
+    if bad.any():
+        binding, column = (int(i) for i in np.argwhere(bad)[0])
+        raise ValueError(
+            f"PUB {index}: parameter {parameters[column].name!r} has value {values[binding, column]!r} "
+            f"(binding {binding}; {int(bad.sum())} out-of-range value(s) in total), outside the QUA "
+            f"fixed-point range [{FIXED_MIN}, 8) used for circuit parameters. Values beyond this range "
+            "are not supported: rescale the parameter so that every bound value fits."
+        )
 
 
 def build_pub_tables(

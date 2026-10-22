@@ -60,6 +60,26 @@ Each measured qubit gets one basis code per measurement group: 0 for Z or I, 1 f
 - **IO1/IO2:** only the used part of the row is exchanged.
 - **Compile time (`input_type=None`):** the same rows are preloaded into the program.
 
+## Parameter values and fixed-point range
+
+Every circuit parameter reaches the program as a QUA `fixed`: a signed 4.28 fixed-point number, with range **[-8, 8)** and resolution 2⁻²⁸ ≈ 3.7·10⁻⁹. This holds for every `input_type`, including compile-time preloading. Values outside this range are **not supported**. When a `QMSamplerV2` or `QMEstimatorV2` job is created, any PUB with a bound value outside the range (or a NaN or infinite value) is rejected with a `ValueError` that names the PUB, the parameter and the binding. Nothing is clipped or wrapped for you.
+
+Angles in [-π, π] or [0, 2π] fit. Quantities with a larger natural scale do not, for example durations, frequencies or angles accumulated over many turns. Bind such a quantity in a rescaled unit that stays inside [-8, 8), and undo the scale in the circuit, as long as the expression stays in range (see the warning below).
+
+```{warning}
+The range check covers the **bound values only**. It does not cover expressions built from parameters. A gate argument such as `rx(3 * theta)`, `rz(theta + phi + chi)` or `rx(theta * phi)`, or a backend macro that scales an angle, is evaluated **in real time, in fixed-point arithmetic, on the controller**. Each value can be in range while an intermediate or final result is not: with `theta = 3.0`, `3 * theta = 9.0` cannot be represented in `fixed`, and the provider raises no error. The gate then receives a wrong value. Products of small values also lose resolution, since only 28 fractional bits remain.
+
+Before running, check the extreme values of every parameter expression in your circuits, not just of the parameters.
+```
+
+When the risk is high for your use case (large dynamic ranges, long sums, products of parameters), please reach out to the maintainer first (open an issue on the [GitHub repository](https://github.com/arthurostrauss/qiskit-qm-provider/issues) or write to the author listed in `pyproject.toml`). In general, such kernels have to be written in QUA as real-time processing with explicit rescaling, rather than expressed as Qiskit parameter arithmetic. QUA's `Cast` utilities (`from qm.qua import Cast`) are the main tools for this:
+
+- `Cast.mul_fixed_by_int(x, n)` and `Cast.mul_int_by_fixed(n, x)` multiply a `fixed` by an `int` without first converting the integer to `fixed`. An integer ≥ 8 cannot be a `fixed`, so carry large integer factors as `int` and combine them only through these helpers. The result must still fit its output type.
+- `Cast.to_int`, `Cast.to_fixed` and `Cast.to_bool` convert values between types.
+- `Cast.unsafe_cast_int`, `Cast.unsafe_cast_fixed` and `Cast.unsafe_cast_bool` reinterpret the raw 32 bits without conversion. Use them with integer shifts to scale by powers of two, or to carry a wider-range quantity as an integer part and a fractional part.
+
+See the [QUA reference guide](https://docs.quantum-machines.co/latest/docs/Guides/qua_ref/) in the QM documentation for the full semantics of QUA variable types, arithmetic and the `Cast` module.
+
 ## Options at a glance
 
 | Option | Sampler | Estimator | Meaning |

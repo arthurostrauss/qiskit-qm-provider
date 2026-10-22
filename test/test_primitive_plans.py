@@ -245,3 +245,33 @@ def test_estimator_job_run_options_none():
     assert job._run_options == {"abelian_grouping": True}
     job.metadata = {"run_options": {"simulate": "cfg"}, "abelian_grouping": True}
     assert job._run_options == {"simulate": "cfg", "abelian_grouping": True}
+
+
+# ---------------------------------------------------------------------------------------------
+# Parameter values must fit QUA fixed
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("input_type", [None, InputType.INPUT_STREAM])
+@pytest.mark.parametrize("value", [8.0, -8.000001, 10.0, float("nan"), float("inf")])
+def test_estimator_rejects_values_outside_fixed_range(input_type, value):
+    with pytest.raises(ValueError, match="outside the QUA fixed-point range"):
+        _estimator_plan([SparsePauliOp("ZX")], values=[[0.1], [value]], input_type=input_type)
+
+
+def test_fixed_range_bounds_accepted():
+    from qiskit_qm_provider.job.pub_parameters import FIXED_MAX, FIXED_MIN
+
+    plan = _estimator_plan([SparsePauliOp("ZX")], values=[[FIXED_MIN], [FIXED_MAX]])
+    assert plan.num_bindings == 2
+
+
+def test_sampler_rejects_values_outside_fixed_range():
+    from qiskit.primitives.containers.sampler_pub import SamplerPub
+    from qiskit_qm_provider.job.primitive_plans import SamplerPlan
+
+    qc = QuantumCircuit(1)
+    qc.rx(Parameter("theta"), 0)
+    qc.measure_all()
+    with pytest.raises(ValueError, match=r"parameter 'theta' has value 12\.5 \(binding 1"):
+        SamplerPlan.from_pub(SamplerPub.coerce((qc, [[1.0], [12.5]]), shots=10), InputType.INPUT_STREAM, 0)

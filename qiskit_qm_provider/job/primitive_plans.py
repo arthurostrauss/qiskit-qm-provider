@@ -41,6 +41,7 @@ from .pub_parameters import (
     assign_obs_codes,
     assign_qiskit_row,
     build_pub_tables,
+    check_fixed_range,
     delivery_rows,
     load_pub_row,
     obs_words,
@@ -81,6 +82,7 @@ class PrimitivePlan:
     param_table: Optional[ParameterTable]
 
     def __post_init__(self):
+        check_fixed_range(self.pub, self.index)
         self._param_values_qua: Optional[QUA2DArray] = None
 
     @property
