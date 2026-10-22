@@ -48,6 +48,21 @@ def quam_machine():
     return FluxTunableQuam.load()
 
 
+@pytest.fixture
+def compilation_backend(tmp_path, monkeypatch):
+    """A real one-qubit backend over an in-memory QuAM, without a QMM connection.
+
+    Keep the temporary state path local to construction so hardware fixtures never
+    mistake it for a user-provided QuAM state. Each test gets its own machine/target.
+    """
+    from ._in_memory_quam import build_backend
+
+    with monkeypatch.context() as construction:
+        construction.setenv("QUAM_STATE_PATH", str(tmp_path / "quam_state"))
+        backend = build_backend(1, conditional_plays=())
+    return backend
+
+
 @pytest.fixture(scope="session")
 def flux_tunable_backend(quam_machine):
     """Create a backend via QMProvider and seed basic macros from the QuAM state."""
