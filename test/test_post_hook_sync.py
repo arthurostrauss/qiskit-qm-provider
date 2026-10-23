@@ -23,6 +23,9 @@ verify the right QM-job calls are made with the right coercions.
 import numpy as np
 import pytest
 from qm.qua import fixed
+from qiskit import QuantumCircuit
+from qiskit.circuit import Parameter
+from qiskit.primitives.containers.bindings_array import BindingsArray
 
 from qiskit_qm_provider.parameter_table import InputType, ParameterTable
 from qiskit_qm_provider.job.post_hook_sampler import generate_sync_hook_sampler
@@ -41,14 +44,21 @@ class _FakeArray:
 
 
 class _FakePub:
-    def __init__(self, values):
-        self.parameter_values = _FakeArray(values)
+    def __init__(self, values, names=("theta",)):
+        self.circuit = QuantumCircuit(1)
+        parameters = [Parameter(name) for name in names]
+        for parameter in parameters:
+            self.circuit.rx(parameter, 0)
+        self.parameter_values = (
+            BindingsArray({tuple(parameters): np.asarray(values)}) if values else _FakeArray(values)
+        )
 
 
 class _FakePlan:
     def __init__(self, pub, param_table, observables_var, obs_indices):
         self.pub = pub
         self.param_table = param_table
+        self.circuit_table = param_table
         self.observables_var = observables_var
         self.obs_indices = obs_indices
 
@@ -112,7 +122,7 @@ def test_sampler_input_stream_pushes_with_coercion():
         {"x": (0.0, fixed, InputType.INPUT_STREAM), "n": (0, int, InputType.INPUT_STREAM)},
         name="t",
     )
-    pub = _FakePub([[0.1, 2.0], [0.3, 4.0]])
+    pub = _FakePub([[0.1, 2.0], [0.3, 4.0]], names=("x", "n"))
     code = generate_sync_hook_sampler([pub], [table])
     _assert_no_provider_imports(code)
 
@@ -125,9 +135,38 @@ def test_sampler_input_stream_pushes_with_coercion():
     assert all(isinstance(v, int) for (n, v) in job.streamed if n == "n")
 
 
+def test_sampler_dense_row_one_push_per_binding():
+    from qiskit_qm_provider.job._pub_parameters import build_pub_tables
+
+    pub = _FakePub([[0.1, 2.0], [0.3, 4.0]], names=("x", "y"))
+    circuit_table, delivery_table = build_pub_tables(pub.circuit, InputType.INPUT_STREAM, "pt")
+    code = generate_sync_hook_sampler([pub], [delivery_table], [circuit_table])
+    _assert_no_provider_imports(code)
+
+    job = _StubJob()
+    _exec_hook(code, job)
+
+    # One push of the whole raw row per binding, in circuit-parameter order.
+    assert job.streamed == [("pt_row", [0.1, 2.0]), ("pt_row", [0.3, 4.0])]
+
+
+def test_sampler_dense_row_io_pushes_elementwise():
+    from qiskit_qm_provider.job._pub_parameters import build_pub_tables
+
+    pub = _FakePub([[0.5, 0.25]], names=("x", "y"))
+    circuit_table, delivery_table = build_pub_tables(pub.circuit, InputType.IO1, "pt")
+    code = generate_sync_hook_sampler([pub], [delivery_table], [circuit_table])
+
+    job = _StubJob()
+    _exec_hook(code, job)
+
+    assert job.io_values == [{"io1": 0.5}, {"io1": 0.25}]
+    assert job.resumed == 2
+
+
 def test_sampler_io_pushes_pause_resume():
     table = ParameterTable({"a": (0.0, fixed, InputType.IO1)}, name="io")
-    pub = _FakePub([[0.5]])
+    pub = _FakePub([[0.5]], names=("a",))
     code = generate_sync_hook_sampler([pub], [table])
     _assert_no_provider_imports(code)
 
@@ -147,6 +186,37 @@ def test_sampler_none_table_pushes_nothing():
     _exec_hook(code, job)
     assert job.streamed == []
     assert job.io_values == []
+
+
+@pytest.mark.parametrize("primitive", ["sampler", "estimator"])
+@pytest.mark.parametrize("input_type", [InputType.INPUT_STREAM, InputType.IO1])
+def test_array_pub_sync_hook(primitive, input_type, monkeypatch):
+    from qiskit.circuit import ParameterVector
+    from qiskit_qm_provider.parameter_table import qiskit_classical
+
+    monkeypatch.setattr(qiskit_classical, "qiskit_has_array", lambda: True)
+    qc = QuantumCircuit(1)
+    vec = ParameterVector("theta", 4)
+    scalar = Parameter("a")
+    qc.rx(vec[2], 0)
+    qc.rz(scalar, 0)
+    pub = _FakePub([[0.2, 0.1]])
+    pub.circuit = qc
+    pub.parameter_values = BindingsArray({(vec[2], scalar): [[0.2, 0.1]]})
+    table = ParameterTable.from_qiskit(qc, input_type=input_type)
+    if primitive == "sampler":
+        code = generate_sync_hook_sampler([pub], [table])
+    else:
+        length = ParameterTable({"obs_length": (0, int, input_type)}, name="length")
+        plan = _FakePlan(pub, table, None, [[]])
+        code = generate_sync_hook_estimator([plan], length.get_parameter("obs_length"))
+    job = _StubJob()
+    _exec_hook(code, job)
+    if input_type == InputType.INPUT_STREAM:
+        assert job.streamed == [("a", 0.1), ("theta", [0.0, 0.0, 0.2, 0.0])]
+    else:
+        assert job.io_values == [{"io1": value} for value in [0.1, 0.0, 0.0, 0.2, 0.0]]
+        assert job.resumed == 5
 
 
 def test_estimator_pushes_params_and_observables():

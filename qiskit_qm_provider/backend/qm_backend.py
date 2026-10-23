@@ -38,6 +38,7 @@ from inspect import Signature, Parameter as sigParam
 from qiskit.circuit import (
     QuantumCircuit,
     Parameter as QiskitParameter,
+    ParameterVector,
     Instruction,
 )
 from qiskit.circuit.controlflow import CONTROL_FLOW_OP_NAMES
@@ -79,7 +80,6 @@ if TYPE_CHECKING:
         CloudQuantumMachinesManager,
     )
     from qm_qasm import QubitsMapping, Compiler
-    from quam.utils.qua_types import Scalar
     from qiskit.pulse import Schedule, ScheduleBlock
     from qiskit.pulse.channels import Channel as QiskitChannel
     from ..job.qm_job import QMJob
@@ -962,7 +962,7 @@ class QMBackend(Backend):
         self,
         qc: QuantumCircuit,
         param_table: Optional[
-            ParameterTable | Sequence[ParameterTable | Parameter] | Dict[str | QiskitParameter | Var, Scalar]
+            ParameterTable | Sequence[ParameterTable | Parameter] | Dict[str | QiskitParameter | ParameterVector | Var, Any]
         ] = None,
     ) -> QuaCircuitCompilation:
         """Convert a :class:`~qiskit.circuit.QuantumCircuit` to a QUA program fragment.
@@ -976,6 +976,9 @@ class QMBackend(Backend):
             param_table: Parameter mapping for real-time QUA variables. Required
                 when the circuit contains symbolic parameters or classical inputs
                 that must be streamed during execution.
+                In array mode, dictionary vector bindings use the whole
+                ``ParameterVector`` (or its name) as the key and a full-length QUA
+                array as the value. Individual vector-element keys are rejected.
 
         Returns:
             :class:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation`
@@ -999,6 +1002,13 @@ class QMBackend(Backend):
                         f"Custom calibration {gate_name} not in basis gates {basis_gates}",
                         f"Run update_calibrations() before compiling the circuit",
                     )
+        from ..parameter_table.qiskit_classical import (
+            qiskit_has_array, qiskit_input_key, validate_classical_types, validate_qiskit_input_names,
+        )
+        from qiskit.circuit.parametervector import ParameterVectorElement
+
+        validate_classical_types(qc)
+        validate_qiskit_input_names(qc)
         exporter = QMOpenQASM3Exporter(
             includes=(),
             basis_gates=basis_gates,
@@ -1020,9 +1030,28 @@ class QMBackend(Backend):
                     variables = table.variables_dict if isinstance(table, ParameterTable) else {table.name: table.var}
                     inputs.update(variables)
             elif isinstance(param_table, Dict):
+                # String keys naming a circuit parameter (``"t[2]"``) or vector (``"t"``) get the
+                # same validation and renaming as the corresponding objects.
+                named_inputs = {
+                    p.vector.name: p.vector for p in qc.parameters if isinstance(p, ParameterVectorElement)
+                }
+                named_inputs.update((p.name, p) for p in qc.parameters)
                 for key, value in param_table.items():
-                    if isinstance(key, (QiskitParameter, Var)):
+                    if isinstance(key, str):
+                        key = named_inputs.get(key, key)
+                    if qiskit_has_array() and isinstance(key, ParameterVectorElement):
+                        raise ValueError(
+                            "Array-mode dictionary bindings require a whole ParameterVector or its name "
+                            "as the key and a full-length array as the value; individual vector elements "
+                            "cannot bind an array input."
+                        )
+                    if isinstance(key, ParameterVector):
+                        if not qiskit_has_array():
+                            raise ValueError("Whole ParameterVector bindings require Qiskit array support.")
                         inputs[key.name] = value
+                        continue
+                    if isinstance(key, (QiskitParameter, Var)):
+                        inputs[qiskit_input_key(key)] = value
                     else:
                         inputs[key] = value
 

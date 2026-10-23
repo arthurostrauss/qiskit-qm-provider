@@ -118,7 +118,7 @@ See [Parameter Table](parameter_table.md) for `stream_back` / `fetch_from_opx` o
 
 Unlike typical Qiskit backends, parameters need not be bound at compile time. Use [`ParameterTable.from_qiskit()`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) to map circuit parameters to real-time QUA variables (phases, amplitudes, frame rotations).
 
-**Warning:** QOP rejects non-ASCII parameter names. Use ASCII names (`theta`, `phi`) — not Greek symbols — so OpenQASM 3 and QUA compilation succeed.
+**Warning:** QOP rejects non-ASCII parameter names. Use ASCII names (`theta`, `phi`) — not Greek symbols — so OpenQASM 3 and QUA compilation succeed. Names are used verbatim as OpenQASM 3 input identifiers, so also avoid gate names (`x`, `rz`, ...) and OpenQASM reserved keywords (`input`, `int`, ...) for `Parameter`/`ParameterVector`/`Var` names.
 
 ## Utilities
 

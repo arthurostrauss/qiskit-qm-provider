@@ -13,7 +13,7 @@ pip install qiskit-qm-provider
 [quam-builder](https://github.com/qua-platform/quam-builder) is required for the built-in `FluxTunableTransmonBackend` and related QuAM components. It is not published on PyPI and must be installed from source:
 
 ```bash
-pip install git+https://github.com/qua-platform/quam-builder.git@v0.4.0
+pip install git+https://github.com/qua-platform/quam-builder.git@v0.6.0
 ```
 
 For IQCC cloud access and QM SaaS simulation (requires `iqcc-cloud-client` and `qm-saas`):

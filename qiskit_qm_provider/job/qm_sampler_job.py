@@ -26,7 +26,6 @@ import tempfile
 
 import numpy as np
 
-from qiskit.circuit import Parameter
 from qiskit.primitives import PrimitiveResult
 from qiskit.primitives.containers import SamplerPubResult, DataBin
 from qiskit.primitives.containers.sampler_pub import SamplerPub
@@ -37,7 +36,8 @@ from qm.jobs.running_qm_job import RunningQmJob
 
 from ..backend import QMBackend
 from ..backend.backend_utils import measurement_output_bit_sizes, require_classified_meas_level
-from ..parameter_table import InputType, ParameterPool, ParameterTable
+from ..parameter_table import InputType, ParameterPool
+from ._pub_parameters import build_pub_tables, push_pub_rows
 from .iqcc_job_mixin import IQCCJobMixin
 from .qm_execution_options import (
     await_running_jobs,
@@ -81,19 +81,15 @@ class QMSamplerJob(QMPrimitiveJob):
             context="QMSamplerJob",
         )
         ParameterPool.reset()
-        self._param_tables = [
-            ParameterTable.from_qiskit(
-                pub.circuit,
-                input_type=self._input_type,
-                filter_function=lambda x: isinstance(x, Parameter),
-                name=f"param_table_{i}",
-            )
-            for i, pub in enumerate(self._pubs)
-        ]
+        # (circuit table, delivery table) per pub; see _pub_parameters.
+        tables = [build_pub_tables(pub.circuit, self._input_type, f"param_table_{i}") for i, pub in enumerate(self._pubs)]
+        self._circuit_tables = [circuit_table for circuit_table, _ in tables]
+        self._param_tables = [delivery_table for _, delivery_table in tables]
         programs, self._chunk_layout = plan_sampler_programs(
             self._backend,
             self._pubs,
             self._param_tables,
+            self._circuit_tables,
             **self.metadata,
         )
         self._programs = programs
@@ -149,12 +145,7 @@ class QMSamplerJob(QMPrimitiveJob):
             pub = self._pubs[global_idx]
             param_table = self._param_tables[global_idx]
             if param_table is not None and param_table.input_type is not None:
-                for parameters in pub.parameter_values.ravel().as_array():
-                    param_dict = {
-                        param.name: value
-                        for param, value in zip(param_table.parameters, parameters)
-                    }
-                    param_table.push_to_opx(param_dict, qm_job, self._backend.qm)
+                push_pub_rows(pub, self._circuit_tables[global_idx], param_table, qm_job, self._backend.qm)
 
     def result(self) -> PrimitiveResult[SamplerPubResult]:
         """Build and return classified measurement counts for all pubs.
@@ -207,7 +198,9 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
 
             sync_hook_path = None
             if any(t is not None and t.input_type is not None for t in chunk_tables):
-                sync_hook_code = generate_sync_hook_sampler(chunk_pubs, chunk_tables)
+                sync_hook_code = generate_sync_hook_sampler(
+                    chunk_pubs, chunk_tables, [self._circuit_tables[g] for g in chunk]
+                )
                 with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
                     f.write(sync_hook_code)
                     sync_hook_path = f.name

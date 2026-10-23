@@ -27,6 +27,7 @@ from qm import Program
 from qm.qua import *
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from ..parameter_table import ParameterTable, QUA2DArray
+from ._pub_parameters import assign_qiskit_row, load_pub_row
 from typing import Dict, List, Optional, TYPE_CHECKING
 import numpy as np
 
@@ -35,8 +36,8 @@ if TYPE_CHECKING:
 
 
 def _estimator_process_param_table(plan: _ExecutionPlan):
-    if plan.param_table is not None:
-        return [plan.param_table, plan.observables_var]
+    if plan.circuit_table is not None:
+        return [plan.circuit_table, plan.observables_var]
     return plan.observables_var
 
 
@@ -107,12 +108,15 @@ def _process_sampler_pub(
     pub: SamplerPub,
     backend: QMBackend,
     param_table: Optional[ParameterTable] = None,
+    circuit_table: Optional[ParameterTable] = None,
     **kwargs,
 ):
     """
     Process the given PUB with the given backend.
     If the parameter table is not provided, the circuit is processed without parameters.
     If the parameter table is provided, the circuit is processed with parameters.
+    ``param_table`` is the delivery table and ``circuit_table`` the fields the circuit reads
+    (defaults to ``param_table``); see :mod:`._pub_parameters`.
     This is a QUA macro that is used to process the circuit.
     """
     if param_table is None:
@@ -123,24 +127,27 @@ def _process_sampler_pub(
             **kwargs,
         )
     else:
-        param_table.declare()
+        circuit_table = circuit_table if circuit_table is not None else param_table
+        circuit_table.declare()
+        if param_table is not circuit_table:
+            param_table.declare()
         p = declare(int)
 
         with for_(p, 0, p < pub.parameter_values.ravel().size, p + 1):
             if param_table.input_type is None:
                 # Declare the parameters at compile time
-                param_values_qua = QUA2DArray("param_values", pub.parameter_values.ravel().as_array())
-                param_values_qua.declare()
-                param_table.assign_parameters(
-                    {param.name: param_values_qua[p][i] for i, param in enumerate(param_table.parameters)}
+                param_values_qua = QUA2DArray(
+                    "param_values", pub.parameter_values.ravel().as_array(pub.circuit.parameters)
                 )
+                param_values_qua.declare()
+                assign_qiskit_row(pub.circuit, circuit_table, param_values_qua[p])
             else:
-                param_table.rcv()
+                load_pub_row(pub.circuit, circuit_table, param_table)
             outputs = _process_circuit(
                 pub.circuit,
                 backend,
                 pub.shots,
-                param_table,
+                circuit_table,
                 **kwargs,
             )
     return outputs
@@ -150,9 +157,11 @@ def sampler_program(
     backend: QMBackend,
     pubs: List[SamplerPub],
     param_tables: List[ParameterTable],
+    circuit_tables: Optional[List[Optional[ParameterTable]]] = None,
     **kwargs,
 ) -> Program:
     """Return the QUA program for the given PUBs."""
+    circuit_tables = circuit_tables if circuit_tables is not None else param_tables
     circuits = [pub.circuit for pub in pubs]
     num_circuits = len(circuits)
     # TODO: Handle OPNIC case where circuits share parameters (loading might not work)
@@ -165,6 +174,7 @@ def sampler_program(
                 pubs[i],
                 backend,
                 param_tables[i],
+                circuit_tables[i],
                 **kwargs,
             )
             outputs_tables.append(outputs)
@@ -258,13 +268,15 @@ def _process_estimator_pub(
         )
     else:
         p = declare(int)
-        plan.param_table.declare()
+        plan.circuit_table.declare()
+        if plan.param_table is not plan.circuit_table:
+            plan.param_table.declare()
         param_values_qua = None
         obs_lengths_qua = obs_offsets_qua = obs_indices_all = None
         if plan.param_table.input_type is None:
             param_values_qua = QUA2DArray(
                 f"param_values_{plan.param_table.name}",
-                plan.pub.parameter_values.ravel().as_array(),
+                plan.pub.parameter_values.ravel().as_array(plan.pub.circuit.parameters),
             )
             param_values_qua.declare()
             if plan.observables_var.input_type is None:
@@ -274,11 +286,9 @@ def _process_estimator_pub(
 
         with for_(p, 0, p < plan.pub.parameter_values.ravel().size, p + 1):
             if plan.param_table.input_type is None:
-                plan.param_table.assign_parameters(
-                    {param.name: param_values_qua[p, i] for i, param in enumerate(plan.param_table.parameters)}
-                )
+                assign_qiskit_row(plan.pub.circuit, plan.circuit_table, param_values_qua[p])
             else:
-                plan.param_table.rcv()
+                load_pub_row(plan.pub.circuit, plan.circuit_table, plan.param_table)
 
             outputs = _process_observables_with_circuit(
                 plan,
@@ -446,6 +456,7 @@ def plan_sampler_programs(
     backend: QMBackend,
     pubs: List[SamplerPub],
     param_tables: List[ParameterTable],
+    circuit_tables: Optional[List[Optional[ParameterTable]]] = None,
     **kwargs,
 ) -> tuple[List[Program], List[List[int]]]:
     """Plan the QUA program(s) for ``QMSamplerV2``.
@@ -460,18 +471,21 @@ def plan_sampler_programs(
     Args:
         backend: The QMBackend to use.
         pubs: List of SamplerPub objects.
-        param_tables: Matching list of ParameterTable objects (one per pub).
+        param_tables: Matching list of delivery ParameterTables (one per pub).
+        circuit_tables: Matching list of circuit ParameterTables; defaults to ``param_tables``.
         **kwargs: Forwarded to :func:`sampler_program`.
 
     Returns:
         Tuple of (list of QUA programs, chunk layout).
     """
     chunk_layout = compute_chunk_layout(len(pubs), max_circuits=backend.options.max_circuits)
+    circuit_tables = circuit_tables if circuit_tables is not None else param_tables
     programs = [
         sampler_program(
             backend,
             [pubs[g] for g in chunk],
             [param_tables[g] for g in chunk],
+            [circuit_tables[g] for g in chunk],
             **kwargs,
         )
         for chunk in chunk_layout

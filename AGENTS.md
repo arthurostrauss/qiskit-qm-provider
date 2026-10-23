@@ -19,7 +19,7 @@ The core entry point is `QMBackend.quantum_circuit_to_qua()` (Qiskit circuit →
   pins `quam>=0.4.2` and `uv.lock` resolves `quam==0.6.0`, so a plain `uv sync` gives a working
   env. Do not lower this bound or "fix" import errors by downgrading `qm-qua`.
 - **`quam-builder` and `pytest` are not in `uv.lock`.** `quam-builder` is not on PyPI and is
-  installed from git at `v0.4.0` (see `README.md` / `docs/installation.md`). `pytest` is a dev
+  installed from git at `v0.6.0` (see `README.md` / `docs/installation.md`). `pytest` is a dev
   tool installed on top of the sync.
 - Installing `quam-builder` upgrades `qualang-tools` to `0.23.0` (it requires `>=0.22.0`); this is
   expected and correct.

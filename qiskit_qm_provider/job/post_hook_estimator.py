@@ -26,6 +26,7 @@ Date: 2026-02-08
 from typing import List
 
 from qiskit_qm_provider.parameter_table import Parameter as QuaParameter
+from ._pub_parameters import delivery_rows
 from ._sync_hook_common import jinja_env, serialize_table, to_py_literal
 from .qm_estimator_job import _ExecutionPlan
 
@@ -41,7 +42,7 @@ def generate_sync_hook_estimator(execution_plans: List[_ExecutionPlan], obs_leng
     for plan in execution_plans:
         param_table = serialize_table(plan.param_table)
         if param_table is not None:
-            parameter_values = plan.pub.parameter_values.ravel().as_array().tolist()
+            parameter_values = delivery_rows(plan.pub, plan.circuit_table, plan.param_table)
         else:
             parameter_values = []
         plans_data.append(

@@ -19,7 +19,7 @@ Date: 2026-02-08
 """
 
 import numpy as np
-from qiskit.circuit import ClassicalRegister, Parameter, QuantumCircuit, Qubit
+from qiskit.circuit import ClassicalRegister, QuantumCircuit, Qubit
 from qiskit.quantum_info import SparsePauliOp, Pauli, PauliList
 from qiskit.primitives import PrimitiveResult
 from qiskit.primitives.backend_estimator_v2 import (
@@ -41,6 +41,7 @@ from ..parameter_table import (
     Parameter as QuaParameter,
 )
 from .iqcc_job_mixin import IQCCJobMixin
+from ._pub_parameters import build_pub_tables, push_pub_rows
 from .qm_execution_options import (
     await_running_jobs,
     join_job_ids,
@@ -71,9 +72,16 @@ class _ExecutionPlan:
     param_table: Optional[ParameterTable]
     active_qubits: List[Qubit]
     param_group_keys: List[tuple] = field(default_factory=list)
+    # Fields the circuit reads; ``param_table`` is the delivery table (see _pub_parameters).
+    circuit_table: Optional[ParameterTable] = None
+
+    def __post_init__(self):
+        if self.circuit_table is None:
+            self.circuit_table = self.param_table
 
     @classmethod
-    def from_pub(cls, pub: EstimatorPub, options: QMEstimatorOptions):
+    def from_pub(cls, pub: EstimatorPub, options: QMEstimatorOptions, plan_index: Optional[int] = None):
+        """Plan ``pub``; ``plan_index`` (its position in the job) names its parameter tables uniquely."""
         from ..backend.backend_utils import (
             logically_active_qubits,
             get_non_trivial_observables,
@@ -144,11 +152,10 @@ class _ExecutionPlan:
             filter_function=lambda p: pub.circuit.has_var(p) and "obs" in p.name,
             name=f"observables_var_{pub.circuit.name}",
         )
-        param_table = ParameterTable.from_qiskit(
+        circuit_table, param_table = build_pub_tables(
             pub.circuit,
-            input_type=options.input_type,
-            filter_function=lambda p: isinstance(p, Parameter),
-            name=f"param_table_{pub.circuit.name}",
+            options.input_type,
+            f"param_table_{plan_index}" if plan_index is not None else f"param_table_{pub.circuit.name}",
         )
         return cls(
             pub,
@@ -159,6 +166,7 @@ class _ExecutionPlan:
             param_table,
             active_qubits,
             param_group_keys,
+            circuit_table,
         )
 
     @property
@@ -351,7 +359,8 @@ class QMEstimatorJob(QMPrimitiveJob):
         super().__init__(backend, pubs, input_type, **kwargs)
         ParameterPool.reset()
         self._execution_plans: List[_ExecutionPlan] = [
-            _ExecutionPlan.from_pub(pub, options=QMEstimatorOptions(input_type=input_type, **kwargs)) for pub in pubs
+            _ExecutionPlan.from_pub(pub, options=QMEstimatorOptions(input_type=input_type, **kwargs), plan_index=i)
+            for i, pub in enumerate(pubs)
         ]
         self._switch_obs_circuit: QuantumCircuit = switch_obs_circuit
         self._obs_length_vars = QuaParameter(
@@ -371,12 +380,8 @@ class QMEstimatorJob(QMPrimitiveJob):
         observables_var = plan.observables_var
 
         if param_table is not None and param_table.input_type is not None:
-            for p, param_value in enumerate(plan.pub.parameter_values.ravel().as_array()):
-                param_dict = {
-                    param.name: value
-                    for param, value in zip(param_table.parameters, param_value)
-                }
-                param_table.push_to_opx(param_dict, qm_job, self._backend.qm)
+
+            def push_observables(p):
                 if observables_var.input_type is not None:
                     self._obs_length_vars.push_to_opx(
                         len(plan.obs_indices[p]), qm_job, self._backend.qm
@@ -384,6 +389,10 @@ class QMEstimatorJob(QMPrimitiveJob):
                     for obs_value in plan.obs_indices[p]:
                         obs_dict = {f"obs_{j}": val for j, val in enumerate(obs_value)}
                         observables_var.push_to_opx(obs_dict, qm_job, self._backend.qm)
+
+            push_pub_rows(
+                plan.pub, plan.circuit_table, param_table, qm_job, self._backend.qm, after_row=push_observables
+            )
         elif observables_var.input_type is not None:
             self._obs_length_vars.push_to_opx(
                 len(plan.obs_indices[0]), qm_job, self._backend.qm

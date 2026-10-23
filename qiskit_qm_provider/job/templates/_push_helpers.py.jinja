@@ -1,4 +1,6 @@
 def _coerce(value, qua_type):
+    if isinstance(value, (list, tuple)):
+        return [_coerce(element, qua_type) for element in value]
     if qua_type == "int":
         return int(value)
     if qua_type == "bool":
@@ -22,6 +24,10 @@ def _push(job, input_type, name, value):
     if input_type == "INPUT_STREAM":
         job.push_to_input_stream(name, value)
     elif input_type in ("IO1", "IO2"):
+        if isinstance(value, (list, tuple)):
+            for element in value:
+                _push(job, input_type, name, element)
+            return
         io = "io1" if input_type == "IO1" else "io2"
         _wait_until_paused(job)
         job.set_io_values(**{io: value})
