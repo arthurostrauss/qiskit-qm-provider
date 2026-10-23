@@ -7,6 +7,7 @@ stock Qiskit, and tests that need the stock per-element exporter are skipped on 
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -254,28 +255,19 @@ def _mixed_vector_pub():
     return SamplerPub(qc, BindingsArray({(vec[2], scalar): [[0.2, 0.1]]}), shots=2)
 
 
-def _push_with(primitive, pub, circuit_table, delivery_table):
-    from qiskit_qm_provider.job.qm_sampler_job import QMSamplerJob
-    from qiskit_qm_provider.job.qm_estimator_job import QMEstimatorJob
+def _plan(primitive, pub, circuit_table, delivery_table):
+    from qiskit_qm_provider.job.primitive_plans import EstimatorPlan, SamplerPlan
 
-    backend = SimpleNamespace(qm=None)
-    if primitive == "sampler":
-        job = SimpleNamespace(
-            _pubs=[pub], _param_tables=[delivery_table], _circuit_tables=[circuit_table], _backend=backend
-        )
-        QMSamplerJob._push_parameters(job, None, [0])
-    else:
-        job = SimpleNamespace(_backend=backend)
-        plan = SimpleNamespace(
-            pub=pub, param_table=delivery_table, circuit_table=circuit_table,
-            observables_var=SimpleNamespace(input_type=None),
-        )
-        QMEstimatorJob._push_plan_data(job, None, plan)
+    return (SamplerPlan if primitive == "sampler" else EstimatorPlan)(pub, 0, circuit_table, delivery_table)
+
+
+def _push_with(primitive, pub, circuit_table, delivery_table):
+    _plan(primitive, pub, circuit_table, delivery_table).push(None)
 
 
 @pytest.mark.parametrize("primitive", ["sampler", "estimator"])
 def test_vector_pub_dense_row_streaming(array_mode, primitive, monkeypatch):
-    from qiskit_qm_provider.job._pub_parameters import build_pub_tables
+    from qiskit_qm_provider.job.pub_parameters import build_pub_tables
 
     pub = _mixed_vector_pub()
     circuit_table, delivery_table = build_pub_tables(pub.circuit, InputType.INPUT_STREAM, "pt")
@@ -303,20 +295,20 @@ def test_vector_pub_packed_streaming(array_mode, primitive, monkeypatch):
 @pytest.mark.parametrize("primitive", ["sampler", "estimator"])
 def test_vector_pub_qua_scatter(array_mode, primitive, input_type, monkeypatch):
     from qiskit_qm_provider.job import qua_programs
-    from qiskit_qm_provider.job._pub_parameters import build_pub_tables
+    from qiskit_qm_provider.job.pub_parameters import build_pub_tables
 
     pub = _mixed_vector_pub()
     circuit_table, delivery_table = build_pub_tables(pub.circuit, input_type, "pt")
     monkeypatch.setattr(qua_programs, "_process_circuit", lambda *args, **kwargs: None)
-    monkeypatch.setattr(qua_programs, "_process_observables_with_circuit", lambda *args, **kwargs: None)
+    plan = _plan(primitive, pub, circuit_table, delivery_table)
+    if primitive == "estimator":  # only parameter scatter is inspected here
+        monkeypatch.setattr(plan, "declare_observables", lambda: None)
+        monkeypatch.setattr(plan, "observable_groups", lambda p: nullcontext())
+        monkeypatch.setattr(type(plan), "shots", 1)  # the PUB here is a SamplerPub (no precision)
     with qua.program() as prog:
         if primitive == "sampler":
-            qua_programs._process_sampler_pub(pub, None, delivery_table, circuit_table)
+            qua_programs._process_sampler_pub(plan, None)
         else:
-            plan = SimpleNamespace(
-                pub=pub, param_table=delivery_table, circuit_table=circuit_table,
-                observables_var=SimpleNamespace(input_type=InputType.INPUT_STREAM),
-            )
             qua_programs._process_estimator_pub(plan, None)
     script = generate_qua_script(prog)
     # Only the two bound entries are assigned per binding; unused vector elements are not rewritten.
@@ -407,7 +399,7 @@ def test_dictionary_string_keys_follow_object_rules(array_mode, compile_circuit)
 
 def test_unmarked_table_is_not_a_row(monkeypatch):
     # A separately built table that is not the circuit table must not be mistaken for a dense row.
-    from qiskit_qm_provider.job._pub_parameters import build_pub_tables, is_row_delivery
+    from qiskit_qm_provider.job.pub_parameters import build_pub_tables, is_row_delivery
 
     pub = _mixed_vector_pub()
     circuit_table, row_table = build_pub_tables(pub.circuit, InputType.INPUT_STREAM, "pt")
@@ -421,18 +413,19 @@ def test_unmarked_table_is_not_a_row(monkeypatch):
 
 
 def test_row_table_rejects_mismatched_circuit():
-    from qiskit_qm_provider.job._pub_parameters import build_pub_tables, push_pub_rows
+    from qiskit_qm_provider.job.pub_parameters import build_pub_tables, delivery_rows
 
     pub = _mixed_vector_pub()
     _, row_table = build_pub_tables(pub.circuit, InputType.INPUT_STREAM, "pt")
     with pytest.raises(ValueError, match="does not match the circuit"):
-        push_pub_rows(pub, row_table, row_table, job=None)
+        delivery_rows(pub, row_table, row_table)
 
 
 def test_estimator_row_tables_named_by_plan_index():
     from qiskit.primitives.containers.estimator_pub import EstimatorPub
     from qiskit.quantum_info import SparsePauliOp
-    from qiskit_qm_provider.job.qm_estimator_job import _ExecutionPlan
+    from qiskit.circuit import ClassicalRegister
+    from qiskit_qm_provider.job.primitive_plans import EstimatorPlan
     from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
 
     plans = []
@@ -440,6 +433,9 @@ def test_estimator_row_tables_named_by_plan_index():
         qc = QuantumCircuit(1, name="ansatz")  # same name, different parameter counts
         for p in ParameterVector(f"v{i}", size):
             qc.rx(p, 0)
+        qc.add_register(ClassicalRegister(1, "__c"))
+        qc.add_input("obs_0", types.Uint(4))
+        qc.measure(0, 0)
         pub = EstimatorPub.coerce((qc, SparsePauliOp(["Z"]), [[0.1] * size]))
-        plans.append(_ExecutionPlan.from_pub(pub, QMEstimatorOptions(input_type=InputType.INPUT_STREAM), plan_index=i))
+        plans.append(EstimatorPlan.from_pub(pub, QMEstimatorOptions(input_type=InputType.INPUT_STREAM), plan_index=i))
     assert [list(plan.param_table.table) for plan in plans] == [["param_table_0_row"], ["param_table_1_row"]]

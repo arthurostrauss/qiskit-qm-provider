@@ -38,7 +38,7 @@ from qiskit.circuit import QuantumCircuit, ClassicalRegister
 from ..parameter_table import InputType
 
 from ..backend.qm_backend import QMBackend
-from ..backend.backend_utils import validate_circuits, logically_active_qubits
+from ..backend.backend_utils import validate_circuits, estimator_measured_qubits
 
 
 @dataclass
@@ -200,13 +200,15 @@ class QMEstimatorV2(BaseEstimatorV2):
                     "'__c', which is reserved for estimator Pauli readout."
                 )
 
+            # Measure every qubit some observable acts on non-trivially (see estimator_measured_qubits).
+            measured = [pub.circuit.find_bit(q).index for q in estimator_measured_qubits(pub.circuit, pub.observables)]
             qc = pub.circuit.remove_final_measurements(inplace=False)
             qc.name = f'{pub.circuit.name}_pub{i}'
-            active_qubits = logically_active_qubits(qc)
-            num_active_qubits = len(active_qubits)
-            creg = ClassicalRegister(num_active_qubits, name="__c")
+            measured_qubits = [qc.qubits[j] for j in measured]
+            num_measured = len(measured_qubits)
+            creg = ClassicalRegister(num_measured, name="__c")
             qc.add_register(creg)
-            for q, qubit in enumerate(active_qubits):
+            for q, qubit in enumerate(measured_qubits):
                 obs_var = qc.add_input(f"obs_{q}", types.Uint(4))
                 qc.compose(
                     self._switch_obs_circuit,
@@ -215,7 +217,7 @@ class QMEstimatorV2(BaseEstimatorV2):
                     var_remap={"obs": obs_var},
                     inline_captures=True,
                 )
-            qc.measure(active_qubits, creg)
+            qc.measure(measured_qubits, creg)
             qc = validate_circuits(qc)[0]
 
             new_pub = EstimatorPub(qc, pub.observables, pub.parameter_values, pub.precision)

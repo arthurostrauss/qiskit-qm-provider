@@ -26,6 +26,7 @@ from __future__ import annotations
 import warnings
 from typing import Any, List, TYPE_CHECKING, Dict, Type
 
+import numpy as np
 from qiskit.circuit import Barrier, QuantumCircuit, QuantumRegister, Parameter, Store
 from qiskit.circuit.controlflow import (
     ControlFlowOp,
@@ -35,7 +36,7 @@ from qiskit.circuit.controlflow import (
     SwitchCaseOp,
 )
 from qiskit.circuit.library import get_standard_gate_name_mapping
-from qiskit.quantum_info import Pauli, PauliList
+from qiskit.quantum_info import PauliList
 from qiskit.converters import circuit_to_dag
 from qiskit.dagcircuit import DAGCircuit
 from qiskit.transpiler.passes import GatesInBasis
@@ -790,27 +791,55 @@ def logically_active_qubits(circuit):
     return sorted(active, key=lambda q: circuit.find_bit(q).index)
 
 
+def observables_support(observables) -> np.ndarray:
+    """Boolean mask over qubits: ``True`` where any Pauli term of ``observables`` acts non-trivially.
+
+    ``observables`` is anything :class:`~qiskit.primitives.containers.observables_array.ObservablesArray`
+    can coerce; terms are deduplicated before the symplectic reduction.
+    """
+    from qiskit.primitives.containers.observables_array import ObservablesArray
+
+    observables = ObservablesArray.coerce(observables)
+    labels = {label for observable in observables.ravel().tolist() for label in observable}
+    if not labels:
+        return np.zeros(observables.num_qubits, dtype=bool)
+    paulis = PauliList(sorted(labels))
+    return np.logical_or.reduce(paulis.x | paulis.z, axis=0)
+
+
+def estimator_measured_qubits(circuit: QuantumCircuit, observables) -> list:
+    """Qubits the estimator must measure for ``observables`` on ``circuit``, by circuit index.
+
+    Circuit and observables are taken as ISA: observables span the circuit's full physical
+    register (Qiskit's ``apply_layout`` convention). A qubit is measured iff some term of some
+    observable in the PUB's observables array acts non-trivially on it, whether or not a gate
+    touches it and whether or not it is an ancilla. Every other qubit only ever carries an
+    identity, so it cannot change any expectation value and is not read. If every observable
+    is the identity, a single qubit is measured (as in Qiskit's ``BackendEstimatorV2``): the
+    first qubit of the circuit's virtual layout, or qubit 0 without a layout.
+    """
+    support = observables_support(observables)
+    measured = [int(i) for i in np.flatnonzero(support)]
+    if not measured:
+        layout = circuit.layout.final_index_layout(filter_ancillas=True) if circuit.layout is not None else [0]
+        measured = [min(layout)]
+    return [circuit.qubits[i] for i in measured]
+
+
 def get_non_trivial_observables(observables: PauliList, active_qubit_indices: List[int]) -> PauliList:
-    """Restrict observables to logically active qubits.
+    """Restrict observables to the given qubits.
 
     Args:
         observables: Pauli observables defined on the full qubit register.
-        active_qubit_indices: Indices of qubits that participate in the circuit.
+        active_qubit_indices: Indices of the qubits to keep, in the order of the result.
 
     Returns:
-        A :class:`~qiskit.quantum_info.PauliList` with inactive qubits replaced
-        by identity.
+        A :class:`~qiskit.quantum_info.PauliList` on ``len(active_qubit_indices)`` qubits whose
+        qubit ``j`` is qubit ``active_qubit_indices[j]`` of the input; other qubits are dropped.
     """
-    new_observables = []
-    for observable in observables:
-        label = observable.to_label()
-        new_pauli_label = ""
-        for j in range(observable.num_qubits):
-            if j in active_qubit_indices:
-                new_pauli_label += label[-j - 1]
-        new_observables.append(Pauli(new_pauli_label))
-
-    return PauliList(new_observables)
+    observables = PauliList(observables)
+    indices = list(active_qubit_indices)
+    return PauliList.from_symplectic(observables.z[:, indices], observables.x[:, indices], observables.phase)
 
 
 def get_qua_script(

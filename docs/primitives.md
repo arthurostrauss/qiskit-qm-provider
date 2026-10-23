@@ -41,6 +41,45 @@ job = estimator.run([(circuit, observables, parameter_values)])
 result = job.result()
 ```
 
+### Which qubits are measured
+
+Circuits and observables are taken as ISA: observables span the full physical register, as in Qiskit (transpile the circuit, then call `observable.apply_layout(circuit.layout)`). The estimator measures a qubit **if and only if some term of some observable in the PUB acts non-trivially on it**. The set is the union over the PUB's whole observables array, because one compiled circuit serves every observable and binding of the PUB; on the other qubits every observable is the identity, so they cannot change any expectation value.
+
+- A qubit that no gate touches is still measured if an observable acts on it.
+- Ancillas are treated like any other qubit: `apply_layout` pads them with identity, so they are normally not measured, but an observable that acts on one is measured faithfully.
+- Qubits that carry gates but no observable support are not measured, which saves their basis switch and readout.
+- If every observable is the identity, one qubit is measured (the first qubit of the circuit's layout), as in Qiskit's `BackendEstimatorV2`.
+
+Per measured qubit `q_j`, the prepared circuit has a basis switch driven by an input `obs_j` (0: none, 1: `h`, 2: `sdg; h`) followed by a measurement into bit `j` of a `__c` register. `EstimatorPlan.from_pub` requires this readout (it rejects circuits without it, and observables acting on a qubit outside `__c`); `QMEstimatorV2.run` adds it through `validate_estimator_pubs`. A PUB with an empty bindings array is rejected.
+
+### How observables reach the OPX
+
+Each measured qubit gets one basis code per measurement group: 0 for Z or I, 1 for X, 2 for Y. These codes are packed 2 bits per qubit, 15 qubits per 32-bit word. For each parameter binding, the program receives one int row, `[number of groups, packed words...]`, and unpacks it in QUA with shifts and masks.
+
+- **Input streams:** one push per binding. A row shared by every binding is sent once.
+- **IO1/IO2:** only the used part of the row is exchanged.
+- **Compile time (`input_type=None`):** the same rows are preloaded into the program.
+
+## Parameter values and fixed-point range
+
+Every circuit parameter reaches the program as a QUA `fixed`: a signed 4.28 fixed-point number, with range **[-8, 8)** and resolution 2⁻²⁸ ≈ 3.7·10⁻⁹. This holds for every `input_type`, including compile-time preloading. Values outside this range are **not supported**. When a `QMSamplerV2` or `QMEstimatorV2` job is created, any PUB with a bound value outside the range (or a NaN or infinite value) is rejected with a `ValueError` that names the PUB, the parameter and the binding. Nothing is clipped or wrapped for you.
+
+Angles in [-π, π] or [0, 2π] fit. Quantities with a larger natural scale do not, for example durations, frequencies or angles accumulated over many turns. Bind such a quantity in a rescaled unit that stays inside [-8, 8), and undo the scale in the circuit, as long as the expression stays in range (see the warning below).
+
+```{warning}
+The range check covers the **bound values only**. It does not cover expressions built from parameters. A gate argument such as `rx(3 * theta)`, `rz(theta + phi + chi)` or `rx(theta * phi)`, or a backend macro that scales an angle, is evaluated **in real time, in fixed-point arithmetic, on the controller**. Each value can be in range while an intermediate or final result is not: with `theta = 3.0`, `3 * theta = 9.0` cannot be represented in `fixed`, and the provider raises no error. The gate then receives a wrong value. Products of small values also lose resolution, since only 28 fractional bits remain.
+
+Before running, check the extreme values of every parameter expression in your circuits, not just of the parameters.
+```
+
+When the risk is high for your use case (large dynamic ranges, long sums, products of parameters), please reach out to the maintainer first (open an issue on the [GitHub repository](https://github.com/arthurostrauss/qiskit-qm-provider/issues) or write to the author listed in `pyproject.toml`). In general, such kernels have to be written in QUA as real-time processing with explicit rescaling, rather than expressed as Qiskit parameter arithmetic. QUA's `Cast` utilities (`from qm.qua import Cast`) are the main tools for this:
+
+- `Cast.mul_fixed_by_int(x, n)` and `Cast.mul_int_by_fixed(n, x)` multiply a `fixed` by an `int` without first converting the integer to `fixed`. An integer ≥ 8 cannot be a `fixed`, so carry large integer factors as `int` and combine them only through these helpers. The result must still fit its output type.
+- `Cast.to_int`, `Cast.to_fixed` and `Cast.to_bool` convert values between types.
+- `Cast.unsafe_cast_int`, `Cast.unsafe_cast_fixed` and `Cast.unsafe_cast_bool` reinterpret the raw 32 bits without conversion. Use them with integer shifts to scale by powers of two, or to carry a wider-range quantity as an integer part and a fractional part.
+
+See the [QUA reference guide](https://docs.quantum-machines.co/latest/docs/Guides/qua_ref/) in the QM documentation for the full semantics of QUA variable types, arithmetic and the `Cast` module.
+
 ## Options at a glance
 
 | Option | Sampler | Estimator | Meaning |
@@ -72,7 +111,7 @@ Set `max_circuits=None` to disable splitting and always build a single program r
 
 ## Running on IQCC Cloud
 
-When the backend is an IQCC cloud backend, `QMSamplerV2.run()` / `QMEstimatorV2.run()` return an `IQCCSamplerJob` / `IQCCEstimatorJob`. For streamed `input_type`s, the job submits the QUA program together with an auto-generated **sync hook** — a small Python script that runs on the cloud side and pushes the per-pub parameter values (and, for the Estimator, the observable indices) into the running program cycle-by-cycle.
+When the backend is an IQCC cloud backend, `QMSamplerV2.run()` / `QMEstimatorV2.run()` return an `IQCCSamplerJob` / `IQCCEstimatorJob`. For streamed `input_type`s, the job submits the QUA program together with an auto-generated **sync hook** — a small Python script that runs on the cloud side and pushes, in program order, each PUB's parameter rows (and, for the Estimator, its packed observable rows) into the running program.
 
 **The sync hook is fully self-contained.** It imports only:
 
@@ -147,7 +186,7 @@ You can also inspect `job.run_data` after submission without calling `result()` 
 
 Every primitive job and `backend.run()` exposes the compiled QUA programs via `get_program()` (single/default) or by iterating `job.programs` (all chunks). See the [Jobs guide](jobs.md) for the full accessor table (`qm_jobs`, `get_qm_job()`, `get_program()`, `get_result_handles()`, `pubs`, IQCC `run_data`, …).
 
-For [`QMEstimatorJob`](apidocs/stubs/qiskit_qm_provider.job.QMEstimatorJob.rst), the compiled execution plans are also available on **`job.runtime_pubs`** — one [`_ExecutionPlan`](apidocs/stubs/qiskit_qm_provider.job.qm_estimator_job._ExecutionPlan.rst) per input PUB, showing how observables were grouped and what will be streamed to the OPX.
+Both primitive jobs also expose their execution plans on **`job.runtime_pubs`**: one `SamplerPlan` or `EstimatorPlan` (from `qiskit_qm_provider.job.primitive_plans`) per input PUB. An `EstimatorPlan` shows the measured qubits, how observables were grouped (`metadata`, `obs_codes`) and the packed rows streamed to the OPX (`obs_rows`).
 
 ```python
 from qm import generate_qua_script
