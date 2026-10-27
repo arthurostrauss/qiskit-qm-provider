@@ -33,8 +33,9 @@ from qiskit.quantum_info import SparsePauliOp
 from qiskit_qm_provider.parameter_table import InputType, ParameterPool, ParameterTable
 from qiskit_qm_provider.job.sync_hook import generate_sync_hook
 from qiskit_qm_provider.job.primitive_plans import EstimatorPlan, SamplerPlan
-from qiskit_qm_provider.job.pub_parameters import unpack_obs_codes
 from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
+
+from ._obs_packing import unpack_obs_codes
 
 
 @pytest.fixture(autouse=True)

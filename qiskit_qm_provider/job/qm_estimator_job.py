@@ -75,9 +75,10 @@ def estimator_pub_result(plan: EstimatorPlan, raw) -> PubResult:
     """Turn one plan's ``__c`` stream into its :class:`~qiskit.primitives.PubResult`.
 
     As in Qiskit's ``BackendEstimatorV2``, both the parameter indices and the observables are
-    broadcast to the pub shape before post-processing.
+    broadcast to the pub shape before post-processing. A plan without tasks has no stream
+    (``raw`` is ignored): its identity terms are evaluated exactly.
     """
-    counts_list = counts_from_estimator_stream(plan, raw)
+    counts_list = counts_from_estimator_stream(plan, raw) if plan.has_tasks else []
     expval_map = QMEstimatorJob._calc_expval_map(counts_list, plan.metadata)
     bc_param_ind, bc_obs = np.broadcast_arrays(plan.param_indices, plan.pub.observables)
     return QMEstimatorJob._postprocess_pub(plan.pub, expval_map, bc_param_ind, bc_obs, plan.shots)
@@ -268,11 +269,12 @@ class QMEstimatorJob(QMPrimitiveJob):
         for index in np.ndindex(*bc_param_ind.shape):
             param_index = bc_param_ind[index]
             for pauli, coeff in bc_obs[index].items():
-                key = (param_index, pauli)
-                if key in expval_map:
-                    expval, variance = expval_map[key]
-                    evs[index] += expval * coeff
-                    variances[index] += np.abs(coeff) * variance**0.5
+                if not pauli.strip("I"):  # <I> = 1 exactly, with no variance: never measured
+                    evs[index] += coeff
+                    continue
+                expval, variance = expval_map[param_index, pauli]
+                evs[index] += expval * coeff
+                variances[index] += np.abs(coeff) * variance**0.5
 
         stds = variances / np.sqrt(shots)
         data_bin = DataBin(evs=evs, stds=stds, shape=evs.shape)
@@ -292,9 +294,10 @@ class QMEstimatorJob(QMPrimitiveJob):
 
         pub_results = []
         for i, plan in enumerate(self._plans):
-            chunk_idx, local_idx = self._locator[i]
-            handle = results_handles[chunk_idx]
-            raw = handle.get(f"__c_{local_idx}").fetch_all()
+            raw = None
+            if plan.has_tasks:  # plans without tasks were never run (see plan_estimator_programs)
+                chunk_idx, local_idx = self._locator[i]
+                raw = results_handles[chunk_idx].get(f"__c_{local_idx}").fetch_all()
             pub_results.append(estimator_pub_result(plan, raw))
 
         return PrimitiveResult(pub_results, metadata={"version": 2})

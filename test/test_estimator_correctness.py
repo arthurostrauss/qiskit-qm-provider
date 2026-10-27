@@ -21,7 +21,7 @@ from qiskit.transpiler import CouplingMap
 
 from qiskit_qm_provider.job.primitive_plans import EstimatorPlan
 from qiskit_qm_provider.job.qm_estimator_job import estimator_pub_result
-from qiskit_qm_provider.parameter_table import ParameterPool
+from qiskit_qm_provider.parameter_table import InputType, ParameterPool
 from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
 
 PRECISION = 0.01  # 10_000 shots
@@ -41,7 +41,8 @@ def _with_estimator_readout(circuit: QuantumCircuit, measured: list[int]) -> Qua
     qc.add_register(ClassicalRegister(len(measured), "__c"))
     for j in range(len(measured)):
         qc.add_input(f"obs_{j}", types.Uint(4))
-    qc.measure(measured, range(len(measured)))
+    if measured:
+        qc.measure(measured, range(len(measured)))
     return qc
 
 
@@ -171,7 +172,7 @@ def test_measured_qubits_include_idle_virtual_skip_unobserved_ancillas():
     tqc = _transpiled_with_ancillas()
     physical_q1 = tqc.layout.final_index_layout(filter_ancillas=True)[1]
     obs = SparsePauliOp("ZX").apply_layout(tqc.layout)  # X on virtual q0, Z on idle virtual q1
-    measured = [tqc.find_bit(q).index for q in estimator_measured_qubits(tqc, [obs])]
+    measured = estimator_measured_qubits([obs])
     assert physical_q1 in measured  # idle in the virtual circuit, but observed
     assert measured == sorted(tqc.layout.final_index_layout(filter_ancillas=True))  # ancillas unobserved
 
@@ -182,17 +183,48 @@ def test_measured_qubits_skip_unobserved_active_qubit():
     qc = QuantumCircuit(3)
     qc.h(0)
     qc.x(1)  # active but never observed
-    measured = [qc.find_bit(q).index for q in estimator_measured_qubits(qc, [SparsePauliOp("XIZ")])]
+    measured = estimator_measured_qubits([SparsePauliOp("XIZ")])
     assert measured == [0, 2]
 
 
-def test_measured_qubits_all_identity_measures_first_original():
+def test_measured_qubits_all_identity_measures_nothing():
     from qiskit_qm_provider.backend.backend_utils import estimator_measured_qubits
 
     tqc = _transpiled_with_ancillas()
-    obs = SparsePauliOp("II").apply_layout(tqc.layout)
-    measured = [tqc.find_bit(q).index for q in estimator_measured_qubits(tqc, [obs])]
-    assert measured == [min(tqc.layout.final_index_layout(filter_ancillas=True))]
+    assert estimator_measured_qubits([SparsePauliOp("II").apply_layout(tqc.layout)]) == []
+
+
+def test_projector_terms_rejected_with_clear_message():
+    from qiskit.quantum_info import SparseObservable
+    from qiskit_qm_provider.backend.backend_utils import estimator_measured_qubits
+
+    with pytest.raises(ValueError, match=r"not Pauli strings.*as_paulis"):
+        estimator_measured_qubits([SparseObservable("0X")])
+
+
+def test_identity_terms_evaluated_exactly_without_measurement():
+    # <0.5 I + 2 Z_0> and <3 I>: identity terms are never measured (no group, no buffer).
+    state = QuantumCircuit(2, name="identity")
+    state.x(0)
+    observables = [SparsePauliOp(["II", "IZ"], [0.5, 2.0]), SparsePauliOp("II", 3.0)]
+    plan = _plan(state, [0], observables)
+    assert len(plan.metadata) == 1 and plan.obs_codes == [[(0,)]]
+    result = estimator_pub_result(plan, _emulate_stream(plan, state, [0]))
+    np.testing.assert_allclose(result.data.evs, [0.5 - 2.0, 3.0], atol=TOL)
+    assert result.data.stds[1] == 0.0
+
+
+def test_identity_only_pub_is_never_run():
+    from qiskit.circuit import Parameter
+
+    state = QuantumCircuit(2, name="only_identity")
+    state.rx(Parameter("t"), 0)
+    pub = EstimatorPub.coerce((_with_estimator_readout(state, []), SparsePauliOp("II", -1.5), [[0.1], [0.2]]), precision=PRECISION)
+    plan = EstimatorPlan.from_pub(pub, QMEstimatorOptions(input_type=InputType.INPUT_STREAM))
+    assert not plan.has_tasks and not plan.streams_inputs and list(plan._pushes()) == []
+    result = estimator_pub_result(plan, None)
+    np.testing.assert_allclose(result.data.evs, [-1.5, -1.5])
+    np.testing.assert_allclose(result.data.stds, [0.0, 0.0])
 
 
 def test_idle_observed_qubit_is_measured_not_assumed():
@@ -216,7 +248,7 @@ def test_measured_qubits_include_observed_ancilla():
     label = ["I"] * tqc.num_qubits
     label[virtual_q0], label[ancilla] = "X", "Z"
     obs = SparsePauliOp("".join(reversed(label)))  # ISA observable with support on an ancilla
-    measured = [tqc.find_bit(q).index for q in estimator_measured_qubits(tqc, [obs])]
+    measured = estimator_measured_qubits([obs])
     assert measured == sorted([virtual_q0, ancilla])
 
 
@@ -225,7 +257,7 @@ def test_measured_qubits_union_over_observables_array():
 
     qc = QuantumCircuit(4)
     observables = [[SparsePauliOp("IIIZ")], [SparsePauliOp(["IXII", "IIII"])]]
-    assert [qc.find_bit(q).index for q in estimator_measured_qubits(qc, observables)] == [0, 2]
+    assert estimator_measured_qubits(observables) == [0, 2]
 
 
 def test_ancilla_observable_expectation_value():

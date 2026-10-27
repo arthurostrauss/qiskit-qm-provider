@@ -63,18 +63,19 @@ FIXED_MAX = 8.0 - 2.0**-28
 """Range of QUA ``fixed`` (signed 4.28 fixed point): every circuit parameter value must lie in it."""
 
 
-def check_fixed_range(pub, index) -> None:
-    """Reject a PUB with a parameter value outside ``[FIXED_MIN, FIXED_MAX]`` (or not finite).
+def binding_rows(pub) -> np.ndarray:
+    """The PUB's bindings as a ``(num_bindings, len(circuit.parameters))`` float matrix (ravel order)."""
+    return np.asarray(pub.parameter_values.ravel().as_array(pub.circuit.parameters), dtype=float)
+
+
+def check_fixed_range(values: np.ndarray, parameters, index) -> None:
+    """Reject bindings ``values`` (see :func:`binding_rows`) outside ``[FIXED_MIN, FIXED_MAX]`` or not finite.
 
     Circuit parameters are delivered and stored as QUA ``fixed`` on every path (compile-time
     rows, dense streamed rows, packed tables), and a value outside that range cannot be
     represented. Such values are not supported: rescale the parameter instead (see the
     *Parameter values and fixed-point range* section of the primitives guide).
     """
-    parameters = pub.circuit.parameters
-    if not len(parameters) or pub.parameter_values.size == 0:
-        return
-    values = np.asarray(pub.parameter_values.ravel().as_array(parameters), dtype=float)
     bad = ~((values >= FIXED_MIN) & (values <= FIXED_MAX))
     if bad.any():
         binding, column = (int(i) for i in np.argwhere(bad)[0])
@@ -150,13 +151,12 @@ def load_pub_row(circuit, circuit_table: ParameterTable, delivery_table: Paramet
         assign_qiskit_row(circuit, circuit_table, _row_parameter(circuit, circuit_table, delivery_table).var)
 
 
-def delivery_rows(pub, circuit_table, delivery_table) -> list[list]:
-    """Per-binding values in ``delivery_table`` field order, for the cloud sync hook."""
+def delivery_rows(pub, circuit_table, delivery_table, rows: Optional[np.ndarray] = None) -> list[list]:
+    """Per-binding values in ``delivery_table`` field order (``rows``: :func:`binding_rows`, if at hand)."""
     if is_row_delivery(delivery_table):
         _row_parameter(pub.circuit, circuit_table, delivery_table)
-        return [[row] for row in pub.parameter_values.ravel().as_array(pub.circuit.parameters).tolist()]
+        return [[row] for row in (binding_rows(pub) if rows is None else rows).tolist()]
     return packed_qiskit_parameter_rows(pub, delivery_table)
-
 
 
 # --------------------------------------------------------------------------------------------
@@ -178,13 +178,6 @@ def pack_obs_codes(codes) -> list[int]:
     for q, code in enumerate(codes):
         words[q // OBS_QUBITS_PER_WORD] |= int(code) << (2 * (q % OBS_QUBITS_PER_WORD))
     return words
-
-
-def unpack_obs_codes(words, num_qubits: int) -> list[int]:
-    """Inverse of :func:`pack_obs_codes` (host side)."""
-    return [
-        (int(words[q // OBS_QUBITS_PER_WORD]) >> (2 * (q % OBS_QUBITS_PER_WORD))) & 3 for q in range(num_qubits)
-    ]
 
 
 def pack_obs_rows(codes_per_binding, num_qubits: int) -> list[list[int]]:
@@ -211,27 +204,43 @@ def assign_obs_codes(row, base, obs_vars, word) -> None:
             assign(obs_vars[q], ((word >> shift) & 3) if shift else (word & 3))
 
 
-def rcv_obs_row(row_param: Parameter, words_per_obs: int, counter) -> None:
-    """QUA macro: receive one observable row.
+def obs_row_used_length(n_obs, words_per_obs: int):
+    """Used prefix of an observable row, ``1 + n_obs * words_per_obs``: the count plus the words of
+    its ``n_obs`` observables. ``n_obs`` is a Python int on the host and a QUA int in the program,
+    so both sides of an IO exchange bound it with this one expression."""
+    return 1 + n_obs * words_per_obs
 
-    Input streams advance once (the row is pushed whole). Over IO only the used prefix
-    ``1 + n_obs * words_per_obs`` is exchanged, one pause per word, so padding costs nothing.
+
+def _is_io(param: Parameter) -> bool:
+    return param.input_type in (InputType.IO1, InputType.IO2)
+
+
+def obs_row_payload(row_param: Parameter, row: list[int], words_per_obs: int) -> list[int]:
+    """What the host sends for ``row``: the whole row on an input stream, the used prefix over IO."""
+    row = [int(v) for v in row]
+    return row[: obs_row_used_length(row[0], words_per_obs)] if _is_io(row_param) else row
+
+
+def rcv_obs_row(row_param: Parameter, words_per_obs: int, counter) -> None:
+    """QUA macro: receive one observable row (the counterpart of :func:`obs_row_payload`).
+
+    Input streams advance once (the row is pushed whole). Over IO only the used prefix is
+    exchanged, one pause per word, so padding costs nothing.
     """
-    if row_param.input_type in (InputType.IO1, InputType.IO2):
+    if _is_io(row_param):
         io = IO1 if row_param.input_type == InputType.IO1 else IO2
         pause()
         assign(row_param.var[0], io)
-        with for_(counter, 1, counter < 1 + row_param.var[0] * words_per_obs, counter + 1):
+        with for_(counter, 1, counter < obs_row_used_length(row_param.var[0], words_per_obs), counter + 1):
             pause()
             assign(row_param.var[counter], io)
     else:
         row_param.rcv()
 
 
-def push_obs_row(row_param: Parameter, row: list[int], words_per_obs: int, job, qm=None) -> None:
-    """Host counterpart of :func:`rcv_obs_row`."""
-    row = [int(v) for v in row]
-    if row_param.input_type in (InputType.IO1, InputType.IO2):
-        row_param.push_io_values(row[: 1 + row[0] * words_per_obs], job, qm)
+def push_obs_row(row_param: Parameter, payload: list[int], job, qm=None) -> None:
+    """Send an :func:`obs_row_payload` to a running job (IO payloads may be shorter than the row)."""
+    if _is_io(row_param):
+        row_param.push_io_values(payload, job, qm)
     else:
-        row_param.push_to_opx(row, job, qm)
+        row_param.push_to_opx(payload, job, qm)

@@ -29,21 +29,25 @@ from __future__ import annotations
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 from qiskit.quantum_info import PauliList
 from qm.qua import declare, for_
 
-from ..backend.backend_utils import get_non_trivial_observables, observables_support
+from ..backend.backend_utils import get_non_trivial_observables
 from ..parameter_table import Direction, InputType, Parameter, ParameterTable, QUA2DArray
 from .pub_parameters import (
     assign_obs_codes,
     assign_qiskit_row,
+    binding_rows,
     build_pub_tables,
     check_fixed_range,
     delivery_rows,
     load_pub_row,
+    obs_row_payload,
+    obs_row_used_length,
     obs_words,
     pack_obs_rows,
     push_obs_row,
@@ -82,8 +86,13 @@ class PrimitivePlan:
     param_table: Optional[ParameterTable]
 
     def __post_init__(self):
-        check_fixed_range(self.pub, self.index)
+        check_fixed_range(self.binding_rows, self.pub.circuit.parameters, self.index)
         self._param_values_qua: Optional[QUA2DArray] = None
+
+    @cached_property
+    def binding_rows(self) -> np.ndarray:
+        """All bindings as a ``(num_bindings, len(circuit.parameters))`` float matrix, built once."""
+        return binding_rows(self.pub)
 
     @property
     def num_bindings(self) -> int:
@@ -111,10 +120,7 @@ class PrimitivePlan:
         if self.param_table is not self.circuit_table:
             self.param_table.declare()
         if self.uses_compile_time_params:
-            self._param_values_qua = QUA2DArray(
-                f"param_values_{self.param_table.name}",
-                self.pub.parameter_values.ravel().as_array(self.pub.circuit.parameters),
-            )
+            self._param_values_qua = QUA2DArray(f"param_values_{self.param_table.name}", self.binding_rows)
             self._param_values_qua.declare()
 
     def load_params(self, p) -> None:
@@ -131,7 +137,7 @@ class PrimitivePlan:
         :meth:`sync_hook_pushes`."""
         if not self.streams_params:
             return
-        for p, values in enumerate(delivery_rows(self.pub, self.circuit_table, self.param_table)):
+        for p, values in enumerate(delivery_rows(self.pub, self.circuit_table, self.param_table, self.binding_rows)):
             yield self.param_table, values
             yield from self._binding_extras(p)
 
@@ -159,10 +165,7 @@ class PrimitivePlan:
             if isinstance(target, ParameterTable):
                 yield from zip(specs[id(target)], value)
             else:
-                yield specs[id(target)][0], self._hook_value(target, value)
-
-    def _hook_value(self, target: Parameter, value):
-        return value
+                yield specs[id(target)][0], value
 
 
 @dataclass(eq=False)
@@ -208,16 +211,27 @@ def _estimator_readout(circuit) -> List[int]:
     return measured
 
 
+def _is_identity(label: str) -> bool:
+    return not label.strip("I")
+
+
 def _group_observables(labels: Tuple[str, ...], measured: List[int], abelian_grouping: bool):
-    """Measurement groups of one binding's Pauli terms.
+    """Measurement groups of one binding's non-identity Pauli terms.
 
     Returns the per-group basis codes (in ``__c`` order) and, per group, the
     ``(meas_paulis, orig_paulis)`` pair used to post-process its counts. ``labels`` must act
-    trivially outside ``measured``, so restriction to ``measured`` is one-to-one.
+    trivially outside ``measured`` (checked here), so restriction to ``measured`` is one-to-one.
     """
     if not labels:
         return [], []
-    restricted = get_non_trivial_observables(PauliList(list(labels)), measured)
+    paulis = PauliList(list(labels))
+    outside = np.ones(paulis.num_qubits, dtype=bool)
+    outside[measured] = False
+    unmeasured = np.flatnonzero(np.logical_or.reduce((paulis.x | paulis.z)[:, outside], axis=0))
+    if unmeasured.size:
+        qubits = np.flatnonzero(outside)[unmeasured].tolist()
+        raise ValueError(f"Observables act on qubits {qubits}, which the circuit does not measure.")
+    restricted = get_non_trivial_observables(paulis, measured)
     original = dict(zip(restricted.to_labels(), labels))
     if abelian_grouping:
         groups = restricted.group_commuting(qubit_wise=True)
@@ -236,10 +250,12 @@ class EstimatorPlan(PrimitivePlan):
     """Plan for one :class:`~qiskit.primitives.containers.estimator_pub.EstimatorPub`.
 
     The PUB's circuit must follow the estimator readout contract (see :func:`_estimator_readout`).
-    Grouping is done per distinct set of Pauli terms (shared by all bindings that request the
-    same terms), on the terms restricted to the measured qubits (``__c[j]`` measures
-    ``active_qubits[j]``, rotated by ``obs_j``). ``metadata``, the observable codes and the
-    ``__c`` stream share one order: binding-major, groups in order.
+    Identity terms are never measured: ``<I> = 1`` exactly, so they only enter post-processing.
+    The other terms are grouped per distinct set (shared by all bindings that request the same
+    terms), restricted to the measured qubits (``__c[j]`` measures ``active_qubits[j]``,
+    rotated by ``obs_j``). ``metadata``, the observable codes and the ``__c`` stream share one
+    order: binding-major, groups in order. A plan without any task (only identity terms) is
+    neither compiled nor sent: see :attr:`has_tasks`.
     """
 
     metadata: List[dict] = field(default_factory=list)
@@ -269,17 +285,7 @@ class EstimatorPlan(PrimitivePlan):
                 f"PUB {index} has an empty bindings array (shape {pub.parameter_values.shape}); "
                 "provide at least one set of parameter values."
             )
-        if options.input_type == InputType.OPNIC:
-            raise NotImplementedError(
-                "Estimator observables over OPNIC are not supported yet; use INPUT_STREAM, IO1/IO2 "
-                "or compile-time (input_type=None)."
-            )
         measured = _estimator_readout(circuit)
-        unmeasured = sorted(set(np.flatnonzero(observables_support(pub.observables)).tolist()) - set(measured))
-        if unmeasured:
-            raise ValueError(
-                f"PUB {index}: observables act on qubits {unmeasured}, which the circuit does not measure."
-            )
 
         param_shape = pub.parameter_values.shape
         param_indices = np.fromiter(np.ndindex(param_shape), dtype=object).reshape(param_shape)
@@ -291,14 +297,19 @@ class EstimatorPlan(PrimitivePlan):
         groupings: Dict[Tuple[str, ...], tuple] = {}
         metadata, obs_codes = [], []
         for param_index in np.ndindex(param_shape):  # binding (ravel) order == loop and push order
-            labels = tuple(sorted(param_obs_map[param_index]))
+            labels = tuple(sorted(label for label in param_obs_map[param_index] if not _is_identity(label)))
             if labels not in groupings:
-                groupings[labels] = _group_observables(labels, measured, options.abelian_grouping)
+                try:
+                    groupings[labels] = _group_observables(labels, measured, options.abelian_grouping)
+                except ValueError as error:
+                    raise ValueError(f"PUB {index}: {error}") from None
             codes, paulis = groupings[labels]
             obs_codes.append(codes)
             metadata.extend(
                 {"meas_paulis": meas, "orig_paulis": orig, "param_index": param_index} for meas, orig in paulis
             )
+        if not metadata:  # only identity terms: nothing to run on the device
+            return cls(pub, index, None, None, param_indices=param_indices, obs_codes=obs_codes)
         distinct_codes = {tuple(codes) for codes, _ in groupings.values()}
         # Same basis codes for every binding: one row, sent (or preloaded) once.
         rows = pack_obs_rows(list(distinct_codes) if len(distinct_codes) == 1 else obs_codes, len(measured))
@@ -333,6 +344,11 @@ class EstimatorPlan(PrimitivePlan):
             obs_rows=rows,
             words_per_obs=obs_words(len(measured)),
         )
+
+    @property
+    def has_tasks(self) -> bool:
+        """``False`` when every term is the identity: the PUB is then not compiled, sent or run."""
+        return bool(self.metadata)
 
     @property
     def shared_obs_row(self) -> bool:
@@ -387,13 +403,14 @@ class EstimatorPlan(PrimitivePlan):
         """QUA macro: loop over binding ``p``'s measurement groups, each unpacked into ``obs_j``."""
         row = self._binding_obs_row(p)
         with for_(self._obs_idx, 0, self._obs_idx < row[0], self._obs_idx + 1):
-            assign_obs_codes(row, 1 + self._obs_idx * self.words_per_obs, self.obs_vars, self._obs_word)
+            # Group g's words start right after the count and the first g groups.
+            assign_obs_codes(row, obs_row_used_length(self._obs_idx, self.words_per_obs), self.obs_vars, self._obs_word)
             yield
 
     # --------------------------------------------------------------------------------- host
     def _pushes(self) -> Iterator[Tuple[Any, Any]]:
         if self.streams_obs and self.shared_obs_row:
-            yield self.obs_row, self.obs_rows[0]
+            yield self.obs_row, self._obs_payload(0)
         if self.streams_params:
             yield from super()._pushes()
         elif self.streams_obs and not self.shared_obs_row:
@@ -402,15 +419,14 @@ class EstimatorPlan(PrimitivePlan):
 
     def _binding_extras(self, p: int) -> Iterator[Tuple[Any, Any]]:
         if self.streams_obs and not self.shared_obs_row:
-            yield self.obs_row, self.obs_rows[p]
+            yield self.obs_row, self._obs_payload(p)
+
+    def _obs_payload(self, p: int) -> List[int]:
+        """Row ``p`` as sent, for both the local push and the sync hook (see :func:`obs_row_payload`)."""
+        return obs_row_payload(self.obs_row, self.obs_rows[p], self.words_per_obs)
 
     def _push_one(self, target, value, qm_job, qm) -> None:
         if target is self.obs_row:
-            push_obs_row(target, value, self.words_per_obs, qm_job, qm)
+            push_obs_row(target, value, qm_job, qm)
         else:
             super()._push_one(target, value, qm_job, qm)
-
-    def _hook_value(self, target: Parameter, value):
-        if target is self.obs_row and target.input_type in (InputType.IO1, InputType.IO2):
-            return value[: 1 + value[0] * self.words_per_obs]  # IO exchanges only the used prefix
-        return value

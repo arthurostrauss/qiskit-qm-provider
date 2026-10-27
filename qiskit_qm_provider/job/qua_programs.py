@@ -270,10 +270,11 @@ def plan_estimator_programs(
 ) -> tuple[List[Program], List[List[int]]]:
     """Plan the QUA program(s) for ``QMEstimatorV2``.
 
-    When the number of plans (one per EstimatorPub) exceeds
-    ``backend.options.max_circuits``, the list is split into consecutive chunks,
-    each compiled into its own QUA program.  Results are stitched back by the
-    caller using the returned ``chunk_layout``.
+    Plans without tasks (only identity terms) are left out: they need no program. When the
+    number of remaining plans exceeds ``backend.options.max_circuits``, they are split into
+    consecutive chunks, each compiled into its own QUA program.  Results are stitched back by
+    the caller using the returned ``chunk_layout`` (global plan indices; no programs and an
+    empty layout when no plan has tasks).
 
     Within each program, the local plan index (0-based within the chunk) is
     used for stream keys ``f"__c_{local_idx}"``.
@@ -286,7 +287,13 @@ def plan_estimator_programs(
     Returns:
         Tuple of (list of QUA programs, chunk layout).
     """
-    chunk_layout = compute_chunk_layout(len(plans), max_circuits=backend.options.max_circuits)
+    runnable = [g for g, plan in enumerate(plans) if plan.has_tasks]
+    if not runnable:
+        return [], []
+    chunk_layout = [
+        [runnable[i] for i in chunk]
+        for chunk in compute_chunk_layout(len(runnable), max_circuits=backend.options.max_circuits)
+    ]
     programs = [estimator_program(backend, [plans[g] for g in chunk], **kwargs) for chunk in chunk_layout]
     return programs, chunk_layout
 

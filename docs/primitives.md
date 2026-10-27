@@ -48,7 +48,8 @@ Circuits and observables are taken as ISA: observables span the full physical re
 - A qubit that no gate touches is still measured if an observable acts on it.
 - Ancillas are treated like any other qubit: `apply_layout` pads them with identity, so they are normally not measured, but an observable that acts on one is measured faithfully.
 - Qubits that carry gates but no observable support are not measured, which saves their basis switch and readout.
-- If every observable is the identity, one qubit is measured (the first qubit of the circuit's layout), as in Qiskit's `BackendEstimatorV2`.
+- Identity terms are never measured: `<I> = 1` exactly, so they contribute their coefficient with zero variance. If every term of a PUB is the identity, the PUB is not compiled or run at all.
+- Only Pauli terms are supported. `SparseObservable` projector terms (`0`, `1`, `+`, `-`, `r`, `l`) raise a `ValueError`; expand them first with `SparseObservable.as_paulis()`, at the cost of doubling the number of terms per projector.
 
 Per measured qubit `q_j`, the prepared circuit has a basis switch driven by an input `obs_j` (0: none, 1: `h`, 2: `sdg; h`) followed by a measurement into bit `j` of a `__c` register. `EstimatorPlan.from_pub` requires this readout (it rejects circuits without it, and observables acting on a qubit outside `__c`); `QMEstimatorV2.run` adds it through `validate_estimator_pubs`. A PUB with an empty bindings array is rejected.
 
@@ -84,7 +85,7 @@ See the [QUA reference guide](https://docs.quantum-machines.co/latest/docs/Guide
 
 | Option | Sampler | Estimator | Meaning |
 |--------|---------|-----------|---------|
-| `input_type` | ✓ | ✓ | How parameters reach the OPX: stream, IO, QUARC-backed OPNIC, or `None` (compile-time preload — only for small parameter sets) |
+| `input_type` | ✓ | ✓ | How parameters reach the OPX: stream, IO, QUARC-backed OPNIC (sampler only; the estimator raises `NotImplementedError`), or `None` (compile-time preload — only for small parameter sets) |
 | `default_shots` | ✓ | — | Default shots when not specified in `run()` |
 | `default_precision` | — | ✓ | Default precision (e.g. 1/√4096) when not specified |
 | `abelian_grouping` | — | ✓ | Group commuting observables (default `True`) |

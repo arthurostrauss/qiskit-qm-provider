@@ -21,10 +21,11 @@ from qiskit_qm_provider.job.pub_parameters import (
     obs_words,
     pack_obs_codes,
     pack_obs_rows,
-    unpack_obs_codes,
 )
 from qiskit_qm_provider.parameter_table import InputType, ParameterPool
 from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
+
+from ._obs_packing import unpack_obs_codes
 
 
 @pytest.fixture(autouse=True)
@@ -225,15 +226,13 @@ def test_sync_hook_lists_each_target_once():
 
 
 def test_io_obs_row_needs_qm_for_legacy_jobs():
-    from qiskit_qm_provider.job.pub_parameters import push_obs_row
-
     plan = _estimator_plan([SparsePauliOp("XY")], input_type=InputType.IO1)
     job = SimpleNamespace(is_paused=lambda: True, resume=lambda: None)  # not a JobApi
     with pytest.raises(ValueError, match="QuantumMachine object is required"):
-        push_obs_row(plan.obs_row, plan.obs_rows[0], plan.words_per_obs, job, qm=None)
+        plan.push(job, qm=None)
     sent = []
     qm = SimpleNamespace(set_io_values=lambda **kw: sent.append(kw))
-    push_obs_row(plan.obs_row, plan.obs_rows[0], plan.words_per_obs, job, qm=qm)
+    plan.push(job, qm=qm)
     assert sent == [{"io1": v} for v in plan.obs_rows[0][:2]]
 
 
@@ -275,3 +274,33 @@ def test_sampler_rejects_values_outside_fixed_range():
     qc.measure_all()
     with pytest.raises(ValueError, match=r"parameter 'theta' has value 12\.5 \(binding 1"):
         SamplerPlan.from_pub(SamplerPub.coerce((qc, [[1.0], [12.5]]), shots=10), InputType.INPUT_STREAM, 0)
+
+
+def test_bindings_matrix_built_once(monkeypatch, no_circuit):
+    from qiskit.primitives.containers.bindings_array import BindingsArray
+    from qiskit_qm_provider.job.sync_hook import generate_sync_hook
+
+    calls = []
+    original = BindingsArray.as_array
+    monkeypatch.setattr(BindingsArray, "as_array", lambda self, *a, **k: calls.append(1) or original(self, *a, **k))
+    for input_type in (None, InputType.INPUT_STREAM):
+        ParameterPool.reset()
+        calls.clear()
+        plan = _estimator_plan([SparsePauliOp("ZX")], values=[[0.1], [0.2]], input_type=input_type)
+        _qua_script(plan)
+        if input_type is not None:
+            plan.push(SimpleNamespace(push_to_input_stream=lambda *a: None))
+            generate_sync_hook([plan])
+        assert len(calls) == 1, input_type
+
+
+def test_plans_without_tasks_get_no_program(monkeypatch):
+    built = []
+    monkeypatch.setattr(qua_programs, "estimator_program", lambda backend, plans, **kw: built.append(plans) or "prog")
+    backend = SimpleNamespace(options=SimpleNamespace(max_circuits=30))
+    identity = _estimator_plan([SparsePauliOp("II")])
+    measured = _estimator_plan([SparsePauliOp("ZX")])
+    assert not identity.has_tasks and measured.has_tasks
+    assert qua_programs.plan_estimator_programs(backend, [identity]) == ([], [])
+    programs, layout = qua_programs.plan_estimator_programs(backend, [identity, measured, identity])
+    assert programs == ["prog"] and layout == [[1]] and built == [[measured]]

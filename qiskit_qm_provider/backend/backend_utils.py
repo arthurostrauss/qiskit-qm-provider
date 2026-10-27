@@ -791,39 +791,36 @@ def logically_active_qubits(circuit):
     return sorted(active, key=lambda q: circuit.find_bit(q).index)
 
 
-def observables_support(observables) -> np.ndarray:
-    """Boolean mask over qubits: ``True`` where any Pauli term of ``observables`` acts non-trivially.
+def estimator_measured_qubits(observables) -> list[int]:
+    """Indices of the qubits the estimator must measure for ``observables``.
 
     ``observables`` is anything :class:`~qiskit.primitives.containers.observables_array.ObservablesArray`
-    can coerce; terms are deduplicated before the symplectic reduction.
+    can coerce, taken as ISA: it spans the circuit's full physical register (Qiskit's
+    ``apply_layout`` convention). A qubit is measured iff some term of some observable in the
+    array acts non-trivially on it, whether or not a gate touches it and whether or not it is an
+    ancilla. Every other qubit only ever carries an identity, so it cannot change any
+    expectation value and is not read. When every term is the identity, no qubit is measured:
+    ``<I> = 1`` exactly, so those terms are evaluated without running the circuit.
+
+    Raises:
+        ValueError: If a term is not a Pauli string (e.g. a ``SparseObservable`` projector
+            such as ``"0"``, ``"+"`` or ``"r"``), which the estimator does not support yet.
     """
     from qiskit.primitives.containers.observables_array import ObservablesArray
 
-    observables = ObservablesArray.coerce(observables)
-    labels = {label for observable in observables.ravel().tolist() for label in observable}
+    observables = ObservablesArray.coerce(observables).ravel().tolist()
+    labels = {label for observable in observables for label in observable if label.strip("I")}
+    non_pauli = sorted(label for label in labels if label.strip("IXYZ"))
+    if non_pauli:
+        raise ValueError(
+            f"Observable terms {non_pauli[:3]} are not Pauli strings. QMEstimatorV2 supports Pauli "
+            "observables only; expand projector terms into Paulis first, e.g. with "
+            "SparseObservable.as_paulis() (the number of terms doubles per projector)."
+        )
     if not labels:
-        return np.zeros(observables.num_qubits, dtype=bool)
+        return []
     paulis = PauliList(sorted(labels))
-    return np.logical_or.reduce(paulis.x | paulis.z, axis=0)
-
-
-def estimator_measured_qubits(circuit: QuantumCircuit, observables) -> list:
-    """Qubits the estimator must measure for ``observables`` on ``circuit``, by circuit index.
-
-    Circuit and observables are taken as ISA: observables span the circuit's full physical
-    register (Qiskit's ``apply_layout`` convention). A qubit is measured iff some term of some
-    observable in the PUB's observables array acts non-trivially on it, whether or not a gate
-    touches it and whether or not it is an ancilla. Every other qubit only ever carries an
-    identity, so it cannot change any expectation value and is not read. If every observable
-    is the identity, a single qubit is measured (as in Qiskit's ``BackendEstimatorV2``): the
-    first qubit of the circuit's virtual layout, or qubit 0 without a layout.
-    """
-    support = observables_support(observables)
-    measured = [int(i) for i in np.flatnonzero(support)]
-    if not measured:
-        layout = circuit.layout.final_index_layout(filter_ancillas=True) if circuit.layout is not None else [0]
-        measured = [min(layout)]
-    return [circuit.qubits[i] for i in measured]
+    return np.flatnonzero(np.logical_or.reduce(paulis.x | paulis.z, axis=0)).tolist()
 
 
 def get_non_trivial_observables(observables: PauliList, active_qubit_indices: List[int]) -> PauliList:
