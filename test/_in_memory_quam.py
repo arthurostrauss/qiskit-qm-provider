@@ -21,9 +21,9 @@ def build_machine(num_qubits: int = 2, quam_class=FluxTunableQuam):
 
 
 def build_backend(num_qubits: int = 2, conditional_plays=("x180", "-y90"), backend_class=FluxTunableTransmonBackend):
-    """A backend over :func:`build_machine`, using quam-builder's default macros
-    (``x``, ``y``, ``sx``, ``sy``, ``rz``, ``measure``, ``reset``, ``delay``, ``id``,
-    and ``cz`` on every neighbouring pair).
+    """A backend over :func:`build_machine`, using the provider's ``add_basic_macros``
+    (``x``, ``y``, ``sx``, ``sxdg``, ``sy``, ``sydg``, ``rz``, ``measure``, a thermal
+    ``reset``, ``delay``, ``id``, and ``cz`` on every neighbouring pair).
 
     ``QUAM_STATE_PATH`` must point at a writable directory (use ``monkeypatch.setenv``).
     """

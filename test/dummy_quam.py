@@ -26,6 +26,8 @@ from quam_builder.builder.superconducting.add_default_macros import (
     add_default_transmon_pair_macros,
 )
 
+from qiskit_qm_provider.quam_macros.superconducting.add_basic_macros import add_basic_macros
+
 # Standard OPX1000 port counts per FEM module (override at module level if needed)
 MW_FEM_OUTPUTS = 8
 LF_FEM_OUTPUTS = 8
@@ -434,9 +436,16 @@ def _add_qubit_pairs(machine: AnyQuam) -> None:
 
 
 def _add_pulses_and_macros(machine: AnyQuam) -> None:
-    """Default pulses, a DragCosine single-qubit gate set (aliased to ``x180``,
-    ``x90``, ``-x90``, ``y180``, ``y90``, ``-y90``) and default macros on every qubit,
-    then default pulses and macros (CZ for flux-tunable pairs) on every pair."""
+    """Default pulses and a DragCosine single-qubit gate set (aliased to ``x180``,
+    ``x90``, ``-x90``, ``y180``, ``y90``, ``-y90``) on every qubit, default pulses and
+    macros (CZ for flux-tunable pairs) on every pair, then single-qubit macros.
+
+    Flux-tunable machines get the provider's ``add_basic_macros`` with a thermal reset:
+    quam-builder's default active reset needs calibrated readout thresholds
+    (``rus_exit_threshold``), which a dummy machine lacks. ``add_basic_macros`` only
+    targets flux-tunable hardware, so fixed-frequency machines keep quam-builder's
+    default macros."""
+    flux_tunable = _is_flux_tunable(type(machine))
     for transmon in machine.qubits.values():
         add_default_transmon_pulses(transmon)
         add_DragCosine_pulses(
@@ -446,10 +455,13 @@ def _add_pulses_and_macros(machine: AnyQuam) -> None:
             alpha=DEFAULT_DRAG_ALPHA,
             detuning=DEFAULT_DRAG_DETUNING,
         )
-        add_default_transmon_macros(transmon)
+        if not flux_tunable:
+            add_default_transmon_macros(transmon)
     for qubit_pair in machine.qubit_pairs.values():
         add_default_transmon_pair_pulses(qubit_pair)
         add_default_transmon_pair_macros(qubit_pair)
+    if flux_tunable:
+        add_basic_macros(machine, reset_type="thermalize")
 
 
 def _set_carrier(channel: Any, rf_frequency: float, lo_frequency: float) -> None:
