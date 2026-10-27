@@ -87,6 +87,44 @@ def check_fixed_range(values: np.ndarray, parameters, index) -> None:
         )
 
 
+class PubRowTable(ParameterTable):
+    """Delivery table of a PUB whose bindings travel as dense rows.
+
+    It holds a single ``fixed`` array, :attr:`row`, of ``len(circuit.parameters)`` values: each
+    binding is pushed as one raw ``as_array(circuit.parameters)`` row and scattered into the
+    circuit table in QUA. Being a dedicated type (rather than a flag on a plain table) keeps the
+    delivery mode explicit and survives copies. The constructor is the base one, so that
+    :meth:`ParameterTable.__deepcopy__` can re-initialise a copy; build one with
+    :meth:`for_circuit`.
+    """
+
+    @classmethod
+    def for_circuit(cls, circuit, input_type: InputType, name: str) -> "PubRowTable":
+        """The row table ``<name>_row`` for ``circuit``'s parameters, delivered through ``input_type``."""
+        row = Parameter(
+            f"{name}_row",
+            value=[0.0] * len(circuit.parameters),
+            qua_type=fixed,
+            input_type=input_type,
+            direction=Direction.INCOMING,
+        )
+        return cls([row], name=f"{name}_row")
+
+    @property
+    def row(self) -> Parameter:
+        """The single array field carrying one binding."""
+        return self.parameters[0]
+
+    def check_circuit(self, circuit, circuit_table) -> Parameter:
+        """Return :attr:`row` after checking it belongs to ``circuit`` and a separate circuit table."""
+        if circuit_table is self or self.row.length != len(circuit.parameters):
+            raise ValueError(
+                f"Row table {self.name!r} does not match the circuit: expected a separate circuit "
+                f"table and a row of length {len(circuit.parameters)}, got {self.row.length}."
+            )
+        return self.row
+
+
 def build_pub_tables(
     circuit, input_type: Optional[InputType], name: str
 ) -> Tuple[Optional[ParameterTable], Optional[ParameterTable]]:
@@ -102,35 +140,16 @@ def build_pub_tables(
     )
     if circuit_table is None or not dense:
         return circuit_table, circuit_table
-    row = Parameter(
-        f"{name}_row",
-        value=[0.0] * len(circuit.parameters),
-        qua_type=fixed,
-        input_type=input_type,
-        direction=Direction.INCOMING,
-    )
-    delivery_table = ParameterTable([row], name=f"{name}_row")
-    delivery_table._is_pub_row = True
-    return circuit_table, delivery_table
+    return circuit_table, PubRowTable.for_circuit(circuit, input_type, name)
 
 
 def is_row_delivery(delivery_table) -> bool:
-    """``True`` when ``delivery_table`` is a dense row table built by :func:`build_pub_tables`.
+    """``True`` when ``delivery_table`` is a :class:`PubRowTable` (bindings arrive as dense rows).
 
-    The mode is an explicit marker on the table, never inferred from how the circuit and
-    delivery tables relate, so a copied or separately built table is not mistaken for a row.
+    Decided by type, never by name or by how the circuit and delivery tables relate, so a
+    plain table that happens to look like a row is not mistaken for one.
     """
-    return getattr(delivery_table, "_is_pub_row", False)
-
-
-def _row_parameter(circuit, circuit_table, delivery_table) -> Parameter:
-    row = delivery_table.parameters[0]
-    if circuit_table is delivery_table or row.length != len(circuit.parameters):
-        raise ValueError(
-            f"Row table {delivery_table.name!r} does not match the circuit: expected a separate "
-            f"circuit table and a row of length {len(circuit.parameters)}, got {row.length}."
-        )
-    return row
+    return isinstance(delivery_table, PubRowTable)
 
 
 def assign_qiskit_row(circuit, table: ParameterTable, row) -> None:
@@ -148,13 +167,13 @@ def load_pub_row(circuit, circuit_table: ParameterTable, delivery_table: Paramet
     """QUA macro: receive one binding and make it visible to the circuit table."""
     delivery_table.rcv()
     if is_row_delivery(delivery_table):
-        assign_qiskit_row(circuit, circuit_table, _row_parameter(circuit, circuit_table, delivery_table).var)
+        assign_qiskit_row(circuit, circuit_table, delivery_table.check_circuit(circuit, circuit_table).var)
 
 
 def delivery_rows(pub, circuit_table, delivery_table, rows: Optional[np.ndarray] = None) -> list[list]:
     """Per-binding values in ``delivery_table`` field order (``rows``: :func:`binding_rows`, if at hand)."""
     if is_row_delivery(delivery_table):
-        _row_parameter(pub.circuit, circuit_table, delivery_table)
+        delivery_table.check_circuit(pub.circuit, circuit_table)
         return [[row] for row in (binding_rows(pub) if rows is None else rows).tolist()]
     return packed_qiskit_parameter_rows(pub, delivery_table)
 

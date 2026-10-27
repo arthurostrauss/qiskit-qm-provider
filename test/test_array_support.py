@@ -399,17 +399,36 @@ def test_dictionary_string_keys_follow_object_rules(array_mode, compile_circuit)
 
 def test_unmarked_table_is_not_a_row(monkeypatch):
     # A separately built table that is not the circuit table must not be mistaken for a dense row.
-    from qiskit_qm_provider.job.pub_parameters import build_pub_tables, is_row_delivery
+    from qiskit_qm_provider import Parameter
+    from qiskit_qm_provider.job.pub_parameters import PubRowTable, build_pub_tables, is_row_delivery
 
     pub = _mixed_vector_pub()
     circuit_table, row_table = build_pub_tables(pub.circuit, InputType.INPUT_STREAM, "pt")
+    assert isinstance(row_table, PubRowTable) and row_table.row.name == "pt_row"
     assert is_row_delivery(row_table) and not is_row_delivery(circuit_table)
     other = ParameterTable.from_qiskit(pub.circuit, input_type=InputType.INPUT_STREAM, name="other")
     assert not is_row_delivery(other)
+    # A plain table shaped and named like a row table is still not one: the type decides.
+    lookalike = ParameterTable([Parameter("other_row", [0.0] * 2, input_type=InputType.INPUT_STREAM)], name="other_row")
+    assert not is_row_delivery(lookalike)
     pushed = []
     monkeypatch.setattr(other, "push_to_opx", lambda values, *args: pushed.append(values))
     _push_with("sampler", pub, circuit_table, other)
     assert set(pushed[0]) == set(other.table)  # packed into its own fields, not {first_field: row}
+
+
+def test_row_table_survives_deepcopy():
+    import copy
+
+    from qiskit_qm_provider.job.pub_parameters import PubRowTable, build_pub_tables, delivery_rows, is_row_delivery
+
+    pub = _mixed_vector_pub()
+    circuit_table, row_table = build_pub_tables(pub.circuit, InputType.INPUT_STREAM, "pt")
+    copied = copy.deepcopy(row_table)
+    assert copied is not row_table and isinstance(copied, PubRowTable) and is_row_delivery(copied)
+    assert copied.row is not row_table.row and copied.row.length == row_table.row.length
+    # The copy still delivers raw rows (not zero-filled packed fields).
+    assert delivery_rows(pub, circuit_table, copied) == delivery_rows(pub, circuit_table, row_table) == [[[0.1, 0.2]]]
 
 
 def test_row_table_rejects_mismatched_circuit():
