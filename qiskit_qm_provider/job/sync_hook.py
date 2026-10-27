@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared helpers for Jinja-based sync-hook generation.
+"""Jinja-based sync-hook generation for the primitives (e.g. IQCC cloud).
 
 The generated sync hooks must run on the IQCC cloud side without importing
 ``qiskit_qm_provider`` or ``numpy``. This module turns rich parameter tables into
@@ -82,3 +82,20 @@ def to_py_literal(obj) -> str:
     Python source.
     """
     return repr(obj)
+
+
+def generate_sync_hook(plans) -> str:
+    """Generate the sync hook pushing every plan's streamed inputs, in program order.
+
+    Each plan contributes its :meth:`~qiskit_qm_provider.job.primitive_plans.PrimitivePlan.sync_hook_pushes`,
+    so the cloud push order is the one the local job uses. Push targets are listed once in
+    ``SPECS``; each entry of ``PUSHES`` is ``[spec index, value]``.
+    """
+    specs, pushes = {}, []
+    for plan in plans:
+        for spec, value in plan.sync_hook_pushes():
+            pushes.append([specs.setdefault(spec, len(specs)), value])
+    return jinja_env().get_template("sync_hook.py.jinja").render(
+        specs_literal=to_py_literal([list(spec) for spec in specs]),
+        pushes_literal=to_py_literal(pushes),
+    )

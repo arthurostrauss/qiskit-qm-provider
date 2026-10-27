@@ -1,0 +1,17 @@
+# Auto-generated sync hook for a QM primitive. Do not edit by hand.
+from iqcc_cloud_client.runtime import get_qm_job
+
+job = get_qm_job()
+
+# Push targets: [input_type, name, qua_type].
+SPECS = {{ specs_literal }}
+
+# Every push the QUA program expects, in order: [index into SPECS, value].
+PUSHES = {{ pushes_literal }}
+
+
+{% include "_push_helpers.py.jinja" %}
+
+for spec, value in PUSHES:
+    input_type, name, qua_type = SPECS[spec]
+    _push(job, input_type, name, _coerce(value, qua_type))

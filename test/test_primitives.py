@@ -63,8 +63,24 @@ class TestQMEstimatorOptions:
         assert opts.abelian_grouping is False
 
     def test_input_type_enum(self):
-        opts = QMEstimatorOptions(input_type=InputType.OPNIC)
-        assert opts.input_type == InputType.OPNIC
+        opts = QMEstimatorOptions(input_type=InputType.INPUT_STREAM)
+        assert opts.input_type == InputType.INPUT_STREAM
+
+    @pytest.mark.parametrize("input_type", [InputType.OPNIC, "OPNIC"])
+    def test_opnic_not_supported(self, input_type):
+        with pytest.raises(NotImplementedError, match="OPNIC"):
+            QMEstimatorOptions(input_type=input_type)
+
+    def test_opnic_set_after_construction_rejected_before_any_work(self):
+        from types import SimpleNamespace
+        from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorV2
+
+        estimator = object.__new__(QMEstimatorV2)
+        estimator._options = QMEstimatorOptions()
+        estimator._options.input_type = InputType.OPNIC
+        estimator._backend = SimpleNamespace()  # any backend access would fail first
+        with pytest.raises(NotImplementedError, match="OPNIC"):
+            estimator.run([])
 
     def test_input_type_string_coercion(self):
         opts = QMEstimatorOptions(input_type="IO1")

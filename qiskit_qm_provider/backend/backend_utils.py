@@ -26,6 +26,7 @@ from __future__ import annotations
 import warnings
 from typing import Any, List, TYPE_CHECKING, Dict, Type
 
+import numpy as np
 from qiskit.circuit import Barrier, QuantumCircuit, QuantumRegister, Parameter, Store
 from qiskit.circuit.controlflow import (
     ControlFlowOp,
@@ -35,7 +36,7 @@ from qiskit.circuit.controlflow import (
     SwitchCaseOp,
 )
 from qiskit.circuit.library import get_standard_gate_name_mapping
-from qiskit.quantum_info import Pauli, PauliList
+from qiskit.quantum_info import PauliList
 from qiskit.converters import circuit_to_dag
 from qiskit.dagcircuit import DAGCircuit
 from qiskit.transpiler.passes import GatesInBasis
@@ -790,27 +791,52 @@ def logically_active_qubits(circuit):
     return sorted(active, key=lambda q: circuit.find_bit(q).index)
 
 
+def estimator_measured_qubits(observables) -> list[int]:
+    """Indices of the qubits the estimator must measure for ``observables``.
+
+    ``observables`` is anything :class:`~qiskit.primitives.containers.observables_array.ObservablesArray`
+    can coerce, taken as ISA: it spans the circuit's full physical register (Qiskit's
+    ``apply_layout`` convention). A qubit is measured iff some term of some observable in the
+    array acts non-trivially on it, whether or not a gate touches it and whether or not it is an
+    ancilla. Every other qubit only ever carries an identity, so it cannot change any
+    expectation value and is not read. When every term is the identity, no qubit is measured:
+    ``<I> = 1`` exactly, so those terms are evaluated without running the circuit.
+
+    Raises:
+        ValueError: If a term is not a Pauli string (e.g. a ``SparseObservable`` projector
+            such as ``"0"``, ``"+"`` or ``"r"``), which the estimator does not support yet.
+    """
+    from qiskit.primitives.containers.observables_array import ObservablesArray
+
+    observables = ObservablesArray.coerce(observables).ravel().tolist()
+    labels = {label for observable in observables for label in observable if label.strip("I")}
+    non_pauli = sorted(label for label in labels if label.strip("IXYZ"))
+    if non_pauli:
+        raise ValueError(
+            f"Observable terms {non_pauli[:3]} are not Pauli strings. QMEstimatorV2 supports Pauli "
+            "observables only; expand projector terms into Paulis first, e.g. with "
+            "SparseObservable.as_paulis() (the number of terms doubles per projector)."
+        )
+    if not labels:
+        return []
+    paulis = PauliList(sorted(labels))
+    return np.flatnonzero(np.logical_or.reduce(paulis.x | paulis.z, axis=0)).tolist()
+
+
 def get_non_trivial_observables(observables: PauliList, active_qubit_indices: List[int]) -> PauliList:
-    """Restrict observables to logically active qubits.
+    """Restrict observables to the given qubits.
 
     Args:
         observables: Pauli observables defined on the full qubit register.
-        active_qubit_indices: Indices of qubits that participate in the circuit.
+        active_qubit_indices: Indices of the qubits to keep, in the order of the result.
 
     Returns:
-        A :class:`~qiskit.quantum_info.PauliList` with inactive qubits replaced
-        by identity.
+        A :class:`~qiskit.quantum_info.PauliList` on ``len(active_qubit_indices)`` qubits whose
+        qubit ``j`` is qubit ``active_qubit_indices[j]`` of the input; other qubits are dropped.
     """
-    new_observables = []
-    for observable in observables:
-        label = observable.to_label()
-        new_pauli_label = ""
-        for j in range(observable.num_qubits):
-            if j in active_qubit_indices:
-                new_pauli_label += label[-j - 1]
-        new_observables.append(Pauli(new_pauli_label))
-
-    return PauliList(new_observables)
+    observables = PauliList(observables)
+    indices = list(active_qubit_indices)
+    return PauliList.from_symplectic(observables.z[:, indices], observables.x[:, indices], observables.phase)
 
 
 def get_qua_script(

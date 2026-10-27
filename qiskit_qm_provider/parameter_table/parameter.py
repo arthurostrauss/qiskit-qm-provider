@@ -991,7 +991,7 @@ class Parameter:
                 retained for backwards compatibility with older job objects that
                 still routed IO through ``qm.set_io_values``.
             verbosity: Verbosity level. Default is 1.
-            time_out: Time out for waiting for the job to be paused. Default is 90 seconds.
+            time_out: Time out for waiting for the job to be paused. Default is 30 seconds.
         """
         if value is _PUSH_SENTINEL:
             if self.value is None:
@@ -1019,33 +1019,7 @@ class Parameter:
                 raise ValueError(f"Invalid input. {self.name} should be a single value of type {param_type}.")
 
         if self.input_type in [InputType.IO1, InputType.IO2]:
-            if job is None:
-                raise ValueError("Job object is required to set IO values.")
-            io = "io1" if self.input_type == InputType.IO1 else "io2"
-            if self.is_array:
-                for i in range(self.length):
-                    if verbosity > 1:
-                        print(f"Setting {self.name} to {value[i]} through {io}")
-                    wait_until_job_is_paused(job, time_out)
-                    if isinstance(job, JobApi):
-                        job.set_io_values(**{io: value[i]})
-                    else:
-                        if qm is None:
-                            raise ValueError("QuantumMachine object is required to set IO values.")
-                        qm.set_io_values(**{io: value[i]})
-                    job.resume()
-            else:
-                if verbosity > 1:
-                    print(f"Setting {self.name} to {value} through {io}")
-                wait_until_job_is_paused(job, time_out)
-                if isinstance(job, JobApi):
-                    # For JobApi, we need to use the set_io_values method
-                    job.set_io_values(**{io: value})
-                else:
-                    if qm is None:
-                        raise ValueError("QuantumMachine object is required to set IO values.")
-                    qm.set_io_values(**{io: value})
-                job.resume()
+            self.push_io_values(value if self.is_array else [value], job, qm, verbosity, time_out)
 
         elif self.input_type == InputType.INPUT_STREAM:
             if verbosity > 1:
@@ -1058,6 +1032,35 @@ class Parameter:
             self._require_standalone_opnic_table(context="push_to_opx").push_to_opx(
                 {self.name: value}, job=job, qm=qm, verbosity=verbosity
             )
+
+    def push_io_values(
+        self,
+        values: Sequence[Union[int, float, bool]],
+        job: Optional[RunningQmJob | JobApi],
+        qm: Optional[QuantumMachine] = None,
+        verbosity: int = 1,
+        time_out: int = 30,
+    ):
+        """Client function: hand ``values`` to the program over this parameter's IO register.
+
+        One pause/resume handshake per value, matching one ``pause(); assign(..., IO)`` per
+        value on the QUA side. :meth:`push_to_opx` uses it for IO parameters; call it directly
+        when the program reads only part of an array (e.g. a used prefix).
+        """
+        if self.input_type not in (InputType.IO1, InputType.IO2):
+            raise ValueError(f"Parameter {self.name!r} is not an IO parameter (input_type={self.input_type}).")
+        if job is None:
+            raise ValueError("Job object is required to set IO values.")
+        if not isinstance(job, JobApi) and qm is None:
+            raise ValueError("QuantumMachine object is required to set IO values.")
+        io = "io1" if self.input_type == InputType.IO1 else "io2"
+        target = job if isinstance(job, JobApi) else qm
+        for value in values:
+            if verbosity > 1:
+                print(f"Setting {self.name} to {value} through {io}")
+            wait_until_job_is_paused(job, time_out)
+            target.set_io_values(**{io: value})
+            job.resume()
 
     def stream_back(self, reset: bool = False):
         """

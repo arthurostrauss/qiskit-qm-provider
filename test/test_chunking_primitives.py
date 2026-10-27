@@ -16,7 +16,7 @@ from qiskit_qm_provider.job.qua_programs import (
     plan_sampler_programs,
     plan_estimator_programs,
 )
-from qiskit_qm_provider.parameter_table import ParameterPool, ParameterTable
+from qiskit_qm_provider.parameter_table import ParameterPool
 from qiskit_qm_provider.parameter_table.input_type import InputType
 
 
@@ -40,7 +40,7 @@ def _sampler_pubs(backend, count):
 
 
 def _estimator_pubs(backend, count):
-    """Return ``count`` fully-validated EstimatorPubs ready for _ExecutionPlan.
+    """Return ``count`` fully-validated EstimatorPubs ready for EstimatorPlan.
 
     Each pub gets a circuit with a unique name so that ParameterTable names
     derived from it (e.g. "observables_var_{name}_pub{i}") are globally unique.
@@ -63,41 +63,23 @@ def _estimator_pubs(backend, count):
     return estimator.validate_estimator_pubs(raw)
 
 
-def _param_tables(pubs, input_type=None):
-    """Build per-pub ParameterTables (no parameters → empty tables)."""
-    from qiskit.circuit import Parameter
+def _sampler_plans(pubs, input_type=None):
+    """Build one SamplerPlan per pub (pubs without parameters have no tables)."""
+    from qiskit_qm_provider.job.primitive_plans import SamplerPlan
+
     ParameterPool.reset()
-    return [
-        ParameterTable.from_qiskit(
-            pub.circuit,
-            input_type=input_type,
-            filter_function=lambda x: isinstance(x, Parameter),
-            name=f"pt_{i}",
-        )
-        for i, pub in enumerate(pubs)
-    ]
+    return [SamplerPlan.from_pub(pub, input_type, i) for i, pub in enumerate(pubs)]
 
 
-def _execution_plans_and_obs_var(backend, count, input_type=InputType.INPUT_STREAM):
-    """Return (pubs, plans, obs_length_var) for estimator tests.
-
-    Plans are built after a single pool reset so Parameter.__new__'s singleton
-    reuses the same 'obs_0' object across plans with the same circuit.  The
-    warn-and-skip fix in declare_variable() (for non-DGX_Q streaming types)
-    ensures the shared Parameter is declared once in the QUA program and
-    skipped on subsequent plans.
-    """
-    from qiskit_qm_provider.job.qm_estimator_job import _ExecutionPlan
+def _estimator_plans(backend, count, input_type=InputType.INPUT_STREAM):
+    """Return (pubs, plans) for estimator tests, built after a single pool reset."""
+    from qiskit_qm_provider.job.primitive_plans import EstimatorPlan
     from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
-    from qiskit_qm_provider.parameter_table import Parameter as QuaParameter
+
     pubs = _estimator_pubs(backend, count)
     ParameterPool.reset()
     opts = QMEstimatorOptions(input_type=input_type)
-    plans = [_ExecutionPlan.from_pub(pub, opts) for pub in pubs]
-    obs_length_var = QuaParameter(
-        name="obs_length_var", value=0, qua_type=int, input_type=input_type
-    )
-    return pubs, plans, obs_length_var
+    return pubs, [EstimatorPlan.from_pub(pub, opts, plan_index=i) for i, pub in enumerate(pubs)]
 
 
 def _locator(chunk_layout):
@@ -113,8 +95,8 @@ class TestPlanSamplerPrograms:
     def test_single_program_under_limit(self, flux_tunable_backend):
         flux_tunable_backend.set_options(max_circuits=10)
         pubs = _sampler_pubs(flux_tunable_backend, 3)
-        tables = _param_tables(pubs)
-        programs, layout = plan_sampler_programs(flux_tunable_backend, pubs, tables)
+        plans = _sampler_plans(pubs)
+        programs, layout = plan_sampler_programs(flux_tunable_backend, plans)
         assert layout == [[0, 1, 2]]
         assert len(programs) == 1
         assert isinstance(programs[0], Program)
@@ -122,8 +104,8 @@ class TestPlanSamplerPrograms:
     def test_splits_into_multiple_programs(self, flux_tunable_backend):
         flux_tunable_backend.set_options(max_circuits=3)
         pubs = _sampler_pubs(flux_tunable_backend, 7)
-        tables = _param_tables(pubs)
-        programs, layout = plan_sampler_programs(flux_tunable_backend, pubs, tables)
+        plans = _sampler_plans(pubs)
+        programs, layout = plan_sampler_programs(flux_tunable_backend, plans)
         assert layout == [[0, 1, 2], [3, 4, 5], [6]]
         assert len(programs) == 3
         assert all(isinstance(p, Program) for p in programs)
@@ -131,8 +113,8 @@ class TestPlanSamplerPrograms:
     def test_large_max_circuits_never_splits(self, flux_tunable_backend):
         flux_tunable_backend.set_options(max_circuits=100)
         pubs = _sampler_pubs(flux_tunable_backend, 5)
-        tables = _param_tables(pubs)
-        programs, layout = plan_sampler_programs(flux_tunable_backend, pubs, tables)
+        plans = _sampler_plans(pubs)
+        programs, layout = plan_sampler_programs(flux_tunable_backend, plans)
         assert len(programs) == 1
         assert layout == [list(range(5))]
 
@@ -140,8 +122,8 @@ class TestPlanSamplerPrograms:
         flux_tunable_backend.set_options(max_circuits=3)
         n = 8
         pubs = _sampler_pubs(flux_tunable_backend, n)
-        tables = _param_tables(pubs)
-        _, layout = plan_sampler_programs(flux_tunable_backend, pubs, tables)
+        plans = _sampler_plans(pubs)
+        _, layout = plan_sampler_programs(flux_tunable_backend, plans)
         flat = [g for chunk in layout for g in chunk]
         assert flat == list(range(n))
 
@@ -149,8 +131,8 @@ class TestPlanSamplerPrograms:
         max_c = 3
         flux_tunable_backend.set_options(max_circuits=max_c)
         pubs = _sampler_pubs(flux_tunable_backend, 10)
-        tables = _param_tables(pubs)
-        _, layout = plan_sampler_programs(flux_tunable_backend, pubs, tables)
+        plans = _sampler_plans(pubs)
+        _, layout = plan_sampler_programs(flux_tunable_backend, plans)
         assert all(len(chunk) <= max_c for chunk in layout)
 
 
@@ -162,9 +144,9 @@ class TestPlanEstimatorPrograms:
 
     def test_single_program_under_limit(self, flux_tunable_backend):
         flux_tunable_backend.set_options(max_circuits=10)
-        _, plans, obs_var = _execution_plans_and_obs_var(flux_tunable_backend, 2)
+        _, plans = _estimator_plans(flux_tunable_backend, 2)
         programs, layout = plan_estimator_programs(
-            flux_tunable_backend, plans, obs_length_var=obs_var
+            flux_tunable_backend, plans
         )
         assert layout == [[0, 1]]
         assert len(programs) == 1
@@ -172,9 +154,9 @@ class TestPlanEstimatorPrograms:
 
     def test_splits_into_multiple_programs(self, flux_tunable_backend):
         flux_tunable_backend.set_options(max_circuits=2)
-        _, plans, obs_var = _execution_plans_and_obs_var(flux_tunable_backend, 5)
+        _, plans = _estimator_plans(flux_tunable_backend, 5)
         programs, layout = plan_estimator_programs(
-            flux_tunable_backend, plans, obs_length_var=obs_var
+            flux_tunable_backend, plans
         )
         assert layout == [[0, 1], [2, 3], [4]]
         assert len(programs) == 3
@@ -182,9 +164,9 @@ class TestPlanEstimatorPrograms:
 
     def test_large_max_circuits_never_splits(self, flux_tunable_backend):
         flux_tunable_backend.set_options(max_circuits=100)
-        _, plans, obs_var = _execution_plans_and_obs_var(flux_tunable_backend, 4)
+        _, plans = _estimator_plans(flux_tunable_backend, 4)
         programs, layout = plan_estimator_programs(
-            flux_tunable_backend, plans, obs_length_var=obs_var
+            flux_tunable_backend, plans
         )
         assert len(programs) == 1
         assert layout == [list(range(4))]
@@ -192,9 +174,9 @@ class TestPlanEstimatorPrograms:
     def test_layout_is_full_partition(self, flux_tunable_backend):
         flux_tunable_backend.set_options(max_circuits=3)
         n = 7
-        _, plans, obs_var = _execution_plans_and_obs_var(flux_tunable_backend, n)
+        _, plans = _estimator_plans(flux_tunable_backend, n)
         _, layout = plan_estimator_programs(
-            flux_tunable_backend, plans, obs_length_var=obs_var
+            flux_tunable_backend, plans
         )
         flat = [g for chunk in layout for g in chunk]
         assert flat == list(range(n))

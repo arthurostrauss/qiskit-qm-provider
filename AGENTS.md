@@ -36,15 +36,20 @@ The core entry point is `QMBackend.quantum_circuit_to_qua()` (Qiskit circuit →
   are **skipped** when it is unset. For hardware-free tests, use
   `test/dummy_quam.py`: `build_dummy_quam_for_qubits(n, FluxTunableQuam)` returns a complete,
   config-valid QuAM with `n` qubits (default pulses, a DragCosine gate set aliased to
-  `x180`/`x90`/..., default macros, `cz` on neighbouring pairs, placeholder frequencies);
+  `x180`/`x90`/..., `cz` on neighbouring pairs, placeholder frequencies, and for flux-tunable
+  machines `add_basic_macros(machine, reset_type="thermalize")`);
   `test/_in_memory_quam.build_backend(n)` wraps it in a `FluxTunableTransmonBackend`. It needs a
-  quam-builder newer than v0.4.0.
+  quam-builder newer than v0.4.0. Keep the reset thermal: quam-builder's default active reset
+  reads the readout pulse's `rus_exit_threshold`, which is None on an uncalibrated machine, so
+  every circuit with a reset (i.e. every validated run/Sampler/Estimator circuit) fails QUA
+  generation with `'None' is not a scalar expression`.
 
 ### How to test / build / run
 - Tests: `.venv/bin/python -m pytest`. Expected: only the 2 quarc failures above; everything else
   passes or is skipped. Skips are the `QUAM_STATE_PATH` fixtures (including the `quam_state`
   variants of `test/test_barrier_lowering.py`) and, with quam-builder v0.4.0, the whole
-  dummy-QuAM modules (`test_dummy_quam.py`, `test_native_operations.py`, `test_barrier_lowering.py`).
+  dummy-QuAM modules (`test_dummy_quam.py`, `test_native_operations.py`, `test_barrier_lowering.py`,
+  `test_reset_compilation.py`).
   Exact counts change as tests are added, so compare failures, not totals.
 - Docs build (this repo's only "build" step, run with warnings-as-errors in CI):
   `.venv/bin/python -m sphinx -b html -W docs docs/_build/html`.
