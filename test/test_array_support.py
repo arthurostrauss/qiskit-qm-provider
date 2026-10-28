@@ -432,9 +432,9 @@ def test_compile_binds_renamed_vector_input(compile_circuit):
     with qua.program():
         table.declare(pause_program=False)
         compile_circuit(qc, table, compiler)
+        inputs = compiler.calls[0].inputs
+        assert list(inputs) == ["x_0"] and inputs["x_0"] is table.get_parameter("x").var
     assert "input array[float[64], 2] x_0;" in compiler.calls[0].qasm
-    inputs = compiler.calls[0].inputs
-    assert list(inputs) == ["x_0"] and inputs["x_0"] is table.get_parameter("x").var
 
 
 def test_unmarked_table_is_not_a_row(monkeypatch):
@@ -641,3 +641,25 @@ def test_renamed_inputs_compile_with_qm_qasm(vector_arrays):
     script = generate_qua_script(prog)
     assert "amplitude_scale" in script and "frame_rotation_2pi" in script
 
+
+
+@vector_arrays_only
+def test_backend_option_exports_vectors_as_scalars(compilation_backend, compile_circuit):
+    # With the option off, the branch exports used elements as scalar inputs, and the
+    # vector's array field binds them through its cells, with the real compiler too.
+    qc, _ = _partial_vector_circuit(name="theta")
+    table = ParameterTable.from_qiskit(qc)
+    compiler = _RecordingCompiler()
+    compilation_backend.set_options(export_vector_as_array=False)
+    try:
+        with qua.program() as prog:
+            table.declare(pause_program=False)
+            compile_circuit(qc, table, compiler)
+            inputs = compiler.calls[-1].inputs
+            assert list(inputs) == ["_theta_2_"] and str(inputs["_theta_2_"]).endswith("[2]")
+            compile_circuit(qc, table)
+    finally:
+        compilation_backend.set_options(export_vector_as_array=True)
+    assert "input float[64] _theta_2_;" in compiler.calls[-1].qasm
+    assert "input array" not in compiler.calls[-1].qasm
+    assert "[2]" in generate_qua_script(prog)
