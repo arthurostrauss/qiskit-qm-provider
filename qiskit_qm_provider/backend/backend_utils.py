@@ -802,22 +802,6 @@ def estimator_basis_input(j: int) -> str:
     return f"__obs_{j}"
 
 
-def remove_final_measurements(circuit: QuantumCircuit) -> QuantumCircuit:
-    """Return a copy of ``circuit`` without its final measurements, keeping its transpile layout.
-
-    Equivalent to :meth:`QuantumCircuit.remove_final_measurements` (it runs the same
-    :class:`~qiskit.transpiler.passes.RemoveFinalMeasurements` pass, which also drops the barriers
-    before them and any classical bit or register left idle), but it does not re-add the quantum
-    registers to a laid-out circuit, which makes Qiskit warn on every ISA circuit.
-    """
-    from qiskit.converters import dag_to_circuit
-    from qiskit.transpiler.passes import RemoveFinalMeasurements
-
-    out = dag_to_circuit(RemoveFinalMeasurements().run(circuit_to_dag(circuit)))
-    out._layout = circuit.layout  # the DAG round trip drops the TranspileLayout
-    return out
-
-
 def estimator_measured_qubits(observables) -> list[int]:
     """Indices of the qubits the estimator must measure for ``observables``.
 

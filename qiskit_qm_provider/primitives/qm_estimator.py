@@ -43,7 +43,6 @@ from ..backend.backend_utils import (
     ESTIMATOR_RESERVED_PREFIX,
     estimator_basis_input,
     estimator_measured_qubits,
-    remove_final_measurements,
     validate_circuits,
 )
 
@@ -224,9 +223,10 @@ class QMEstimatorV2(BaseEstimatorV2):
                     "are reserved for the estimator's Pauli readout; rename them."
                 )
 
-            # Measure every qubit some observable acts on non-trivially (none if all are identities).
-            qc = remove_final_measurements(pub.circuit)
-            qc.name = f'{pub.circuit.name}_pub{i}'
+            # As in Qiskit's BackendEstimatorV2, the circuit is kept as given (measurements
+            # included) and the readout is appended: every qubit some observable acts on
+            # non-trivially is rotated and measured into __c (none if all terms are identities).
+            qc = pub.circuit.copy(name=f"{pub.circuit.name}_pub{i}")
             measured_qubits = [qc.qubits[j] for j in estimator_measured_qubits(pub.observables)]
             creg = ClassicalRegister(len(measured_qubits), name=ESTIMATOR_READOUT_REGISTER)
             qc.add_register(creg)

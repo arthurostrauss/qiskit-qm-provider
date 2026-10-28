@@ -38,7 +38,7 @@ from qiskit_qm_provider.parameter_table import InputType, ParameterPool  # noqa:
 from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions, QMEstimatorV2  # noqa: E402
 
 PRECISION = 0.01  # 10_000 shots
-_SKIPPED = {"measure", "reset", "barrier", "delay"}
+_SKIPPED = {"reset", "barrier", "delay"}
 
 
 @pytest.fixture(scope="module")
@@ -58,10 +58,17 @@ def backend_factory(tmp_path_factory):
 
 
 def _interpret(circuit, out, qubit_map, codes):
-    """Append ``circuit``'s gates to ``out``, resolving each ``__obs_j`` switch with ``codes[j]``."""
+    """Append ``circuit``'s gates to ``out``, resolving each ``__obs_j`` switch with ``codes[j]``.
+
+    Only the ``__c`` readout measurements are allowed (the outcomes are read from the final
+    state): the emulator does not model a measurement collapsing the state mid-circuit.
+    """
     for instruction in circuit.data:
         operation = instruction.operation
         qubits = [qubit_map[q] for q in instruction.qubits]
+        if operation.name == "measure":
+            assert circuit.find_bit(instruction.clbits[0]).registers[0][0].name == "__c", "measurement outside __c"
+            continue
         if operation.name in _SKIPPED:
             continue
         if isinstance(operation, SwitchCaseOp):
@@ -144,7 +151,6 @@ def _random_case(backend, rng, num_qubits, num_params, param_shape, obs_shape, v
             k += 1
         for q in range(layer % 2, num_qubits - 1, 2):
             circuit.cx(q, q + 1)
-    circuit.measure_all()  # final measurements: validation must remove them
     isa = transpile(circuit, backend, optimization_level=1, seed_transpiler=int(rng.integers(1_000_000)))
 
     def observable():
@@ -179,8 +185,7 @@ def test_matches_statevector_estimator(backend_factory, case, vector):
     backend = backend_factory(4)
     rng = np.random.default_rng(sum(map(ord, case)) + vector)
     isa, pub_like = _random_case(backend, rng, num_qubits, num_params, param_shape, obs_shape, vector)
-    reference_pub = (isa.remove_final_measurements(inplace=False), *pub_like[1:])
-    reference = np.asarray(StatevectorEstimator().run([reference_pub]).result()[0].data.evs)
+    reference = np.asarray(StatevectorEstimator().run([pub_like]).result()[0].data.evs)
     for input_type, grouping in itertools.product([None, InputType.INPUT_STREAM, InputType.IO1], [True, False]):
         result, plan = _estimate(backend, pub_like, input_type, grouping)
         evs = np.asarray(result.data.evs)
@@ -263,7 +268,9 @@ def test_reserved_prefix_rejected(backend_factory, kind):
         estimator.validate_estimator_pubs([EstimatorPub.coerce((isa, SparsePauliOp("ZZ")), 0.1)])
 
 
-def test_final_measurements_removed_without_warning(backend_factory):
+def test_circuit_kept_and_readout_appended(backend_factory):
+    # As in BackendEstimatorV2: the PUB circuit is kept as given (its own measurements and
+    # registers included) and the __c readout is appended after it, without any warning.
     import warnings
 
     backend = backend_factory(2)
@@ -278,6 +285,11 @@ def test_final_measurements_removed_without_warning(backend_factory):
         (pub,) = estimator.validate_estimator_pubs([EstimatorPub.coerce((isa, SparsePauliOp("XX")), 0.1)])
     prepared = pub.circuit
     assert prepared.layout == isa.layout
-    assert [creg.name for creg in prepared.cregs] == ["__c"]  # the user's 'meas' register is gone
-    measured = [i for i in prepared.data if i.operation.name == "measure"]
-    assert len(measured) == 2 and all(clbit in prepared.cregs[0] for i in measured for clbit in i.clbits)
+    assert [creg.name for creg in prepared.cregs] == ["meas", "__c"]
+    readout = prepared.cregs[1]
+    measures = [i for i in prepared.data if i.operation.name == "measure"]
+    user, appended = measures[:2], measures[2:]
+    assert all(clbit in prepared.cregs[0] for i in user for clbit in i.clbits)
+    assert [prepared.find_bit(i.qubits[0]).index for i in appended] == [0, 1]
+    assert all(clbit in readout for i in appended for clbit in i.clbits)
+    assert prepared.data.index(user[-1]) < prepared.data.index(appended[0])
