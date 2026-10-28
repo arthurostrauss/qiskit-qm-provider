@@ -41,7 +41,7 @@ def _estimator_plan(observables, values=None, input_type=InputType.INPUT_STREAM,
         qc.rx(Parameter("theta"), 0)
     qc.add_register(ClassicalRegister(num_qubits, "__c"))
     for j in range(num_qubits):
-        qc.add_input(f"obs_{j}", types.Uint(4))
+        qc.add_input(f"__obs_{j}", types.Uint(4))
     qc.measure(range(num_qubits), range(num_qubits))
     pub = EstimatorPub.coerce((qc, observables, values) if values is not None else (qc, observables), precision=0.1)
     return EstimatorPlan.from_pub(pub, QMEstimatorOptions(input_type=input_type), plan_index=0)
@@ -95,7 +95,7 @@ def test_streamed_obs_row_one_advance_per_binding(no_circuit):
     # Inside the binding loop: one advance for the parameter row, one for the observable row.
     assert script.count("advance_input_stream(") == 2
     assert "obs_row_0" in script
-    assert "declare_input_stream(int, 'obs_0'" not in script and "'obs_0'" not in script  # no per-qubit streams
+    assert "declare_input_stream(int, '__obs_0'" not in script and "'__obs_0'" not in script  # no per-qubit streams
     # Each observable is unpacked with shifts/masks into the 20 obs inputs.
     assert script.count("&3)") == n
 
@@ -182,12 +182,12 @@ def test_empty_bindings_rejected():
         _estimator_plan([SparsePauliOp("ZX")], values=np.zeros((0, 1)))
 
 
-@pytest.mark.parametrize("missing", ["__c", "obs_1"])
+@pytest.mark.parametrize("missing", ["__c", "__obs_1"])
 def test_circuit_without_estimator_readout_rejected(missing):
     qc = QuantumCircuit(2)
     if missing != "__c":
         qc.add_register(ClassicalRegister(2, "__c"))
-        qc.add_input("obs_0", types.Uint(4))
+        qc.add_input("__obs_0", types.Uint(4))
         qc.measure([0, 1], [0, 1])
     pub = EstimatorPub.coerce((qc, [SparsePauliOp("ZX")]), precision=0.1)
     with pytest.raises(ValueError, match="validate_estimator_pubs"):
@@ -198,7 +198,7 @@ def test_observable_on_unmeasured_qubit_rejected():
     qc = QuantumCircuit(3)
     qc.add_register(ClassicalRegister(2, "__c"))
     for j in range(2):
-        qc.add_input(f"obs_{j}", types.Uint(4))
+        qc.add_input(f"__obs_{j}", types.Uint(4))
     qc.measure([0, 1], [0, 1])
     pub = EstimatorPub.coerce((qc, [SparsePauliOp("ZIX")]), precision=0.1)  # Z on unmeasured qubit 2
     with pytest.raises(ValueError, match=r"act on qubits \[2\]"):

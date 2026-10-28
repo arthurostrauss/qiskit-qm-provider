@@ -52,7 +52,7 @@ def _estimator_pubs(backend, count):
 
     n = backend.num_qubits
     obs = SparsePauliOp.from_list([("Z" + "I" * (n - 1), 1.0)])
-    # Unique circuit per pub → unique obs var names per plan ("obs_0" in "circuit_k")
+    # Unique circuit per pub → unique obs var names per plan ("__obs_0" in "circuit_k")
     raw = []
     for k in range(count):
         qc = QuantumCircuit(n, name=f"est_circ_{k}")

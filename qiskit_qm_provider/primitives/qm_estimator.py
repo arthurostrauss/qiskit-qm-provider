@@ -38,7 +38,22 @@ from qiskit.circuit import QuantumCircuit, ClassicalRegister
 from ..parameter_table import InputType
 
 from ..backend.qm_backend import QMBackend
-from ..backend.backend_utils import validate_circuits, estimator_measured_qubits
+from ..backend.backend_utils import (
+    ESTIMATOR_READOUT_REGISTER,
+    ESTIMATOR_RESERVED_PREFIX,
+    estimator_basis_input,
+    estimator_measured_qubits,
+    remove_final_measurements,
+    validate_circuits,
+)
+
+
+def _reserved_names(circuit: QuantumCircuit) -> list[str]:
+    """Names in ``circuit`` that use the estimator's reserved prefix (sorted)."""
+    names = [creg.name for creg in circuit.cregs]
+    names += [var.name for var in circuit.iter_vars()]
+    names += [stretch.name for stretch in getattr(circuit, "iter_stretches", tuple)()]
+    return sorted(name for name in set(names) if name.startswith(ESTIMATOR_RESERVED_PREFIX))
 
 
 def _reject_opnic(input_type: Optional[InputType]) -> None:
@@ -201,20 +216,22 @@ class QMEstimatorV2(BaseEstimatorV2):
                     "Make sure you have transpiled the circuit to the backend's target as well as applied the circuit layout to the observables.",
                 )
 
-            if any(creg.name == "__c" for creg in pub.circuit.cregs):
+            reserved = _reserved_names(pub.circuit)
+            if reserved:
                 raise ValueError(
-                    f"The {i}-th pub's circuit already contains a classical register named "
-                    "'__c', which is reserved for estimator Pauli readout."
+                    f"The {i}-th pub's circuit uses the names {reserved}. Classical registers, "
+                    f"variables and stretches whose names start with '{ESTIMATOR_RESERVED_PREFIX}' "
+                    "are reserved for the estimator's Pauli readout; rename them."
                 )
 
             # Measure every qubit some observable acts on non-trivially (none if all are identities).
-            qc = pub.circuit.remove_final_measurements(inplace=False)
+            qc = remove_final_measurements(pub.circuit)
             qc.name = f'{pub.circuit.name}_pub{i}'
             measured_qubits = [qc.qubits[j] for j in estimator_measured_qubits(pub.observables)]
-            creg = ClassicalRegister(len(measured_qubits), name="__c")
+            creg = ClassicalRegister(len(measured_qubits), name=ESTIMATOR_READOUT_REGISTER)
             qc.add_register(creg)
             for q, qubit in enumerate(measured_qubits):
-                obs_var = qc.add_input(f"obs_{q}", types.Uint(4))
+                obs_var = qc.add_input(estimator_basis_input(q), types.Uint(4))
                 qc.compose(
                     self._switch_obs_circuit,
                     [qubit],

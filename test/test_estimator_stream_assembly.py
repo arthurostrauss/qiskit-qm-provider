@@ -13,11 +13,11 @@ from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
 
 
 def _rx_circuit():
-    """One-qubit ``rx(theta)`` circuit with the estimator readout (``__c`` and ``obs_0``)."""
+    """One-qubit ``rx(theta)`` circuit with the estimator readout (``__c`` and ``__obs_0``)."""
     circuit = QuantumCircuit(1)
     circuit.rx(Parameter("theta"), 0)
     circuit.add_register(ClassicalRegister(1, "__c"))
-    circuit.add_input("obs_0", types.Uint(4))
+    circuit.add_input("__obs_0", types.Uint(4))
     circuit.measure(0, 0)
     return circuit
 

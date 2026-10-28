@@ -493,7 +493,7 @@ def test_estimator_row_tables_named_by_plan_index():
         for p in ParameterVector(f"v{i}", size):
             qc.rx(p, 0)
         qc.add_register(ClassicalRegister(1, "__c"))
-        qc.add_input("obs_0", types.Uint(4))
+        qc.add_input("__obs_0", types.Uint(4))
         qc.measure(0, 0)
         pub = EstimatorPub.coerce((qc, SparsePauliOp(["Z"]), [[0.1] * size]))
         plans.append(EstimatorPlan.from_pub(pub, QMEstimatorOptions(input_type=InputType.INPUT_STREAM), plan_index=i))

@@ -60,14 +60,14 @@ def _table_plan(pub, table):
 
 
 def _estimator_plan(observables, values=None, input_type=InputType.INPUT_STREAM, num_qubits=2):
-    """Estimator plan for a circuit shaped like a validated estimator PUB (``__c`` + ``obs_j``)."""
+    """Estimator plan for a circuit shaped like a validated estimator PUB (``__c`` + ``__obs_j``)."""
     qc = QuantumCircuit(num_qubits)
     theta = Parameter("theta")
     if values is not None:
         qc.rx(theta, 0)
     qc.add_register(ClassicalRegister(num_qubits, "__c"))
     for j in range(num_qubits):
-        qc.add_input(f"obs_{j}", types.Uint(4))
+        qc.add_input(f"__obs_{j}", types.Uint(4))
     qc.measure(range(num_qubits), range(num_qubits))
     pub = EstimatorPub.coerce((qc, observables, values) if values is not None else (qc, observables))
     return EstimatorPlan.from_pub(pub, QMEstimatorOptions(input_type=input_type), plan_index=0)

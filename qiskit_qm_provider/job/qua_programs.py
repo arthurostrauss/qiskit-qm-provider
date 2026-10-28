@@ -91,7 +91,7 @@ def _process_estimator_pub(plan: EstimatorPlan, backend: QMBackend, **kwargs):
     """QUA macro: run one estimator PUB, binding-major, one circuit run per measurement group.
 
     Per binding: load its parameters, then its packed observable row (a row shared by every
-    binding is received once, before the loop), and unpack each group into the ``obs_j``
+    binding is received once, before the loop), and unpack each group into the ``__obs_j``
     inputs before running the circuit. This matches :meth:`EstimatorPlan.push` order.
     """
     plan.declare_params()

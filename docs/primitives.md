@@ -51,7 +51,9 @@ Circuits and observables are taken as ISA: observables span the full physical re
 - Identity terms are never measured: `<I> = 1` exactly, so they contribute their coefficient with zero variance. If every term of a PUB is the identity, the PUB is not compiled or run at all.
 - Only Pauli terms are supported. `SparseObservable` projector terms (`0`, `1`, `+`, `-`, `r`, `l`) raise a `ValueError`; expand them first with `SparseObservable.as_paulis()`, at the cost of doubling the number of terms per projector.
 
-Per measured qubit `q_j`, the prepared circuit has a basis switch driven by an input `obs_j` (0: none, 1: `h`, 2: `sdg; h`) followed by a measurement into bit `j` of a `__c` register. `EstimatorPlan.from_pub` requires this readout (it rejects circuits without it, and observables acting on a qubit outside `__c`); `QMEstimatorV2.run` adds it through `validate_estimator_pubs`. A PUB with an empty bindings array is rejected.
+Before adding the readout, `validate_estimator_pubs` removes the circuit's final measurements (and the barriers before them), keeping its transpile layout. This differs from Qiskit's `BackendEstimatorV2`, which leaves them in place, where a final `measure_all` collapses the state before the basis rotations.
+
+Per measured qubit `q_j`, the prepared circuit has a basis switch driven by an input `__obs_j` (0: none, 1: `h`, 2: `sdg; h`) followed by a measurement into bit `j` of a `__c` register. Names starting with `__` are reserved for this readout: a PUB circuit with a classical register, variable or stretch named that way is rejected with a `ValueError`. `EstimatorPlan.from_pub` requires this readout (it rejects circuits without it, and observables acting on a qubit outside `__c`); `QMEstimatorV2.run` adds it through `validate_estimator_pubs`. A PUB with an empty bindings array is rejected.
 
 ### How observables reach the OPX
 

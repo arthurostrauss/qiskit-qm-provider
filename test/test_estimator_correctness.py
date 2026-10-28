@@ -36,11 +36,11 @@ def reset_pool():
 
 
 def _with_estimator_readout(circuit: QuantumCircuit, measured: list[int]) -> QuantumCircuit:
-    """What estimator validation adds: one ``obs_j`` input and one ``__c[j]`` bit per measured qubit."""
+    """What estimator validation adds: one ``__obs_j`` input and one ``__c[j]`` bit per measured qubit."""
     qc = circuit.copy()
     qc.add_register(ClassicalRegister(len(measured), "__c"))
     for j in range(len(measured)):
-        qc.add_input(f"obs_{j}", types.Uint(4))
+        qc.add_input(f"__obs_{j}", types.Uint(4))
     if measured:
         qc.measure(measured, range(len(measured)))
     return qc

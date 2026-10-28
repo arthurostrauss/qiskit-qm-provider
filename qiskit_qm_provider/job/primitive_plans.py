@@ -36,7 +36,11 @@ import numpy as np
 from qiskit.quantum_info import PauliList
 from qm.qua import declare, for_
 
-from ..backend.backend_utils import get_non_trivial_observables
+from ..backend.backend_utils import (
+    ESTIMATOR_READOUT_REGISTER,
+    estimator_basis_input,
+    get_non_trivial_observables,
+)
 from ..parameter_table import Direction, InputType, Parameter, ParameterTable, QUA2DArray
 from .pub_parameters import (
     assign_obs_codes,
@@ -192,20 +196,22 @@ def _estimator_readout(circuit) -> List[int]:
 
     :meth:`~qiskit_qm_provider.primitives.QMEstimatorV2.validate_estimator_pubs` prepares every
     PUB circuit this way: a ``__c`` register whose bit ``j`` measures qubit ``measured[j]``,
-    preceded by a basis switch on that qubit driven by the input variable ``obs_j``. The
-    plan writes the per-group basis codes into ``obs_j`` and reads the outcomes from ``__c``.
+    preceded by a basis switch on that qubit driven by the input variable ``__obs_j``. The
+    plan writes the per-group basis codes into ``__obs_j`` and reads the outcomes from ``__c``.
     """
     hint = "Prepare estimator PUBs with QMEstimatorV2.validate_estimator_pubs."
-    creg = next((creg for creg in circuit.cregs if creg.name == "__c"), None)
+    creg = next((creg for creg in circuit.cregs if creg.name == ESTIMATOR_READOUT_REGISTER), None)
     if creg is None:
-        raise ValueError(f"Estimator circuit {circuit.name!r} has no '__c' readout register. {hint}")
+        raise ValueError(
+            f"Estimator circuit {circuit.name!r} has no '{ESTIMATOR_READOUT_REGISTER}' readout register. {hint}"
+        )
     measured = [None] * len(creg)
     for instruction in circuit.data:
         if instruction.operation.name == "measure" and instruction.clbits[0] in creg:
             measured[creg.index(instruction.clbits[0])] = circuit.find_bit(instruction.qubits[0]).index
     if any(q is None for q in measured):
         raise ValueError(f"Estimator circuit {circuit.name!r}: '__c' is not fully measured. {hint}")
-    missing = [f"obs_{j}" for j in range(len(measured)) if not circuit.has_var(f"obs_{j}")]
+    missing = [estimator_basis_input(j) for j in range(len(measured)) if not circuit.has_var(estimator_basis_input(j))]
     if missing:
         raise ValueError(f"Estimator circuit {circuit.name!r} lacks the basis inputs {missing}. {hint}")
     return measured
@@ -253,7 +259,7 @@ class EstimatorPlan(PrimitivePlan):
     Identity terms are never measured: ``<I> = 1`` exactly, so they only enter post-processing.
     The other terms are grouped per distinct set (shared by all bindings that request the same
     terms), restricted to the measured qubits (``__c[j]`` measures ``active_qubits[j]``,
-    rotated by ``obs_j``). ``metadata``, the observable codes and the ``__c`` stream share one
+    rotated by ``__obs_j``). ``metadata``, the observable codes and the ``__c`` stream share one
     order: binding-major, groups in order. A plan without any task (only identity terms) is
     neither compiled nor sent: see :attr:`has_tasks`.
     """
@@ -315,7 +321,7 @@ class EstimatorPlan(PrimitivePlan):
         rows = pack_obs_rows(list(distinct_codes) if len(distinct_codes) == 1 else obs_codes, len(measured))
 
         circuit_table, param_table = build_pub_tables(circuit, options.input_type, f"param_table_{tag}")
-        obs_names = {f"obs_{j}" for j in range(len(measured))}
+        obs_names = {estimator_basis_input(j) for j in range(len(measured))}
         obs_table = ParameterTable.from_qiskit(
             circuit,
             filter_function=lambda v: circuit.has_var(v) and v.name in obs_names,
@@ -373,7 +379,7 @@ class EstimatorPlan(PrimitivePlan):
     # ---------------------------------------------------------------------------------- QUA
     @property
     def obs_vars(self) -> list:
-        return [self.obs_table.table[f"obs_{j}"].var for j in range(self.num_qubits)]
+        return [self.obs_table.table[estimator_basis_input(j)].var for j in range(self.num_qubits)]
 
     def declare_observables(self) -> None:
         """QUA macro: declare the observable inputs, their delivery and scratch variables.
@@ -400,7 +406,7 @@ class EstimatorPlan(PrimitivePlan):
 
     @contextmanager
     def observable_groups(self, p):
-        """QUA macro: loop over binding ``p``'s measurement groups, each unpacked into ``obs_j``."""
+        """QUA macro: loop over binding ``p``'s measurement groups, each unpacked into ``__obs_j``."""
         row = self._binding_obs_row(p)
         with for_(self._obs_idx, 0, self._obs_idx < row[0], self._obs_idx + 1):
             # Group g's words start right after the count and the first g groups.
