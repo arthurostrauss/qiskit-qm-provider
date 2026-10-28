@@ -966,22 +966,24 @@ class ParameterTable(QuaFieldTable):
 
         The layout of ``ParameterVector`` s follows the installed Qiskit automatically:
 
-        * **Array mode** (Qiskit provides ``types.Array``, i.e. the ``full_real_time_expr`` fork):
-          each vector is one array ``Parameter`` of length ``N`` named after the vector, matching
-          the exporter's full-length ``input array[float[64], N]`` -- even if only some elements
-          are used in the circuit.
+        * **Vector arrays** (the installed Qiskit has the ``PARAMETER_VECTORS_AS_ARRAYS``
+          exporter feature, i.e. the ``full_real_time_expr`` fork): each vector is one array
+          ``Parameter`` of length ``N`` named after the vector -- even if only some elements are
+          used in the circuit. It binds either export of the vector: the full-length
+          ``input array[float[64], N]`` (backend option ``export_vector_as_array=True``, the
+          default) or one scalar input per used element (option off), through the array's cells.
         * **Stock Qiskit**: each element used in the circuit (and kept by ``filter_function``) is
-          its own scalar field ``_name_i_`` (the identifier the OpenQASM 3 exporter emits for
-          ``name[i]``); unused elements are not exported, so they get no field.
+          its own scalar field ``_name_i_``; unused elements are not exported, so they get no field.
 
-        Names are used as-is in the exported OpenQASM 3: choose ASCII Parameter/ParameterVector
-        names that are not gate names or OpenQASM reserved keywords.
+        Field names are the Qiskit names. When the exporter renames an input (e.g. a vector ``x``
+        next to the ``x`` gate becomes ``x_0``), :meth:`.QMBackend.quantum_circuit_to_qua` still
+        binds the field to it, since inputs are matched by Qiskit object.
 
         Args:
             qc: QuantumCircuit object to be converted to a ParameterTable object.
             input_type: Input type of the parameters in the table.
             filter_function: Optional function to filter the parameters to be included in the table.
-                In array mode a ``ParameterVector`` is included (in full) if the filter keeps
+                With vector arrays, a ``ParameterVector`` is included (in full) if the filter keeps
                 any of its elements used in the circuit.
             name: Optional name for the parameter table.
 
@@ -993,18 +995,18 @@ class ParameterTable(QuaFieldTable):
         from qiskit.circuit.parametervector import ParameterVectorElement
         from qiskit.circuit.classical import types
         from .qiskit_classical import (
-            qiskit_has_array, qiskit_input_key, qua_zero, unsupported_classical_type_error,
-            validate_qiskit_input_names,
+            qiskit_has_array, qiskit_input_key, qiskit_supports_vector_arrays, qua_zero,
+            unsupported_classical_type_error, validate_qiskit_input_names,
         )
 
         validate_qiskit_input_names(qc)
-        array_mode = qiskit_has_array()
+        vector_arrays = qiskit_supports_vector_arrays()
         param_list = []
         param_vector_set = set()
         for parameter in qc.parameters:
             if filter_function is not None and not filter_function(parameter):
                 continue
-            if array_mode and isinstance(parameter, ParameterVectorElement):
+            if vector_arrays and isinstance(parameter, ParameterVectorElement):
                 param_vec = parameter.vector
                 if param_vec in param_vector_set:
                     continue
@@ -1045,7 +1047,7 @@ class ParameterTable(QuaFieldTable):
                             direction=Direction.INCOMING,
                         )
                     )
-                elif array_mode and kind == types.Array:
+                elif qiskit_has_array() and kind == types.Array:
                     element_type = scalar_map.get(var.type.element.kind)
                     if element_type is None:
                         raise ValueError(f"Unsupported element type: {var.type.element.kind}")

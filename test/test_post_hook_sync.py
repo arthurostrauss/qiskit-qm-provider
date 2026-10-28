@@ -198,7 +198,7 @@ def test_array_pub_sync_hook(primitive, input_type, monkeypatch):
     from qiskit.circuit import ParameterVector
     from qiskit_qm_provider.parameter_table import qiskit_classical
 
-    monkeypatch.setattr(qiskit_classical, "qiskit_has_array", lambda: True)
+    monkeypatch.setattr(qiskit_classical, "qiskit_supports_vector_arrays", lambda: True)
     qc = QuantumCircuit(1)
     vec = ParameterVector("theta", 4)
     scalar = Parameter("a")

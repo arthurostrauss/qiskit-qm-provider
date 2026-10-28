@@ -16,6 +16,10 @@
 
 from __future__ import annotations
 
+import io
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple
+
 from qiskit.circuit.classical import expr, types
 from qiskit.qasm3 import DefcalInstruction, ast
 from qiskit.qasm3.exceptions import QASM3ExporterError
@@ -29,8 +33,57 @@ from .conditional_play import (
 )
 
 
+@dataclass(frozen=True)
+class ExportedInput:
+    """One ``input`` declaration of an exported program, as Qiskit named it.
+
+    Attributes:
+        name: The identifier in the OpenQASM 3 source. Qiskit renames an input whose name
+            collides with another symbol (e.g. a ``ParameterVector`` called ``x`` exported as an
+            array next to the ``x`` gate becomes ``x_0``), so this is the only reliable name.
+        length: The array length for an ``input array[...]``, ``None`` for a scalar input.
+    """
+
+    name: str
+    length: Optional[int] = None
+
+
 class _QMOpenQASM3Builder(QASM3Builder):
-    """Qiskit's builder with typed implicit-defcal arguments for a conditional play."""
+    """Qiskit's builder with typed implicit-defcal arguments for a conditional play, which also
+    records the ``input`` declarations it emits (see :attr:`exported_inputs`)."""
+
+    exported_inputs: Dict[Any, ExportedInput]
+    """Each declared ``input``, keyed by its Qiskit object: a ``Parameter`` (including a
+    ``ParameterVectorElement`` exported as a scalar), a ``ParameterVector`` exported as one
+    array, or an input ``expr.Var``."""
+
+    def hoist_classical_io_var_declarations(self):
+        """Hoist the IO declarations, then record the identifier Qiskit gave each input.
+
+        Parameters and input variables are all registered by the time this hook returns, and
+        later scopes cannot rename them, so the symbol table holds their final identifiers.
+        """
+        super().hoist_classical_io_var_declarations()
+        declared = {
+            declaration.identifier.string: declaration.type
+            for declaration in self._global_io_declarations
+            if declaration.modifier is ast.IOModifier.INPUT
+        }
+        array_type = getattr(ast, "ArrayType", ())  # only on Qiskit with classical arrays
+        circuit = self.scope.circuit
+        self.exported_inputs = {}
+        for obj in (*circuit.parameters, *circuit.iter_input_vars()):
+            try:
+                identifier = self.symbols.get_variable(obj)
+            except KeyError:
+                continue
+            if identifier.string not in declared:  # e.g. a legacy for-loop Parameter
+                continue
+            if isinstance(identifier, ast.SubscriptedIdentifier):  # element of an exported vector
+                obj = obj.vector
+            type_ = declared[identifier.string]
+            length = type_.dimensions[0] if isinstance(type_, array_type) else None
+            self.exported_inputs[obj] = ExportedInput(identifier.string, length)
 
     def build_box(self, instruction):
         """Build a ``box``, enforcing the conditional-play box contract.
@@ -129,6 +182,20 @@ class QMOpenQASM3Exporter(Exporter):
         is registered anywhere; that is
         :meth:`QMBackend.quantum_circuit_to_qua`'s responsibility.
         """
+        self._dump(circuit, stream)
+
+    def export(self, circuit) -> Tuple[str, Dict[Any, ExportedInput]]:
+        """Export ``circuit`` and report its ``input`` declarations.
+
+        Returns:
+            The OpenQASM 3 source and, for each declared input, its Qiskit object mapped to the
+            :class:`ExportedInput` Qiskit emitted for it.
+        """
+        stream = io.StringIO()
+        exported_inputs = self._dump(circuit, stream)
+        return stream.getvalue(), exported_inputs
+
+    def _dump(self, circuit, stream) -> Dict[Any, ExportedInput]:
         implicit_defcals = dict(self.implicit_defcals)
         for operation, _ in _iter_conditional_plays(circuit):
             implicit_defcals.setdefault(
@@ -147,3 +214,4 @@ class QMOpenQASM3Exporter(Exporter):
             implicit_defcals=implicit_defcals,
         )
         BasicPrinter(stream, indent=self.indent, experimental=self.experimental).visit(builder.build_program())
+        return builder.exported_inputs

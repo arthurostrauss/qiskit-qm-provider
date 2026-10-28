@@ -80,7 +80,7 @@ def check_fixed_range(values: np.ndarray, parameters, index) -> None:
     if bad.any():
         binding, column = (int(i) for i in np.argwhere(bad)[0])
         raise ValueError(
-            f"PUB {index}: parameter {parameters[column].name!r} has value {values[binding, column]!r} "
+            f"PUB {index}: parameter {parameters[column].name!r} has value {float(values[binding, column])!r} "
             f"(binding {binding}; {int(bad.sum())} out-of-range value(s) in total), outside the QUA "
             f"fixed-point range [{FIXED_MIN}, 8) used for circuit parameters. Values beyond this range "
             "are not supported: rescale the parameter so that every bound value fits."

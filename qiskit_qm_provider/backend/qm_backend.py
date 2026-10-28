@@ -210,7 +210,13 @@ class QMBackend(Backend):
 
         Defaults: ``shots=1024``, ``compiler_options=None``, ``simulate=None``,
         ``memory=False``, ``skip_reset=False``, ``meas_level=MeasLevel.CLASSIFIED``,
-        ``meas_return=MeasReturnType.AVERAGE``, ``timeout=60``.
+        ``meas_return=MeasReturnType.AVERAGE``, ``timeout=60``, ``max_circuits=30``,
+        ``export_vector_as_array=True``.
+
+        ``export_vector_as_array`` makes :attr:`qasm3_exporter` emit each ``ParameterVector`` as
+        one full-length ``input array[float[64], N]``. It needs the ``full_real_time_expr``
+        Qiskit branch (its ``PARAMETER_VECTORS_AS_ARRAYS`` exporter feature) and is ignored on
+        stock Qiskit, which always exports one scalar input per used element.
         """
         return Options(
             shots=1024,
@@ -222,6 +228,7 @@ class QMBackend(Backend):
             meas_return=MeasReturnType.AVERAGE,
             timeout=60,
             max_circuits=30,
+            export_vector_as_array=True,
         )
 
     @property
@@ -976,14 +983,23 @@ class QMBackend(Backend):
             param_table: Parameter mapping for real-time QUA variables. Required
                 when the circuit contains symbolic parameters or classical inputs
                 that must be streamed during execution.
-                In array mode, dictionary vector bindings use the whole
-                ``ParameterVector`` (or its name) as the key and a full-length QUA
-                array as the value. Individual vector-element keys are rejected.
+                Dictionary keys are circuit objects or their names: a whole
+                ``ParameterVector`` (or its name) takes a full-length QUA array,
+                which also binds elements exported as scalar inputs; a single
+                element (or ``"name[i]"``) takes a scalar, and only binds an
+                element exported as a scalar input.
 
         Returns:
             :class:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation`
             wrapping the compilation result and
             wired measurement outputs.
+
+        Raises:
+            ValueError: if a circuit input has no binding, or a binding of the
+                wrong shape (scalar vs. array, array length). Inputs are matched
+                by Qiskit object, so an input the exporter renamed (e.g. a
+                vector ``x`` next to the ``x`` gate, exported as ``x_0``) still
+                binds to its table field.
         """
         from .qua_circuit_compilation import QuaCircuitCompilation
 
@@ -1003,23 +1019,18 @@ class QMBackend(Backend):
                         f"Run update_calibrations() before compiling the circuit",
                     )
         from ..parameter_table.qiskit_classical import (
-            qiskit_has_array, qiskit_input_key, validate_classical_types, validate_qiskit_input_names,
+            bind_exported_inputs, qiskit_input_key, validate_classical_types, validate_qiskit_input_names,
+            vector_element_key,
         )
         from qiskit.circuit.parametervector import ParameterVectorElement
 
         validate_classical_types(qc)
         validate_qiskit_input_names(qc)
-        exporter = QMOpenQASM3Exporter(
-            includes=(),
-            basis_gates=basis_gates,
-            disable_constants=True,
-        )
         # Barriers are kept: qm-qasm lowers each one to a QUA ``align`` over the elements
         # of the barrier's qubits.
-        open_qasm_code = exporter.dumps(qc)
-        inputs = None
+        open_qasm_code, exported_inputs = self.qasm3_exporter.export(qc)
+        bindings = {}
         if param_table is not None:
-            inputs = {}
             if isinstance(param_table, (ParameterTable, Parameter)):
                 param_table = [param_table]
             if isinstance(param_table, Sequence):
@@ -1028,10 +1039,10 @@ class QMBackend(Backend):
                         # Unified API: declare() works for both Parameter and ParameterTable.
                         table.declare(pause_program=False)
                     variables = table.variables_dict if isinstance(table, ParameterTable) else {table.name: table.var}
-                    inputs.update(variables)
+                    bindings.update(variables)
             elif isinstance(param_table, Dict):
-                # String keys naming a circuit parameter (``"t[2]"``) or vector (``"t"``) get the
-                # same validation and renaming as the corresponding objects.
+                # String keys naming a circuit parameter (``"t[2]"``) or vector (``"t"``) bind like
+                # the corresponding objects.
                 named_inputs = {
                     p.vector.name: p.vector for p in qc.parameters if isinstance(p, ParameterVectorElement)
                 }
@@ -1039,22 +1050,15 @@ class QMBackend(Backend):
                 for key, value in param_table.items():
                     if isinstance(key, str):
                         key = named_inputs.get(key, key)
-                    if qiskit_has_array() and isinstance(key, ParameterVectorElement):
-                        raise ValueError(
-                            "Array-mode dictionary bindings require a whole ParameterVector or its name "
-                            "as the key and a full-length array as the value; individual vector elements "
-                            "cannot bind an array input."
-                        )
-                    if isinstance(key, ParameterVector):
-                        if not qiskit_has_array():
-                            raise ValueError("Whole ParameterVector bindings require Qiskit array support.")
-                        inputs[key.name] = value
-                        continue
-                    if isinstance(key, (QiskitParameter, Var)):
-                        inputs[qiskit_input_key(key)] = value
+                    if isinstance(key, ParameterVectorElement):
+                        bindings[vector_element_key(key)] = value
+                    elif isinstance(key, (ParameterVector, QiskitParameter, Var)):
+                        bindings[qiskit_input_key(key)] = value
                     else:
-                        inputs[key] = value
+                        bindings[key] = value
 
+        # Inputs are matched by Qiskit object: the exporter may have renamed them.
+        inputs = bind_exported_inputs(exported_inputs, bindings) if exported_inputs else None
         result = self.compiler.compile(
             open_qasm_code,
             compilation_name=f"{qc.name}_qua",
@@ -1154,8 +1158,16 @@ class QMBackend(Backend):
         responsibility, not this exporter's -- prefer calling that instead of
         ``.dumps()`` directly unless you have already validated ``qc`` yourself.
         """
+        from qiskit.qasm3 import ExperimentalFeatures
+
+        from ..parameter_table.qiskit_classical import VECTOR_ARRAYS_FEATURE
+
+        experimental = ExperimentalFeatures(0)
+        if self.options.export_vector_as_array:
+            experimental |= getattr(ExperimentalFeatures, VECTOR_ARRAYS_FEATURE, ExperimentalFeatures(0))
         return QMOpenQASM3Exporter(
             includes=(),
             basis_gates=self.qm_qasm_basis_gates,
             disable_constants=True,
+            experimental=experimental,
         )

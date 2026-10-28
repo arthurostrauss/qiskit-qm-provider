@@ -1,8 +1,9 @@
 """Tests for Qiskit array support (``arthurostrauss/qiskit@full_real_time_expr``).
 
-Both Qiskit variants are covered: table logic runs in both modes by monkeypatching
-:func:`qiskit_has_array`; tests that need the fork's exporter / ``types.Array`` are skipped on
-stock Qiskit, and tests that need the stock per-element exporter are skipped on the fork.
+Both Qiskit variants are covered: table logic runs in both layouts by monkeypatching
+:func:`qiskit_supports_vector_arrays`; tests that need the fork's exporter feature / ``types.Array``
+are skipped on stock Qiskit, and tests that need the stock per-element exporter are skipped on the
+fork. Input binding is checked against what the exporter really declares, including renames.
 """
 
 from __future__ import annotations
@@ -11,20 +12,28 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
-from qiskit import QuantumCircuit, transpile
+from qiskit import QuantumCircuit, qasm3, transpile
 from qiskit.circuit import Parameter as QiskitParameter, ParameterVector
 from qiskit.circuit.classical import expr, types
-from qiskit.qasm3 import Exporter
 from qm import qua, generate_qua_script
 
 from qiskit_qm_provider import InputType, ParameterPool, ParameterTable, QUA2DArray
 from qiskit_qm_provider.parameter_table import qiskit_classical
-from qiskit_qm_provider.parameter_table.qiskit_classical import qiskit_has_array
+from qiskit_qm_provider.parameter_table.qiskit_classical import (
+    bind_exported_inputs,
+    qiskit_has_array,
+    qiskit_supports_vector_arrays,
+)
+from qiskit_qm_provider.qasm3_exporter import ExportedInput, QMOpenQASM3Exporter
 
 HAS_ARRAY = hasattr(types, "Array")
+HAS_VECTOR_ARRAYS = hasattr(qasm3.ExperimentalFeatures, "PARAMETER_VECTORS_AS_ARRAYS")
 fork_only = pytest.mark.skipif(not HAS_ARRAY, reason="requires Qiskit with types.Array (full_real_time_expr)")
-stock_only = pytest.mark.skipif(HAS_ARRAY, reason="requires stock Qiskit exporter (per-element inputs)")
-BASIS = ["rx", "rz"]
+vector_arrays_only = pytest.mark.skipif(
+    not HAS_VECTOR_ARRAYS, reason="requires the PARAMETER_VECTORS_AS_ARRAYS exporter feature (full_real_time_expr)"
+)
+stock_only = pytest.mark.skipif(HAS_VECTOR_ARRAYS, reason="requires stock Qiskit exporter (per-element inputs)")
+BASIS = ["rx", "rz", "x"]
 
 
 @pytest.fixture(autouse=True)
@@ -36,12 +45,17 @@ def reset_pool():
 
 @pytest.fixture(params=[True, False], ids=["array_mode", "per_element_mode"])
 def array_mode(request, monkeypatch):
-    monkeypatch.setattr(qiskit_classical, "qiskit_has_array", lambda: request.param)
+    monkeypatch.setattr(qiskit_classical, "qiskit_supports_vector_arrays", lambda: request.param)
     return request.param
 
 
-def _exporter():
-    return Exporter(includes=(), basis_gates=BASIS, disable_constants=True)
+def _export(qc, vector_arrays):
+    """Export like the backend does, with or without vector arrays."""
+    experimental = qasm3.ExperimentalFeatures(0)
+    if vector_arrays:
+        experimental = qasm3.ExperimentalFeatures.PARAMETER_VECTORS_AS_ARRAYS
+    exporter = QMOpenQASM3Exporter(includes=(), basis_gates=BASIS, disable_constants=True, experimental=experimental)
+    return exporter.export(qc)
 
 
 def _partial_vector_circuit(name="t", size=5):
@@ -84,6 +98,7 @@ def compile_circuit(compilation_backend, monkeypatch):
 
 def test_detection_matches_types_array():
     assert qiskit_has_array() is HAS_ARRAY
+    assert qiskit_supports_vector_arrays() is HAS_VECTOR_ARRAYS
 
 
 def test_qiskit_supports_array_keyword_removed():
@@ -171,7 +186,10 @@ def test_array_input_var_maps_to_array_parameter():
 @fork_only
 def test_zero_size_array_rejected(compile_circuit):
     qc = QuantumCircuit(1)
-    qc.add_input("arr", types.Array(types.Float(), 0))
+    try:
+        qc.add_input("arr", types.Array(types.Float(), 0))
+    except ValueError:
+        pytest.skip("this Qiskit rejects zero-size arrays itself (OpenQASM 3 sizes are positive)")
     with pytest.raises(ValueError, match="zero-size"):
         ParameterTable.from_qiskit(qc)
     with pytest.raises(ValueError, match="zero-size"):
@@ -191,7 +209,7 @@ def test_duration_array_rejected():
 # ---------------------------------------------------------------------------------------------
 
 
-@fork_only
+@vector_arrays_only
 def test_e2e_fork_partial_vector_with_qua2d_row(compile_circuit):
     qc, vec = _partial_vector_circuit(name="theta")
     table = ParameterTable.from_qiskit(qc)
@@ -209,7 +227,7 @@ def test_e2e_fork_partial_vector_with_qua2d_row(compile_circuit):
     assert "for_(" in generate_qua_script(prog)
 
 
-@fork_only
+@vector_arrays_only
 def test_e2e_fork_real_compiler(compile_circuit):
     from packaging.version import Version
     from importlib.metadata import version
@@ -318,7 +336,7 @@ def test_vector_pub_qua_scatter(array_mode, primitive, input_type, monkeypatch):
 
 
 def test_array_mode_input_name_collision_rejected(monkeypatch, compile_circuit):
-    monkeypatch.setattr(qiskit_classical, "qiskit_has_array", lambda: True)
+    monkeypatch.setattr(qiskit_classical, "qiskit_supports_vector_arrays", lambda: True)
     qc, _ = _partial_vector_circuit(name="theta")
     qc.rz(QiskitParameter("theta"), 0)
     with pytest.raises(ValueError, match="Ambiguous Qiskit input name 'theta'"):
@@ -329,16 +347,24 @@ def test_array_mode_input_name_collision_rejected(monkeypatch, compile_circuit):
     assert not compiler.calls
 
 
-def test_array_mode_dictionary_vector_binding(monkeypatch, compile_circuit):
-    monkeypatch.setattr(qiskit_classical, "qiskit_has_array", lambda: True)
+def test_dictionary_vector_binding(compile_circuit):
     qc, vec = _partial_vector_circuit()
     compiler = _RecordingCompiler()
     with qua.program():
         source = qua.declare(qua.fixed, value=[0.0] * len(vec))
         compile_circuit(qc, {vec: source}, compiler)
-        assert compiler.calls[-1].inputs == {vec.name: source}
-        with pytest.raises(ValueError, match="whole ParameterVector"):
-            compile_circuit(qc, {vec[2]: source[2]}, compiler)
+        (name, value), = compiler.calls[-1].inputs.items()
+        if HAS_VECTOR_ARRAYS:  # exported as one array: the vector binds it whole
+            assert name == "t" and value is source
+        else:  # exported per element: the vector binds the used element's cell
+            assert name == "_t_2_" and str(value).endswith("[2]")
+        element = qua.declare(qua.fixed)
+        if HAS_VECTOR_ARRAYS:
+            with pytest.raises(ValueError, match="bind the whole vector"):
+                compile_circuit(qc, {vec[2]: element}, compiler)
+        else:
+            compile_circuit(qc, {vec[2]: element}, compiler)
+            assert compiler.calls[-1].inputs["_t_2_"] is element
 
 
 def test_singleton_row_copy():
@@ -379,22 +405,36 @@ def test_packer_typed_zeros_and_shape_check(array_mode):
         assert packed["_t_2_"] == 0.5
 
 
-def test_dictionary_string_keys_follow_object_rules(array_mode, compile_circuit):
+def test_dictionary_string_keys_follow_object_rules(compile_circuit):
     qc, vec = _partial_vector_circuit()
     compiler = _RecordingCompiler()
     with qua.program():
-        if array_mode:
-            source = qua.declare(qua.fixed, value=[0.0] * len(vec))
-            compile_circuit(qc, {"t": source}, compiler)
-            assert compiler.calls[-1].inputs == {"t": source}
-            with pytest.raises(ValueError, match="whole ParameterVector"):
-                compile_circuit(qc, {"t[2]": source[2]}, compiler)
+        source = qua.declare(qua.fixed, value=[0.0] * len(vec))
+        compile_circuit(qc, {"t": source}, compiler)
+        assert list(compiler.calls[-1].inputs) == (["t"] if HAS_VECTOR_ARRAYS else ["_t_2_"])
+        element = qua.declare(qua.fixed)
+        if HAS_VECTOR_ARRAYS:
+            with pytest.raises(ValueError, match="bind the whole vector"):
+                compile_circuit(qc, {"t[2]": element}, compiler)
         else:
-            x = qua.declare(qua.fixed)
-            compile_circuit(qc, {"t[2]": x}, compiler)
-            assert compiler.calls[-1].inputs == {"_t_2_": x}
-            with pytest.raises(ValueError, match="require Qiskit array support"):
-                compile_circuit(qc, {"t": x}, compiler)
+            compile_circuit(qc, {"t[2]": element}, compiler)
+            assert list(compiler.calls[-1].inputs) == ["_t_2_"]
+
+
+@vector_arrays_only
+def test_compile_binds_renamed_vector_input(compile_circuit):
+    # `x` is a basis gate, so the exporter renames the vector array; the table field keeps `x`.
+    qc = QuantumCircuit(1)
+    vec = ParameterVector("x", 2)
+    qc.rx(vec[0], 0)
+    table = ParameterTable.from_qiskit(qc)
+    compiler = _RecordingCompiler()
+    with qua.program():
+        table.declare(pause_program=False)
+        compile_circuit(qc, table, compiler)
+    assert "input array[float[64], 2] x_0;" in compiler.calls[0].qasm
+    inputs = compiler.calls[0].inputs
+    assert list(inputs) == ["x_0"] and inputs["x_0"] is table.get_parameter("x").var
 
 
 def test_unmarked_table_is_not_a_row(monkeypatch):
@@ -458,3 +498,146 @@ def test_estimator_row_tables_named_by_plan_index():
         pub = EstimatorPub.coerce((qc, SparsePauliOp(["Z"]), [[0.1] * size]))
         plans.append(EstimatorPlan.from_pub(pub, QMEstimatorOptions(input_type=InputType.INPUT_STREAM), plan_index=i))
     assert [list(plan.param_table.table) for plan in plans] == [["param_table_0_row"], ["param_table_1_row"]]
+
+
+# ---------------------------------------------------------------------------------------------
+# Input binding against the exporter's real declarations (no QuAM needed)
+# ---------------------------------------------------------------------------------------------
+
+
+def _vector_named_like_a_gate():
+    qc = QuantumCircuit(1)
+    vec = ParameterVector("x", 2)  # `x` is also a basis gate (e.g. zz_feature_map's vector)
+    qc.rx(vec[1], 0)
+    qc.x(0)
+    return qc, vec
+
+
+@vector_arrays_only
+def test_exported_inputs_report_renamed_vector_array():
+    qc, vec = _vector_named_like_a_gate()
+    source, exported = _export(qc, vector_arrays=True)
+    assert "input array[float[64], 2] x_0;" in source and "rx(x_0[1])" in source
+    assert exported == {vec: ExportedInput("x_0", 2)}
+
+
+def test_exported_inputs_report_scalar_elements():
+    qc, vec = _vector_named_like_a_gate()
+    scalar = QiskitParameter("theta.1")  # not an identifier: the exporter escapes it
+    qc.rz(scalar, 0)
+    source, exported = _export(qc, vector_arrays=False)
+    assert exported == {vec[1]: ExportedInput("_x_1_"), scalar: ExportedInput("_theta_1")}
+    assert "input float[64] _theta_1;" in source
+
+
+@pytest.mark.parametrize("vector_arrays", [True, False], ids=["array_export", "scalar_export"])
+def test_bind_follows_exporter_renames(vector_arrays):
+    if vector_arrays and not HAS_VECTOR_ARRAYS:
+        pytest.skip("requires the PARAMETER_VECTORS_AS_ARRAYS exporter feature")
+    qc, vec = _vector_named_like_a_gate()
+    scalar = QiskitParameter("theta.1")
+    qc.rz(scalar, 0)
+    _, exported = _export(qc, vector_arrays)
+    with qua.program():
+        array, angle = qua.declare(qua.fixed, value=[0.0, 0.0]), qua.declare(qua.fixed)
+        inputs = bind_exported_inputs(exported, {"x": array, "theta.1": angle})
+    assert inputs["_theta_1"] is angle
+    if vector_arrays:
+        assert set(inputs) == {"x_0", "_theta_1"} and inputs["x_0"] is array
+    else:  # an array field binds the element's scalar input through its cell
+        assert set(inputs) == {"_x_1_", "_theta_1"} and str(inputs["_x_1_"]).endswith("[1]")
+
+
+@vector_arrays_only
+def test_bind_rejects_per_element_fields_for_array_export():
+    qc, vec = _vector_named_like_a_gate()
+    _, exported = _export(qc, vector_arrays=True)
+    with qua.program():
+        element = qua.declare(qua.fixed)
+        with pytest.raises(ValueError, match="'x_0'.*has no binding.*bind the whole vector"):
+            bind_exported_inputs(exported, {"_x_1_": element})
+
+
+@vector_arrays_only
+def test_bind_rejects_wrong_shapes():
+    # qm-qasm would broadcast a scalar into every element, or fail opaquely on a length mismatch.
+    qc, _ = _vector_named_like_a_gate()
+    _, exported = _export(qc, vector_arrays=True)
+    with qua.program():
+        scalar, short = qua.declare(qua.fixed), qua.declare(qua.fixed, value=[0.0])
+        with pytest.raises(ValueError, match="is bound to a scalar"):
+            bind_exported_inputs(exported, {"x": scalar})
+        with pytest.raises(ValueError, match="is bound to an array of length 1"):
+            bind_exported_inputs(exported, {"x": short})
+
+
+@fork_only
+def test_bind_checks_classical_array_inputs():
+    qc = QuantumCircuit(1)
+    ops = qc.add_input("x", types.Array(types.Uint(8), 3))  # renamed next to the `x` gate
+    with qc.if_test(expr.equal(expr.index(ops, 0), 1)):
+        qc.x(0)
+    _, exported = _export(qc, vector_arrays=True)
+    assert exported == {ops: ExportedInput("x_0", 3)}
+    with qua.program():
+        good, bad = qua.declare(int, value=[0] * 3), qua.declare(int, value=[0] * 2)
+        assert bind_exported_inputs(exported, {"x": good}) == {"x_0": good}
+        with pytest.raises(ValueError, match="is bound to an array of length 2"):
+            bind_exported_inputs(exported, {"x": bad})
+
+
+def test_bind_lists_missing_inputs_and_ignores_extra_fields():
+    qc = QuantumCircuit(1)
+    a, b = QiskitParameter("a"), QiskitParameter("b")
+    qc.rx(a, 0)
+    qc.rz(b, 0)
+    _, exported = _export(qc, vector_arrays=False)
+    with qua.program():
+        value, unrelated = qua.declare(qua.fixed), qua.declare(qua.fixed)
+        assert set(bind_exported_inputs(exported, {"a": value, "b": value, "other": unrelated})) == {"a", "b"}
+        with pytest.raises(ValueError, match="Parameter 'b' \\(exported as 'b', a scalar\\) has no binding"):
+            bind_exported_inputs(exported, {"a": value})
+
+
+def _compile_with_qm_qasm(source, inputs):
+    """Compile with the real qm-qasm compiler against a one-qubit hardware config."""
+    from qm_qasm import Compiler, HardwareConfig, OperationIdentifier
+
+    def rx(theta):
+        qua.play("x90" * qua.amp(theta), "q0.xy")
+
+    def x():
+        qua.play("x180", "q0.xy")
+
+    def rz(theta):
+        qua.frame_rotation_2pi(theta, "q0.xy")
+
+    operations = {
+        OperationIdentifier("rx", 1, (0,)): rx,
+        OperationIdentifier("rz", 1, (0,)): rz,
+        OperationIdentifier("x", 0, (0,)): x,
+    }
+    config = HardwareConfig(quantum_operations_db=operations, physical_qubits={0: ("q0.xy",)})
+    compiler = Compiler(hardware_config=config)
+    return compiler.compile(source, inputs=inputs)
+
+
+@pytest.mark.parametrize("vector_arrays", [True, False], ids=["array_export", "scalar_export"])
+def test_renamed_inputs_compile_with_qm_qasm(vector_arrays):
+    # Before binding by object, a vector named like a gate (array export) and a parameter whose
+    # name is not an identifier (both exports) failed with "Pass Qua1GenerationPass failed".
+    if vector_arrays and not HAS_VECTOR_ARRAYS:
+        pytest.skip("requires the PARAMETER_VECTORS_AS_ARRAYS exporter feature")
+    qc, vec = _vector_named_like_a_gate()
+    qc.rz(QiskitParameter("theta.1"), 0)
+    physical = transpile(qc, basis_gates=BASIS, initial_layout=[0], optimization_level=0)
+    table = ParameterTable.from_qiskit(physical, name="renamed")
+    if not qiskit_supports_vector_arrays():
+        assert set(table.table) == {"_x_1_", "theta.1"}
+    source, exported = _export(physical, vector_arrays)
+    with qua.program() as prog:
+        table.declare(pause_program=False)
+        _compile_with_qm_qasm(source, bind_exported_inputs(exported, table.variables_dict))
+    script = generate_qua_script(prog)
+    assert "amplitude_scale" in script and "frame_rotation_2pi" in script
+

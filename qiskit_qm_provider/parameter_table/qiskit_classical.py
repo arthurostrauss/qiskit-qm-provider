@@ -14,57 +14,81 @@
 
 """Helpers bridging Qiskit classical data (parameters, ``Var`` s, arrays) and the provider.
 
-* :func:`qiskit_has_array` -- array mode detection (``types.Array`` present, i.e. the
+* :func:`qiskit_has_array` -- classical array support (``types.Array``, i.e. the
   ``arthurostrauss/qiskit@full_real_time_expr`` fork).
+* :func:`qiskit_supports_vector_arrays` -- whether the exporter can emit a ``ParameterVector`` as
+  one ``input`` array, which decides the table layout of vectors.
 * :func:`qiskit_input_key` -- the name the provider uses for a circuit input in a
   :class:`~qiskit_qm_provider.parameter_table.ParameterTable`.
+* :func:`bind_exported_inputs` -- map table fields onto the inputs the exporter actually declared.
 * :func:`validate_classical_types` -- reject classical types QUA cannot represent.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Any, Dict, Iterator, Mapping
 
 if TYPE_CHECKING:
     from qiskit.circuit import QuantumCircuit
 
+VECTOR_ARRAYS_FEATURE = "PARAMETER_VECTORS_AS_ARRAYS"
+"""The ``qiskit.qasm3.ExperimentalFeatures`` flag that exports vectors as ``input`` arrays."""
+
 
 def qiskit_has_array() -> bool:
-    """Return ``True`` iff the installed Qiskit provides ``types.Array`` (array mode).
-
-    In array mode the OpenQASM 3 exporter emits every ``ParameterVector`` as one
-    full-length ``input array[float[64], N]``; otherwise each used element is exported
-    as its own scalar input.
-    """
+    """Return ``True`` iff the installed Qiskit provides classical arrays (``types.Array``)."""
     from qiskit.circuit.classical import types
 
     return hasattr(types, "Array")
 
 
+def qiskit_supports_vector_arrays() -> bool:
+    """Return ``True`` iff the installed Qiskit can export a ``ParameterVector`` as one
+    full-length ``input array[float[64], N]`` (the ``PARAMETER_VECTORS_AS_ARRAYS``
+    experimental exporter feature of the ``full_real_time_expr`` fork).
+
+    This decides the layout :meth:`~qiskit_qm_provider.parameter_table.ParameterTable.from_qiskit`
+    gives vectors: one array field when supported, one scalar field per used element otherwise.
+    Whether a backend actually exports vectors as arrays is its ``export_vector_as_array``
+    option; an array field binds either export (see :func:`bind_exported_inputs`).
+    """
+    from qiskit.qasm3 import ExperimentalFeatures
+
+    return hasattr(ExperimentalFeatures, VECTOR_ARRAYS_FEATURE)
+
+
+def vector_element_key(parameter) -> str:
+    """Field name of a single ``ParameterVectorElement``: ``_name_i_``, the identifier Qiskit
+    exports for ``name[i]`` as a scalar input."""
+    return f"_{parameter.vector.name}_{parameter.index}_"
+
+
 def qiskit_input_key(obj) -> str:
-    """Input field name, following the installed Qiskit's vector export layout."""
+    """Name of the table field holding a circuit input, in the layout of
+    :meth:`~qiskit_qm_provider.parameter_table.ParameterTable.from_qiskit`: a vector element maps to
+    its vector's array field when :func:`qiskit_supports_vector_arrays`, else to its own field."""
     from qiskit.circuit.parametervector import ParameterVectorElement
 
     if isinstance(obj, ParameterVectorElement):
-        if qiskit_has_array():
+        if qiskit_supports_vector_arrays():
             return obj.vector.name
-        return f"_{obj.vector.name}_{obj.index}_"
+        return vector_element_key(obj)
     return obj.name
 
 
 def validate_qiskit_input_names(qc: QuantumCircuit) -> None:
-    """Reject ambiguous input names before the exporter renames or a table drops them.
+    """Reject ambiguous input names before a table drops one of them.
 
-    Qiskit permits a scalar ``theta`` alongside ``theta[0]``, but in array mode both
+    Qiskit permits a scalar ``theta`` alongside ``theta[0]``, but with vector arrays both
     would become a field named ``theta``. The provider requires distinct input names.
     Pulse schedules (no input vars) are checked on their parameters only.
     """
     from qiskit.circuit.parametervector import ParameterVectorElement
 
-    array_mode = qiskit_has_array()
+    vector_arrays = qiskit_supports_vector_arrays()
     names = {}
     for obj in (*qc.parameters, *getattr(qc, "iter_input_vars", tuple)()):
-        owner = obj.vector if array_mode and isinstance(obj, ParameterVectorElement) else obj
+        owner = obj.vector if vector_arrays and isinstance(obj, ParameterVectorElement) else obj
         name = qiskit_input_key(obj)
         if name in names and names[name] != owner:
             raise ValueError(
@@ -72,6 +96,90 @@ def validate_qiskit_input_names(qc: QuantumCircuit) -> None:
                 "Rename the scalar, ParameterVector or classical input to use distinct names."
             )
         names[name] = owner
+
+
+_UNKNOWN = object()
+
+
+def _qua_length(value):
+    """Array length of a QUA value bound to an input, ``None`` for a scalar, or ``_UNKNOWN``."""
+    from qm.qua._expressions import QuaArrayVariable
+
+    if isinstance(value, QuaArrayVariable):
+        size = getattr(value, "_size", None)
+        return size if isinstance(size, int) else _UNKNOWN
+    if hasattr(value, "__len__"):  # a QUA2DArray row
+        return len(value)
+    return None
+
+
+def _shape(length) -> str:
+    return "a scalar" if length is None else f"an array of length {length}"
+
+
+def _input_label(obj) -> str:
+    from qiskit.circuit import ParameterVector
+
+    kind = "ParameterVector" if isinstance(obj, ParameterVector) else type(obj).__name__
+    return f"{kind} '{obj.name}'"
+
+
+def bind_exported_inputs(exported: Mapping[Any, Any], bindings: Mapping[str, Any]) -> Dict[str, Any]:
+    """Map QUA values onto the ``input`` declarations of an exported circuit.
+
+    The exporter may rename an input (OpenQASM 3 gives gates and variables one namespace, so a
+    vector ``x`` next to an ``x`` gate becomes ``x_0``), so inputs are matched by Qiskit object,
+    never by predicting identifiers.
+
+    Args:
+        exported: Each declared input's Qiskit object mapped to its
+            :class:`~qiskit_qm_provider.qasm3_exporter.ExportedInput`.
+        bindings: QUA values keyed by table field name (:func:`qiskit_input_key` layout, or
+            :func:`vector_element_key` for a single element). A value may also be keyed by the
+            exported identifier itself. Keys matching no input are ignored, so a table shared by
+            several circuits can be passed whole.
+
+    Returns:
+        The QUA value for each exported identifier, ready for the qm-qasm compiler.
+
+    Raises:
+        ValueError: listing every input with no binding or with a binding of the wrong shape
+            (qm-qasm would otherwise fail opaquely, or silently broadcast a scalar to an array).
+    """
+    from qiskit.circuit import ParameterVector
+    from qiskit.circuit.parametervector import ParameterVectorElement
+
+    inputs, problems = {}, []
+    for obj, spec in exported.items():
+        value, hint = _UNKNOWN, ""
+        if isinstance(obj, ParameterVector):  # exported as one input array
+            value = bindings.get(obj.name, _UNKNOWN)
+            if value is _UNKNOWN and any(vector_element_key(p) in bindings for p in obj):
+                hint = (
+                    " The bindings hold separate element fields; bind the whole vector with a "
+                    f"length-{len(obj)} array, or set the backend option export_vector_as_array=False."
+                )
+        elif isinstance(obj, ParameterVectorElement):  # exported as a scalar input
+            value = bindings.get(vector_element_key(obj), _UNKNOWN)
+            array = bindings.get(obj.vector.name, _UNKNOWN)
+            if value is _UNKNOWN and array is not _UNKNOWN and _qua_length(array) in (len(obj.vector), _UNKNOWN):
+                value = array[obj.index]  # an array field binds the element's cell
+        else:
+            value = bindings.get(obj.name, _UNKNOWN)
+        if value is _UNKNOWN:
+            value = bindings.get(spec.name, _UNKNOWN)
+        label = f"{_input_label(obj)} (exported as '{spec.name}', {_shape(spec.length)})"
+        if value is _UNKNOWN:
+            problems.append(f"{label} has no binding.{hint}")
+            continue
+        length = _qua_length(value)
+        if length is not _UNKNOWN and length != spec.length:
+            problems.append(f"{label} is bound to {_shape(length)}.")
+            continue
+        inputs[spec.name] = value
+    if problems:
+        raise ValueError("Cannot bind the circuit inputs:\n- " + "\n- ".join(problems))
+    return inputs
 
 
 def qua_zero(qua_type):
@@ -88,7 +196,7 @@ def qiskit_row_layout(qc, table) -> list[tuple[int, str, int | None]]:
     """
     from qiskit.circuit.parametervector import ParameterVectorElement
 
-    array_mode = qiskit_has_array()
+    vector_arrays = qiskit_supports_vector_arrays()
     fields = {p.name: p for p in table.parameters}
     layout = []
     for column, parameter in enumerate(qc.parameters):
@@ -96,7 +204,7 @@ def qiskit_row_layout(qc, table) -> list[tuple[int, str, int | None]]:
         field = fields.get(key)
         if field is None:
             continue
-        if array_mode and isinstance(parameter, ParameterVectorElement):
+        if vector_arrays and isinstance(parameter, ParameterVectorElement):
             if not field.is_array or field.length != len(parameter.vector):
                 raise ValueError(
                     f"Table field '{key}' must be an array of length {len(parameter.vector)} "

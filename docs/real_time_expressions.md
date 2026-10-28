@@ -111,7 +111,7 @@ or `Cast` nodes.
 When the fork is installed, two things change in this provider:
 
 - [`ParameterTable.from_qiskit`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) maps an `Array` input to **one array-valued `Parameter`** (a QUA array of `int`, `bool` or `fixed`).
-- A `ParameterVector` is collapsed into **one** array `Parameter` named after the vector. The fork's OpenQASM 3 exporter emits a matching `input array[float[64], N]`; every element is exported even if only some are used, so the full vector is included whenever `filter_function` keeps any used element.
+- A `ParameterVector` is collapsed into **one** array `Parameter` named after the vector. With the backend option `export_vector_as_array=True` (the default), the backend's exporter enables the branch's `ExperimentalFeatures.PARAMETER_VECTORS_AS_ARRAYS` and emits a matching `input array[float[64], N]`; every element is exported even if only some are used, so the full vector is included whenever `filter_function` keeps any used element. With the option off, each used element is exported as a scalar input (as on stock Qiskit, and readable by Qiskit's OpenQASM 3 importer), and the array field binds those inputs through its cells.
 
 Sampler and estimator PUBs still supply values only for parameters used by the circuit, ordered as `circuit.parameters`. The circuit always sees the full-length vector array; unused entries hold zero and are never read, since gate parameters cannot index an array at run time. How a binding reaches it depends on `input_type`:
 
@@ -121,7 +121,7 @@ Sampler and estimator PUBs still supply values only for parameters used by the c
 
 The same layout is used for local streaming and IQCC sync hooks.
 
-For dictionary bindings to `quantum_circuit_to_qua`, use `{vector: qua_array}` or `{vector.name: qua_array}` in array mode. Supply the full vector length; individual `vector[i]` keys are rejected because the exported input is an array. Give scalars, vectors and classical inputs distinct names: a scalar `theta` and a vector `theta` would collide, so the provider raises `ValueError` before export instead of silently dropping one field.
+For dictionary bindings to `quantum_circuit_to_qua`, use `{vector: qua_array}` or `{vector.name: qua_array}` with a full-length array; it binds either export of the vector. A single-element key (`vector[i]` or `"name[i]"`) only binds an element exported as a scalar input, so with `export_vector_as_array=True` it raises `ValueError` asking for the whole vector. Inputs are matched by Qiskit object, so an input the exporter renamed (a vector `x` next to the `x` gate is exported as `x_0`) binds like any other, and a missing binding or one of the wrong shape raises `ValueError` naming the input. Give scalars, vectors and classical inputs distinct names: a scalar `theta` and a vector `theta` would collide, so the provider raises `ValueError` before export instead of silently dropping one field.
 
 ## Worked example: two-qubit randomized benchmarking
 

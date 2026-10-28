@@ -358,7 +358,7 @@ ParameterTable(parameters_dict, name=None)
 - `**stream_back(reset=False)**`: QUA Macro to stream values back to the client/server.
 - `**from_qiskit(qc, input_type, filter_function)**`: Class method to create a table from a Qiskit QuantumCircuit's parameters.
 
-**Note — ParameterVector and OpenQASM 3:** A known limitation of the Qiskit OpenQASM 3 exporter is that `ParameterVector` instances are exported as a series of individual parameters (one per element) rather than as a single array. This provider supports this by creating one parameter per element when building a table with `ParameterTable.from_qiskit`, so behaviour is correct and nothing changes from the user’s perspective; it is only an implementation detail to be aware of.
+**Note — ParameterVector and OpenQASM 3:** Stock Qiskit's OpenQASM 3 exporter emits each used `ParameterVector` element as its own scalar input, so `ParameterTable.from_qiskit` creates one field per used element. With the [`full_real_time_expr` Qiskit branch](docs/real_time_expressions.md), a vector is one array field, and the backend exports it as one `input array` (backend option `export_vector_as_array`, on by default). Either way, inputs are bound by Qiskit object, so renamed inputs (e.g. a vector named `x`, like the gate) still bind.
 
 ### `Parameter`
 
