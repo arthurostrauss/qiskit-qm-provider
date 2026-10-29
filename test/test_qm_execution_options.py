@@ -130,6 +130,25 @@ class TestEnqueueAndAwait:
         with pytest.raises(RuntimeError, match="Chunk 0 of 1 \\(PUB indices \\[3\\]\\)"):
             await_running_jobs([pending], [[3]], entity="PUB indices")
 
+    def test_await_running_jobs_feeds_each_chunk_before_the_next_starts(self):
+        # Queue semantics: a queued program starts only after the previous one finished, and a
+        # program with streamed inputs finishes only once it received them.
+        fed = []
+
+        class QueuedJob:
+            def __init__(self, index):
+                self.index = index
+
+            def wait_until(self, state):
+                if self.index and self.index - 1 not in fed:
+                    raise RuntimeError(f"deadlock: chunk {self.index} waits on unfed chunk {self.index - 1}")
+
+        jobs = [QueuedJob(i) for i in range(3)]
+        running = await_running_jobs(
+            jobs, [[0], [1], [2]], entity="PUB indices", on_running=lambda job, chunk: fed.append(job.index)
+        )
+        assert running == jobs and fed == [0, 1, 2]
+
     def test_join_job_ids(self):
         assert join_job_ids([MagicMock(id="a"), MagicMock(id="b")]) == "a,b"
         assert join_job_ids([MagicMock(spec=[]), MagicMock(id="b")]) == "b"

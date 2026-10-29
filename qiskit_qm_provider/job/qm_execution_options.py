@@ -30,7 +30,7 @@ IQCC sync-hook submission is **not** handled here — see ``IQCCSamplerJob`` /
 
 from __future__ import annotations
 
-from typing import Any, List, Mapping, Sequence
+from typing import Any, Callable, List, Mapping, Optional, Sequence
 
 from qm import Program, SimulationConfig, QuantumMachinesManager
 
@@ -134,8 +134,15 @@ def await_running_jobs(
     chunk_layout: Sequence[Sequence[int]],
     *,
     entity: str,
+    on_running: Optional[Callable[[Any, Sequence[int]], None]] = None,
 ) -> List[Any]:
-    """Wait until each pending chunk job is running; raise on per-chunk failure."""
+    """Wait until each pending chunk job is running; raise on per-chunk failure.
+
+    Chunks are handled in order, and ``on_running(job, chunk)`` (e.g. pushing the chunk's
+    streamed inputs) runs as soon as that chunk is running, before waiting for the next one.
+    On hardware the queued programs run one after another, so a chunk that waits for its inputs
+    must receive them before the next chunk can start.
+    """
     if len(pending_jobs) != len(chunk_layout):
         raise ValueError(
             f"Expected one chunk entry per pending job; got {len(pending_jobs)} jobs and {len(chunk_layout)} {entity} chunks"
@@ -144,10 +151,13 @@ def await_running_jobs(
     running_jobs: List[Any] = []
     for i, (pending, chunk) in enumerate(zip(pending_jobs, chunk_layout)):
         try:
-            running_jobs.append(ensure_job_running(pending))
+            job = ensure_job_running(pending)
         except Exception as exc:
             raise RuntimeError(
                 f"Chunk {i} of {len(pending_jobs)} ({entity} {chunk}) "
                 f"failed to start execution"
             ) from exc
+        running_jobs.append(job)
+        if on_running is not None:
+            on_running(job, chunk)
     return running_jobs

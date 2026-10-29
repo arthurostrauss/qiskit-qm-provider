@@ -178,6 +178,11 @@ class SamplerPlan(PrimitivePlan):
 
     @classmethod
     def from_pub(cls, pub: "SamplerPub", input_type: Optional[InputType], index: int) -> "SamplerPlan":
+        if pub.parameter_values.size == 0:
+            raise ValueError(
+                f"PUB {index} has an empty bindings array (shape {pub.parameter_values.shape}); "
+                "provide at least one set of parameter values."
+            )
         circuit_table, param_table = build_pub_tables(pub.circuit, input_type, f"param_table_{index}")
         return cls(pub, index, circuit_table, param_table)
 

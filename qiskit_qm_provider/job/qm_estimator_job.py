@@ -154,12 +154,16 @@ class QMEstimatorJob(QMPrimitiveJob):
 
         Programs are submitted via :func:`~.submit_qua_programs` (``qm.execute``
         for simulation; OPX1000 ``add_to_queue`` / OPX+ ``queue.add`` for real
-        hardware). Each chunk is waited on until running, then plan data is
-        streamed. IQCC sync-hook submission is handled by
-        :class:`IQCCEstimatorJob`.
+        hardware). Chunks are handled in order: each is waited on until running and its plan
+        data is streamed before the next chunk, queued behind it, can start. IQCC sync-hook
+        submission is handled by :class:`IQCCEstimatorJob`. When every PUB has only identity
+        terms there is no program, and nothing is sent to the QM.
         """
         if self._qm_jobs is not None:
             raise RuntimeError("Job has already been submitted.")
+        if not self._programs:
+            self._job_id, self._qm_jobs = "", []
+            return
 
         pending_jobs = submit_qua_programs(
             self._backend.qm,
@@ -169,11 +173,13 @@ class QMEstimatorJob(QMPrimitiveJob):
         )
         self._job_id = join_job_ids(pending_jobs)
         self._qm_jobs = await_running_jobs(
-            pending_jobs, self._chunk_layout, entity="PUB indices"
+            pending_jobs, self._chunk_layout, entity="PUB indices", on_running=self._push_chunk
         )
-        for job, chunk in zip(self._qm_jobs, self._chunk_layout):
-            for global_idx in chunk:
-                self._plans[global_idx].push(job, self._backend.qm)
+
+    def _push_chunk(self, qm_job, chunk) -> None:
+        """Push the streamed inputs of the plans in ``chunk`` to their running job."""
+        for global_idx in chunk:
+            self._plans[global_idx].push(qm_job, self._backend.qm)
 
     @staticmethod
     def _calc_expval_map(

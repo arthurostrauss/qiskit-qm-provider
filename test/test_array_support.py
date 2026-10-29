@@ -347,6 +347,17 @@ def test_array_mode_input_name_collision_rejected(monkeypatch, compile_circuit):
     assert not compiler.calls
 
 
+@pytest.mark.parametrize("vector_arrays", [True, False], ids=["array_layout", "element_layout"])
+def test_scalar_named_like_an_element_rejected(monkeypatch, vector_arrays):
+    # `_t_2_` is the key binding `t[2]` when it is exported as a scalar input: a scalar with
+    # that name would silently take its place, so it is rejected in both table layouts.
+    monkeypatch.setattr(qiskit_classical, "qiskit_supports_vector_arrays", lambda: vector_arrays)
+    qc, _ = _partial_vector_circuit(name="t")
+    qc.rz(QiskitParameter("_t_2_"), 0)
+    with pytest.raises(ValueError, match="Ambiguous Qiskit input name '_t_2_'"):
+        ParameterTable.from_qiskit(qc)
+
+
 def test_dictionary_vector_binding(compile_circuit):
     qc, vec = _partial_vector_circuit()
     compiler = _RecordingCompiler()

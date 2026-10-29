@@ -293,3 +293,27 @@ def test_circuit_kept_and_readout_appended(backend_factory):
     assert [prepared.find_bit(i.qubits[0]).index for i in appended] == [0, 1]
     assert all(clbit in readout for i in appended for clbit in i.clbits)
     assert prepared.data.index(user[-1]) < prepared.data.index(appended[0])
+
+
+@pytest.mark.parametrize("job_kind", ["local", "iqcc"])
+def test_identity_only_job_sends_nothing_and_returns_coefficients(backend_factory, monkeypatch, job_kind):
+    from qiskit_qm_provider.job.qm_estimator_job import IQCCEstimatorJob, QMEstimatorJob
+
+    backend = backend_factory(2)
+    circuit = QuantumCircuit(2)
+    circuit.h(0)
+    isa = transpile(circuit, backend, optimization_level=0)
+    ParameterPool.reset()
+    estimator = QMEstimatorV2(backend)
+    pubs = estimator.validate_estimator_pubs([EstimatorPub.coerce((isa, SparsePauliOp("II", 0.5)), 0.1)])
+
+    def no_qm(_):
+        raise AssertionError("an identity-only job must not reach the QM")
+
+    monkeypatch.setattr(type(backend), "qm", property(no_qm))
+    job_class = QMEstimatorJob if job_kind == "local" else IQCCEstimatorJob
+    job = job_class(backend, pubs, None, switch_obs_circuit=estimator._switch_obs_circuit, abelian_grouping=True)
+    assert job.programs == []
+    job.submit()
+    assert float(job.result()[0].data.evs) == 0.5
+

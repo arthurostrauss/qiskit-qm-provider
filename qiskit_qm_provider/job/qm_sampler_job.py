@@ -112,8 +112,9 @@ class QMSamplerJob(QMPrimitiveJob):
 
         Programs are submitted via :func:`~.submit_qua_programs` (``qm.execute``
         for simulation; OPX1000 ``add_to_queue`` / OPX+ ``queue.add`` for real
-        hardware). Each chunk is waited on until running, then parameters are
-        streamed. IQCC sync-hook submission is handled by
+        hardware). Chunks are handled in order: each is waited on until running and its
+        parameters are streamed before the next chunk, queued behind it, can start. IQCC
+        sync-hook submission is handled by
         :class:`IQCCSamplerJob`.
         """
         if self._qm_jobs is not None:
@@ -127,10 +128,8 @@ class QMSamplerJob(QMPrimitiveJob):
         )
         self._job_id = join_job_ids(pending_jobs)
         self._qm_jobs = await_running_jobs(
-            pending_jobs, self._chunk_layout, entity="circuit indices"
+            pending_jobs, self._chunk_layout, entity="circuit indices", on_running=self._push_parameters
         )
-        for job, chunk in zip(self._qm_jobs, self._chunk_layout):
-            self._push_parameters(job, chunk)
 
     @property
     def runtime_pubs(self) -> List[SamplerPlan]:

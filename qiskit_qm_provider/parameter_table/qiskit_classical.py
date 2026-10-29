@@ -80,22 +80,26 @@ def validate_qiskit_input_names(qc: QuantumCircuit) -> None:
     """Reject ambiguous input names before a table drops one of them.
 
     Qiskit permits a scalar ``theta`` alongside ``theta[0]``, but with vector arrays both
-    would become a field named ``theta``. The provider requires distinct input names.
-    Pulse schedules (no input vars) are checked on their parameters only.
+    would become a field named ``theta``. An element's own key ``_theta_0_`` is reserved too
+    (it is how a single element is bound when exported as a scalar input), so a scalar named
+    ``_theta_0_`` is rejected as well. Pulse schedules (no input vars) are checked on their
+    parameters only.
     """
     from qiskit.circuit.parametervector import ParameterVectorElement
 
     vector_arrays = qiskit_supports_vector_arrays()
     names = {}
     for obj in (*qc.parameters, *getattr(qc, "iter_input_vars", tuple)()):
-        owner = obj.vector if vector_arrays and isinstance(obj, ParameterVectorElement) else obj
-        name = qiskit_input_key(obj)
-        if name in names and names[name] != owner:
-            raise ValueError(
-                f"Ambiguous Qiskit input name '{name}': distinct inputs map to the same field. "
-                "Rename the scalar, ParameterVector or classical input to use distinct names."
-            )
-        names[name] = owner
+        element = isinstance(obj, ParameterVectorElement)
+        owner = obj.vector if vector_arrays and element else obj
+        keys = {qiskit_input_key(obj), vector_element_key(obj)} if element else {qiskit_input_key(obj)}
+        for name in keys:
+            if name in names and names[name] != owner:
+                raise ValueError(
+                    f"Ambiguous Qiskit input name '{name}': distinct inputs map to the same field. "
+                    "Rename the scalar, ParameterVector or classical input to use distinct names."
+                )
+            names[name] = owner
 
 
 _UNKNOWN = object()

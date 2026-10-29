@@ -117,7 +117,7 @@ Sampler and estimator PUBs still supply values only for parameters used by the c
 
 - `INPUT_STREAM`, `IO1`, `IO2`: each binding travels as **one dense row** of `len(circuit.parameters)` floats on a per-PUB `<table>_row` input (one push and one `advance_input_stream` per binding over an input stream). In QUA the row is scattered into the circuit's fields, assigning only the used entries. Unused vector elements are never transferred, and a vector shared by several PUBs needs no shared stream.
 - `None` (compile-time): the rows are preloaded as a `QUA2DArray` and scattered the same way.
-- `OPNIC`: the circuit's table is pushed as one struct packet, with each vector packed into its full-length array.
+- `OPNIC` (sampler only; the estimator does not support it yet): the circuit's table is pushed as one struct packet, with each vector packed into its full-length array.
 
 The same layout is used for local streaming and IQCC sync hooks.
 

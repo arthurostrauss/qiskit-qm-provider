@@ -175,6 +175,21 @@ def test_iqcc_estimator_attaches_hook_for_observables_only():
 # ---------------------------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("input_type", [None, InputType.INPUT_STREAM])
+def test_sampler_empty_bindings_rejected(input_type):
+    import numpy as np
+    from qiskit.primitives.containers.sampler_pub import SamplerPub
+
+    from qiskit_qm_provider.job.primitive_plans import SamplerPlan
+
+    qc = QuantumCircuit(1, 1)
+    qc.rx(Parameter("a"), 0)
+    qc.measure(0, 0)
+    pub = SamplerPub.coerce((qc, np.zeros((0, 1))), shots=10)
+    with pytest.raises(ValueError, match="PUB 0 has an empty bindings array"):
+        SamplerPlan.from_pub(pub, input_type, 0)
+
+
 def test_empty_bindings_rejected():
     import numpy as np
 
