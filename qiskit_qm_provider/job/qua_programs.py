@@ -61,9 +61,14 @@ def _process_circuit(
 
 
 def _process_sampler_pub(plan: SamplerPlan, backend: QMBackend, **kwargs):
-    """QUA macro: run one sampler PUB, looping over its bindings when it has parameters."""
+    """QUA macro: run one sampler PUB, looping over its bindings when it has parameters.
+
+    Without parameters there is no table and no binding loop: the shot loop runs directly. Every
+    binding is then the same circuit, so a bindings array of shape ``(k, 0)`` (``k`` bindings of
+    no parameter) runs ``k`` times the shots, in binding order.
+    """
     if plan.circuit_table is None:
-        return _process_circuit(plan.pub.circuit, backend, plan.shots, **kwargs)
+        return _process_circuit(plan.pub.circuit, backend, plan.shots * plan.num_bindings, **kwargs)
     plan.declare_params()
     p = declare(int)
     with for_(p, 0, p < plan.num_bindings, p + 1):
@@ -97,6 +102,11 @@ def _process_estimator_pub(plan: EstimatorPlan, backend: QMBackend, **kwargs):
     plan.declare_params()
     plan.declare_observables()
     tables = [t for t in (plan.circuit_table, plan.obs_table) if t is not None]
+    if plan.circuit_table is None and plan.num_bindings == 1:
+        # No parameters (the usual unparametrized PUB): no binding loop, only the groups.
+        with plan.observable_groups(0):
+            return _process_circuit(plan.pub.circuit, backend, plan.shots, tables, compute_state_int=False, **kwargs)
+    # With parameters, or several bindings of no parameter (whose observables may differ).
     p = declare(int)
     with for_(p, 0, p < plan.num_bindings, p + 1):
         plan.load_params(p)
@@ -250,6 +260,9 @@ def plan_sampler_programs(
     Within each program, the local PUB index (0-based within the chunk) is used
     for stream keys ``f"{creg_name}_{local_idx}"``.
 
+    Plans with zero bindings are left out: they need no program (no programs and an empty
+    layout when no plan has bindings).
+
     Args:
         backend: The QMBackend to use.
         plans: One :class:`~qiskit_qm_provider.job.primitive_plans.SamplerPlan` per pub.
@@ -258,7 +271,13 @@ def plan_sampler_programs(
     Returns:
         Tuple of (list of QUA programs, chunk layout).
     """
-    chunk_layout = compute_chunk_layout(len(plans), max_circuits=backend.options.max_circuits)
+    runnable = [g for g, plan in enumerate(plans) if plan.has_tasks]
+    if not runnable:
+        return [], []
+    chunk_layout = [
+        [runnable[i] for i in chunk]
+        for chunk in compute_chunk_layout(len(runnable), max_circuits=backend.options.max_circuits)
+    ]
     programs = [sampler_program(backend, [plans[g] for g in chunk], **kwargs) for chunk in chunk_layout]
     return programs, chunk_layout
 

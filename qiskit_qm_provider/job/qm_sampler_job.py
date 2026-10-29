@@ -27,7 +27,7 @@ import tempfile
 import numpy as np
 
 from qiskit.primitives import PrimitiveResult
-from qiskit.primitives.containers import SamplerPubResult, DataBin
+from qiskit.primitives.containers import BitArray, SamplerPubResult, DataBin
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit.providers import JobStatus
 from qiskit.result.models import MeasLevel
@@ -94,15 +94,18 @@ class QMSamplerJob(QMPrimitiveJob):
             handle.wait_for_all_values()
 
         all_data = []
-        for i, pub in enumerate(self._pubs):
-            chunk_idx, local_idx = self._locator[i]
-            handle = results_handles[chunk_idx]
+        for i, (pub, plan) in enumerate(zip(self._pubs, self._plans)):
             qc_meas_data = {}
             for output_key, bit_width in measurement_output_bit_sizes(pub.circuit).items():
-                raw = handle.get(f"{output_key}_{local_idx}").fetch_all()
+                if not plan.has_tasks:  # zero bindings: never run, empty result of the PUB's shape
+                    empty = np.zeros((*pub.shape, pub.shots, -(-bit_width // 8)), dtype=np.uint8)
+                    qc_meas_data[output_key] = BitArray(empty, bit_width)
+                    continue
+                chunk_idx, local_idx = self._locator[i]
+                raw = results_handles[chunk_idx].get(f"{output_key}_{local_idx}").fetch_all()
                 qc_meas_data[output_key] = bit_array_from_measurement_stream(pub, raw, bit_width)
 
-            sampler_data = SamplerPubResult(DataBin(**qc_meas_data))
+            sampler_data = SamplerPubResult(DataBin(**qc_meas_data, shape=pub.shape))
             all_data.append(sampler_data)
 
         return PrimitiveResult(all_data)
@@ -119,6 +122,9 @@ class QMSamplerJob(QMPrimitiveJob):
         """
         if self._qm_jobs is not None:
             raise RuntimeError("QM job has already been submitted")
+        if not self._programs:  # every PUB has zero bindings: nothing to send
+            self._job_id, self._qm_jobs = "", []
+            return
 
         pending_jobs = submit_qua_programs(
             self._backend.qm,

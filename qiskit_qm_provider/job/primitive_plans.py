@@ -178,17 +178,18 @@ class SamplerPlan(PrimitivePlan):
 
     @classmethod
     def from_pub(cls, pub: "SamplerPub", input_type: Optional[InputType], index: int) -> "SamplerPlan":
-        if pub.parameter_values.size == 0:
-            raise ValueError(
-                f"PUB {index} has an empty bindings array (shape {pub.parameter_values.shape}); "
-                "provide at least one set of parameter values."
-            )
         circuit_table, param_table = build_pub_tables(pub.circuit, input_type, f"param_table_{index}")
         return cls(pub, index, circuit_table, param_table)
 
     @property
     def shots(self) -> int:
         return self.pub.shots
+
+    @property
+    def has_tasks(self) -> bool:
+        """``False`` for a PUB with zero bindings: it is not compiled, sent or run, and its
+        result is empty (shape ``pub.shape``), as with Qiskit's reference sampler."""
+        return self.num_bindings > 0
 
 
 def _basis_code(z: bool, x: bool) -> int:
@@ -291,11 +292,6 @@ class EstimatorPlan(PrimitivePlan):
         circuit = pub.circuit
         index = plan_index if plan_index is not None else 0
         tag = plan_index if plan_index is not None else circuit.name
-        if pub.parameter_values.size == 0:
-            raise ValueError(
-                f"PUB {index} has an empty bindings array (shape {pub.parameter_values.shape}); "
-                "provide at least one set of parameter values."
-            )
         measured = _estimator_readout(circuit)
 
         param_shape = pub.parameter_values.shape
@@ -319,7 +315,7 @@ class EstimatorPlan(PrimitivePlan):
             metadata.extend(
                 {"meas_paulis": meas, "orig_paulis": orig, "param_index": param_index} for meas, orig in paulis
             )
-        if not metadata:  # only identity terms: nothing to run on the device
+        if not metadata:  # zero bindings or only identity terms: nothing to run on the device
             return cls(pub, index, None, None, param_indices=param_indices, obs_codes=obs_codes)
         distinct_codes = {tuple(codes) for codes, _ in groupings.values()}
         # Same basis codes for every binding: one row, sent (or preloaded) once.
@@ -358,7 +354,8 @@ class EstimatorPlan(PrimitivePlan):
 
     @property
     def has_tasks(self) -> bool:
-        """``False`` when every term is the identity: the PUB is then not compiled, sent or run."""
+        """``False`` when every term is the identity or the PUB has zero bindings: the PUB is then
+        not compiled, sent or run (its values are exact, or its result is empty)."""
         return bool(self.metadata)
 
     @property

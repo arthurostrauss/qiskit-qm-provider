@@ -175,26 +175,61 @@ def test_iqcc_estimator_attaches_hook_for_observables_only():
 # ---------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("input_type", [None, InputType.INPUT_STREAM])
-def test_sampler_empty_bindings_rejected(input_type):
+def test_zero_bindings_estimator_plan_runs_nothing():
+    import numpy as np
+
+    from qiskit_qm_provider.job.qm_estimator_job import estimator_pub_result
+
+    plan = _estimator_plan([SparsePauliOp("ZX")], values=np.zeros((0, 1)))
+    assert not plan.has_tasks
+    assert estimator_pub_result(plan, None).data.evs.shape == (0,)
+
+
+@pytest.mark.parametrize("parametrized", [True, False])
+def test_zero_bindings_sampler_plan_runs_nothing(parametrized):
     import numpy as np
     from qiskit.primitives.containers.sampler_pub import SamplerPub
 
     from qiskit_qm_provider.job.primitive_plans import SamplerPlan
 
     qc = QuantumCircuit(1, 1)
-    qc.rx(Parameter("a"), 0)
+    if parametrized:
+        qc.rx(Parameter("a"), 0)
     qc.measure(0, 0)
-    pub = SamplerPub.coerce((qc, np.zeros((0, 1))), shots=10)
-    with pytest.raises(ValueError, match="PUB 0 has an empty bindings array"):
-        SamplerPlan.from_pub(pub, input_type, 0)
+    pub = SamplerPub.coerce((qc, np.zeros((0, qc.num_parameters))), shots=10)
+    assert not SamplerPlan.from_pub(pub, InputType.INPUT_STREAM, 0).has_tasks
 
 
-def test_empty_bindings_rejected():
+def test_unparametrized_estimator_has_no_binding_loop(no_circuit):
+    # Without parameters there is no table and no binding loop: only the group loop remains.
+    plan = _estimator_plan([SparsePauliOp("ZX"), SparsePauliOp("XX")], input_type=None)
+    assert plan.circuit_table is None and plan.num_bindings == 1
+    assert _qua_script(plan).count("for_(") == 1
+    ParameterPool.reset()
+    parametrized = _estimator_plan([SparsePauliOp("ZX")], values=[[0.1], [0.2]], input_type=None)
+    assert _qua_script(parametrized).count("for_(") == 2  # bindings, then groups
+
+
+@pytest.mark.parametrize("shape", [(), (3,)], ids=["no_values", "three_bindings_of_no_parameter"])
+def test_unparametrized_sampler_runs_shots_directly(monkeypatch, shape):
     import numpy as np
+    from qiskit.primitives.containers.sampler_pub import SamplerPub
 
-    with pytest.raises(ValueError, match="empty bindings array"):
-        _estimator_plan([SparsePauliOp("ZX")], values=np.zeros((0, 1)))
+    from qiskit_qm_provider.job.primitive_plans import SamplerPlan
+
+    calls = []
+    monkeypatch.setattr(qua_programs, "_process_circuit", lambda qc, backend, shots, *rest, **kw: calls.append((shots, rest)))
+    qc = QuantumCircuit(1, 1)
+    qc.h(0)
+    qc.measure(0, 0)
+    pub = SamplerPub.coerce((qc, np.zeros((*shape, 0))) if shape else (qc,), shots=10)
+    plan = SamplerPlan.from_pub(pub, InputType.INPUT_STREAM, 0)
+    assert plan.circuit_table is None and plan.param_table is None
+    with qua.program() as prog:
+        qua_programs._process_sampler_pub(plan, None)
+    # One shot loop for every binding (all the same circuit), no table, no binding loop.
+    assert calls == [(10 * plan.num_bindings, ())]
+    assert "for_(" not in generate_qua_script(prog)
 
 
 @pytest.mark.parametrize("missing", ["__c", "__obs_1"])
