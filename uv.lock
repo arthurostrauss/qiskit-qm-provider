@@ -1784,7 +1784,7 @@ wheels = [
 
 [[package]]
 name = "qiskit-qm-provider"
-version = "0.3.5"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "openqasm3" },
@@ -1820,10 +1820,10 @@ requires-dist = [
     { name = "jinja2", marker = "extra == 'iqcc'" },
     { name = "myst-parser", marker = "extra == 'docs'" },
     { name = "openqasm3" },
-    { name = "qiskit", specifier = ">=2,<3" },
+    { name = "qiskit", specifier = ">=2.2,<3.0" },
     { name = "qiskit-qasm3-import" },
     { name = "qiskit-sphinx-theme", marker = "extra == 'docs'" },
-    { name = "qm-qasm", specifier = ">=1.7.7" },
+    { name = "qm-qasm", specifier = ">=1.8.0" },
     { name = "qm-qua", specifier = ">=1.2.3" },
     { name = "qm-saas", marker = "extra == 'qm-saas'", specifier = ">=1.2.0,<2" },
     { name = "qualang-tools", specifier = ">=0.16.0" },
@@ -1867,25 +1867,25 @@ wheels = [
 
 [[package]]
 name = "qm-qasm"
-version = "1.7.7"
+version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "openqasm3", extra = ["parser"] },
     { name = "qm-qua" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7d/df/028fe80f79aa82ffff79b3c64aa9ef6bd95c001d28bd905b5c1a12592c2b/qm_qasm-1.7.7-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:33f7778cb9d46d122d585946b8de216791060fffc5cb91e7475e76c4b83dd103", size = 2590579, upload-time = "2026-03-08T06:46:53.161Z" },
-    { url = "https://files.pythonhosted.org/packages/1a/91/cbcf30e38a89438204dcf17f80f6bf1cf65959fc1233ebcc3c72aa2e410e/qm_qasm-1.7.7-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:ba9caf0057b05dce386b3ca7d7d6494df9d1e7a65c99dedb7c2e63273d7398b9", size = 7113644, upload-time = "2026-03-08T06:46:55.279Z" },
-    { url = "https://files.pythonhosted.org/packages/f0/f7/53b4e8bf64bd2321a2c1960d02214c7d073263eac6af7e9eeece95168434/qm_qasm-1.7.7-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:a3d94d986b629896fe6913b28bae5598272784ad3cab231e6c7870e127c7764e", size = 7245941, upload-time = "2026-03-08T06:46:57.395Z" },
-    { url = "https://files.pythonhosted.org/packages/5d/56/991c19304398c45cafd141f83508d7a7a9fec7983faaa3a1f1732e241571/qm_qasm-1.7.7-cp310-cp310-win_amd64.whl", hash = "sha256:d16aeea62e34a16b4df3c823ced497b291ec9c52f689287bbe15d3e4e350ecb6", size = 1217638, upload-time = "2026-03-08T06:46:59.532Z" },
-    { url = "https://files.pythonhosted.org/packages/1c/9a/fd0fd705eb46404d693f32b3f70d04710ee2a03ea9f49f3e4756d5d2dd7d/qm_qasm-1.7.7-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:b87bc11512aa8bc1e75a312a5e33623243c9b839589929dd449517700ef9a7a3", size = 2579163, upload-time = "2026-03-08T06:47:01.398Z" },
-    { url = "https://files.pythonhosted.org/packages/29/a7/24707c8f8424d9fe19e1f6adef9a3f3ca672f39edbec2acea48afbc52438/qm_qasm-1.7.7-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:45147a1e9fd80537c7c18544e19256b8d2faee21f372007e57c68f5d4b6d2f40", size = 7496191, upload-time = "2026-03-08T06:47:03.522Z" },
-    { url = "https://files.pythonhosted.org/packages/7f/b7/5ca8f299ec79fe161e756d3c5bf95cab4643265a32fb5d4049ac360f8407/qm_qasm-1.7.7-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:286d11b96fd6b1490d4d35d03632dad1ff5d8cc6a5c8f58431f754ad3b359e1e", size = 7634596, upload-time = "2026-03-08T06:47:05.674Z" },
-    { url = "https://files.pythonhosted.org/packages/42/1b/2a5eb78d9c07d400fa7880a4c42e79f59c32da769263a27f17118bbdb85a/qm_qasm-1.7.7-cp311-cp311-win_amd64.whl", hash = "sha256:78115c18559244cb0804b93dfa9ae99ad12e055f387c2b7716dd39da1bf2f10b", size = 1218663, upload-time = "2026-03-08T06:47:07.865Z" },
-    { url = "https://files.pythonhosted.org/packages/87/1e/9600d06ef6fb444bf676a1d979a14cbfa9b27a310d24b212ca1dcb89643a/qm_qasm-1.7.7-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:62fbc1d74454e66f3ce9f6ed4a0484d2b9220328a47ea983826fcc84ca724b1f", size = 2561172, upload-time = "2026-03-08T06:47:09.538Z" },
-    { url = "https://files.pythonhosted.org/packages/1f/5b/4cf77541f0c1cd9a0f9ede9b08e84086b8dce1000b5a322fa921aedca84e/qm_qasm-1.7.7-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:1200db2971f3027db8d8a23cf2201c77b562fb1b33e94c5a3f0cd74a3cbf4939", size = 7676941, upload-time = "2026-03-08T06:47:11.622Z" },
-    { url = "https://files.pythonhosted.org/packages/74/53/9e8fa6fc7d7c5913f72abd853c85142b8845bdfdccc2bcbb531bc16b25bc/qm_qasm-1.7.7-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:cae4a9bb0495b712366fba21a8aadeea2afb9103301dffd86a83624b3707bd90", size = 7888394, upload-time = "2026-03-08T06:47:13.463Z" },
-    { url = "https://files.pythonhosted.org/packages/f5/b6/e1ea644a23a488935c31c21104c35793801328b6148fe881301b0e01ff27/qm_qasm-1.7.7-cp312-cp312-win_amd64.whl", hash = "sha256:ab31b253ef45e9668a7c7b2891e21431857c8975b8dc5503277e065bacac3a50", size = 1196531, upload-time = "2026-03-08T06:47:15.39Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/2e/bdf5eebf70018ebd532e85470878c5a824a83b8fefeb3b9e5342049fe947/qm_qasm-1.8.0-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:d9cee28b8ca8def230bda4681d5fe3a4c5e1825203bc6925437636bd3c455f86", size = 3340131, upload-time = "2026-10-21T14:06:34.219Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/95/69d23ac7a872f0ed1535b6ff975ffc3c6b18fa46d1f6bcc0f5298f149f29/qm_qasm-1.8.0-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:ed39b86573eda0739c0a7df635377e21de6a9e1c53c357526196ca8e6477d934", size = 9624549, upload-time = "2026-10-21T14:06:35.846Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/e3/e6cc935a75169dc662ed3a52dfceb6c9f3c396555499ec45501d335bbefc/qm_qasm-1.8.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:1ad004a4ab1f375761d6e8c00cd996c570dcc462de7f650b87f424b55e7df86d", size = 9784231, upload-time = "2026-10-21T14:06:38.137Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/97/ab6fce4915c28ac9256b8e2b0f002ff79651ee337b72471d42b1afc452ef/qm_qasm-1.8.0-cp310-cp310-win_amd64.whl", hash = "sha256:e6ffb2c14977ada8e67e9b531173da64e368ca0fab48a9627b8f3fe361ab7e78", size = 1507754, upload-time = "2026-10-21T14:06:40.359Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/da/c9d412087938bfaa1f6d9f908352cbe5462d849d80d6dcb664dbd67ee486/qm_qasm-1.8.0-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:0f58b90bbfb1c904c0f3fa7d285995f20d29e4f2f47f04b34a341085de086621", size = 3301261, upload-time = "2026-10-21T14:06:41.918Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/7d/594b0e2068db9edcff62d7373381681a44944435920f3220bbbed8a1a934/qm_qasm-1.8.0-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:80175a7d126cc8356d2e7db1791813110912de364155f227a26f2f0a0e0ecf03", size = 10068537, upload-time = "2026-10-21T14:06:43.561Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/0a/952d6d1903a79d0f74f5b0a1a0e26b1c85976585367a03fa9d8eef9002a2/qm_qasm-1.8.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:38e3e17163df0287d8dcb0c07909fb3eca5ff940aba4eb61cf8536bfd33ea090", size = 10224569, upload-time = "2026-10-21T14:06:45.835Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/ad/03a482219a1df83b2a159440ac65382b147782f9cd108ae4bb7d77fe129d/qm_qasm-1.8.0-cp311-cp311-win_amd64.whl", hash = "sha256:402f6fd7464706a87e6631e57b8c88eabd66f2d5a0846b1010f75b284e3d3db3", size = 1497097, upload-time = "2026-10-21T14:06:47.837Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/65/4635e13a3e79fe6ebea29f1790441af853ad32eb3da6f8b5e4d0fd48bb31/qm_qasm-1.8.0-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:a5de0a84d7fc08c24aecc18fc1455f8caf9d725e89695d3eff3da51c6643cb49", size = 3342266, upload-time = "2026-10-21T14:06:49.424Z" },
+    { url = "https://files.pythonhosted.org/packages/90/47/94da4b10ac4873e08d2e011b6b6c8f25ced88d921b22f2f549018d5302cd/qm_qasm-1.8.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:c6b4fac3d71a2fa7758d95839caba4da270a638c9446689192f857a2d19d16a3", size = 10094331, upload-time = "2026-10-21T14:06:51.246Z" },
+    { url = "https://files.pythonhosted.org/packages/65/01/bb65ffb55482307db38da6c254faee79db93b1c31b19f74888508b0028a9/qm_qasm-1.8.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:0589fe78f445e9b1e0e6f257d5092b2e86a20a30d420ec535cc0c208f170a9d6", size = 10420545, upload-time = "2026-10-21T14:06:53.746Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/cd/037968f2db459cc018641daca9be53443d68ba2bfe0d0207224ca267a3e9/qm_qasm-1.8.0-cp312-cp312-win_amd64.whl", hash = "sha256:bfb07c8735a5049313f03186fe1ac256ca38821ef83399fee8ee52ae89b46ec7", size = 1451199, upload-time = "2026-10-21T14:06:55.911Z" },
 ]
 
 [[package]]

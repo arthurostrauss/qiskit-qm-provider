@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-29
+
 ### Added
 
 - **Support for the `full_real_time_expr` Qiskit branch** — the provider now works with classical arrays from the author's Qiskit branch [`arthurostrauss/qiskit@full_real_time_expr`](https://github.com/arthurostrauss/qiskit/tree/full_real_time_expr), which is not merged upstream. The branch adds dynamic `for`-loop ranges (`expr.Range`), 1-D classical arrays (`types.Array`, indexed with `expr.index`), and a fix that lets `for`-loop bodies with a `Var` counter capture variables from the enclosing scope. See the new *Real-Time Classical Expressions* guide in the docs, which includes a two-qubit randomized-benchmarking example. On the branch, `expr.Range` uses OpenQASM 3 inclusive-stop semantics. Array inputs need qm-qasm ≥ 1.8.0. Everything below is inactive on stock Qiskit.
