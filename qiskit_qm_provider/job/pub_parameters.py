@@ -35,15 +35,17 @@ standalone parameters).
 Every circuit parameter lands in a QUA ``fixed`` (signed 4.28 fixed point), so each bound value
 must lie in ``[FIXED_MIN, FIXED_MAX]``; :func:`check_fixed_range` rejects a PUB otherwise.
 
-Estimator observables travel the same way: per binding, one int row
-``[n_obs, words(obs_0), ..., words(obs_{L-1})]`` padded to the plan's largest ``L``, where each
-observable's per-qubit basis codes (0: Z/I, 1: X, 2: Y) are packed 2 bits per qubit,
-``OBS_QUBITS_PER_WORD`` qubits per 32-bit word (the sign bit is never used). QUA unpacks a
-row into the circuit's scalar ``obs_q`` inputs with shifts and masks.
+Estimator measurement groups travel the same way. Each binding is one :class:`ObsRow`: a flat
+int wire ``[n_groups, words of group 0, ..., words of group L-1]``, padded to the plan's
+largest ``L``. Each group's per-qubit basis codes (0: Z/I, 1: X, 2: Y) are packed 2 bits per
+qubit, ``OBS_QUBITS_PER_WORD`` qubits per 32-bit word (the sign bit is never used). The host
+places those bits with integer division and remainder; QUA only loads each word and extracts
+codes with shifts and masks (the word and qubit loops are unrolled when the program is built).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import numpy as np
@@ -192,29 +194,73 @@ def obs_words(num_qubits: int) -> int:
 
 
 def pack_obs_codes(codes) -> list[int]:
-    """Pack per-qubit basis codes (0, 1, 2) into words: qubit ``q`` -> word ``q // 15``, bits ``2 * (q % 15)``."""
+    """Pack per-qubit basis codes (0, 1, 2) into words: qubit ``q`` -> word ``q // 15``, bits ``2 * (q % 15)``.
+
+    The ``//`` and ``%`` run on the host only. QUA never recomputes them: :func:`assign_obs_codes`
+    unrolls one shift and mask per measured qubit.
+    """
     words = [0] * obs_words(len(codes))
     for q, code in enumerate(codes):
         words[q // OBS_QUBITS_PER_WORD] |= int(code) << (2 * (q % OBS_QUBITS_PER_WORD))
     return words
 
 
+@dataclass(frozen=True)
+class ObsRow:
+    """One binding's packed measurement-group wire, as a flat int array.
+
+    ``wire[0]`` is the number of measurement groups. The following words are each group's
+    basis codes, concatenated, then zero-padded so every binding of a PUB has the same length.
+    Group ``g`` starts at :meth:`group_base`. On the OPX this is still a plain int array
+    (input stream, IO, or a ``QUA2DArray`` row); this type only names that layout on the host.
+    """
+
+    words_per_group: int
+    wire: tuple[int, ...]
+
+    @property
+    def n_groups(self) -> int:
+        """Number of measurement groups in this binding (``wire[0]``)."""
+        return self.wire[0]
+
+    def used_length(self) -> int:
+        """Prefix that carries the group count and those groups' words (padding excluded)."""
+        return 1 + self.n_groups * self.words_per_group
+
+    def group_base(self, group: int) -> int:
+        """Index of measurement group ``group``'s first word (``1 + group * words_per_group``)."""
+        return 1 + group * self.words_per_group
+
+    def payload(self, *, for_io: bool) -> list[int]:
+        """What the host sends: the used prefix over IO, the whole wire (padding included) otherwise."""
+        wire = [int(value) for value in self.wire]
+        return wire[: self.used_length()] if for_io else wire
+
+    @classmethod
+    def pack(cls, codes_per_binding, num_qubits: int) -> list["ObsRow"]:
+        """One padded row per binding. ``codes_per_binding`` is groups of per-qubit basis codes."""
+        width = obs_words(num_qubits)
+        longest = max((len(codes) for codes in codes_per_binding), default=0)
+        rows = []
+        for codes in codes_per_binding:
+            body = [len(codes)] + [word for group in codes for word in pack_obs_codes(group)]
+            padded = body + [0] * (1 + longest * width - len(body))
+            rows.append(cls(words_per_group=width, wire=tuple(padded)))
+        return rows
+
+
 def pack_obs_rows(codes_per_binding, num_qubits: int) -> list[list[int]]:
-    """One row ``[n_obs, words...]`` per binding, zero-padded to the longest binding."""
-    width = obs_words(num_qubits)
-    longest = max((len(codes) for codes in codes_per_binding), default=0)
-    rows = []
-    for codes in codes_per_binding:
-        row = [len(codes)] + [w for obs in codes for w in pack_obs_codes(obs)]
-        rows.append(row + [0] * (1 + longest * width - len(row)))
-    return rows
+    """One wire ``[n_groups, words...]`` per binding, as lists. Prefer :meth:`ObsRow.pack`."""
+    return [list(row.wire) for row in ObsRow.pack(codes_per_binding, num_qubits)]
 
 
 def assign_obs_codes(row, base, obs_vars, word) -> None:
-    """QUA macro: unpack one observable from ``row[base:]`` into the ``obs_vars`` (qubit order).
+    """QUA macro: unpack one measurement group from ``row[base:]`` into the ``obs_vars``.
 
     ``row`` is indexable by QUA expressions (an input-stream array or a ``QUA2DArray`` row),
-    ``base`` the observable's first word (int or QUA expression) and ``word`` a scratch QUA int.
+    ``base`` the group's first word (int or QUA expression) and ``word`` a scratch QUA int.
+    The loops below are Python: they unroll into one load, shift and mask per measured qubit.
+    The shift amounts are constants. There is no division on the OPX.
     """
     for w in range(obs_words(len(obs_vars))):
         assign(word, row[base + w])
@@ -223,25 +269,35 @@ def assign_obs_codes(row, base, obs_vars, word) -> None:
             assign(obs_vars[q], ((word >> shift) & 3) if shift else (word & 3))
 
 
-def obs_row_used_length(n_obs, words_per_obs: int):
-    """Used prefix of an observable row, ``1 + n_obs * words_per_obs``: the count plus the words of
-    its ``n_obs`` observables. ``n_obs`` is a Python int on the host and a QUA int in the program,
-    so both sides of an IO exchange bound it with this one expression."""
-    return 1 + n_obs * words_per_obs
+def obs_row_used_length(n_groups, words_per_group: int):
+    """Used prefix of an observable row, ``1 + n_groups * words_per_group``.
+
+    The count plus the words of those measurement groups. ``n_groups`` is a Python int on the
+    host and a QUA int in the program, so both sides of an IO exchange bound the prefix with
+    this one expression (a multiply-add; no division).
+    """
+    return 1 + n_groups * words_per_group
 
 
 def _is_io(param: Parameter) -> bool:
     return param.input_type in (InputType.IO1, InputType.IO2)
 
 
-def obs_row_payload(row_param: Parameter, row: list[int], words_per_obs: int) -> list[int]:
-    """What the host sends for ``row``: the whole row on an input stream, the used prefix over IO."""
-    row = [int(v) for v in row]
-    return row[: obs_row_used_length(row[0], words_per_obs)] if _is_io(row_param) else row
+def obs_row_payload(row_param: Parameter, row: ObsRow, words_per_obs: int) -> list[int]:
+    """What the host sends for ``row``: the whole wire on an input stream, the used prefix over IO.
+
+    ``words_per_obs`` must match ``row.words_per_group`` (the plan stores both).
+    """
+    if row.words_per_group != words_per_obs:
+        raise ValueError(
+            f"Observable row packs {row.words_per_group} word(s) per group, "
+            f"but the plan expects {words_per_obs}."
+        )
+    return row.payload(for_io=_is_io(row_param))
 
 
 def rcv_obs_row(row_param: Parameter, words_per_obs: int, counter) -> None:
-    """QUA macro: receive one observable row (the counterpart of :func:`obs_row_payload`).
+    """QUA macro: receive one measurement-group row (the counterpart of :func:`obs_row_payload`).
 
     Input streams advance once (the row is pushed whole). Over IO only the used prefix is
     exchanged, one pause per word, so padding costs nothing.

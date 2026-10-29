@@ -21,7 +21,7 @@ Date: 2026-02-08
 from __future__ import annotations
 
 from ..backend import QMBackend
-from ..backend.backend_utils import has_conflicting_calibrations
+from ..utils.calibrations.identifiers import has_conflicting_calibrations
 from qiskit import QuantumCircuit
 from qm import Program
 from qm.qua import *
@@ -29,7 +29,7 @@ from ..parameter_table import ParameterTable
 from typing import Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .primitive_plans import EstimatorPlan, SamplerPlan
+    from .primitive_plan import EstimatorPlan, SamplerPlan
 
 
 def _process_circuit(
@@ -265,7 +265,7 @@ def plan_sampler_programs(
 
     Args:
         backend: The QMBackend to use.
-        plans: One :class:`~qiskit_qm_provider.job.primitive_plans.SamplerPlan` per pub.
+        plans: One :class:`~qiskit_qm_provider.job.primitive_plan.SamplerPlan` per pub.
         **kwargs: Forwarded to :func:`sampler_program`.
 
     Returns:
@@ -300,7 +300,7 @@ def plan_estimator_programs(
 
     Args:
         backend: The QMBackend to use.
-        plans: One :class:`~qiskit_qm_provider.job.primitive_plans.EstimatorPlan` per pub.
+        plans: One :class:`~qiskit_qm_provider.job.primitive_plan.EstimatorPlan` per pub.
         **kwargs: Forwarded to :func:`estimator_program`.
 
     Returns:

@@ -12,7 +12,7 @@ from qiskit.circuit import QuantumCircuit
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit.quantum_info import SparsePauliOp
 
-from qiskit_qm_provider.backend.backend_utils import validate_circuits
+from qiskit_qm_provider.utils.circuit.preparation import validate_circuits
 
 from ._in_memory_quam import build_backend
 
@@ -59,7 +59,7 @@ def test_validated_run_circuit_with_added_reset_compiles(backend):
 def test_estimator_pub_plans_to_a_qua_program(backend):
     """One Estimator PUB, prepared by ``validate_estimator_pubs`` (which adds the reset),
     plans to a single QUA program without hardware."""
-    from qiskit_qm_provider.job.primitive_plans import EstimatorPlan
+    from qiskit_qm_provider.job.primitive_plan import EstimatorPlan
     from qiskit_qm_provider.job.qua_programs import plan_estimator_programs
     from qiskit_qm_provider.parameter_table import ParameterPool
     from qiskit_qm_provider.parameter_table.input_type import InputType

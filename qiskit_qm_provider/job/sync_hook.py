@@ -87,7 +87,7 @@ def to_py_literal(obj) -> str:
 def generate_sync_hook(plans) -> str:
     """Generate the sync hook pushing every plan's streamed inputs, in program order.
 
-    Each plan contributes its :meth:`~qiskit_qm_provider.job.primitive_plans.PrimitivePlan.sync_hook_pushes`,
+    Each plan contributes its :meth:`~qiskit_qm_provider.job.primitive_plan.PrimitivePlan.sync_hook_pushes`,
     so the cloud push order is the one the local job uses. Push targets are listed once in
     ``SPECS``; each entry of ``PUSHES`` is ``[spec index, value]``.
     """

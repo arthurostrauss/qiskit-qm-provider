@@ -87,32 +87,7 @@ with program() as prog:
 
 [`QuaCircuitCompilation`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation.rst) exposes wired handles via [`comp.outputs`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.MeasurementOutcomeTable.rst) ([`MeasurementRegisterField`](apidocs/stubs/qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField.rst) per creg). See the [Measurement outputs guide](measurement_outputs.md) for the accessor contract and locality model.
 
-Legacy shim (dict API):
-
-```python
-from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes
-
-with program() as prog:
-    comp = backend.quantum_circuit_to_qua(qc, param_table=my_param_table)
-    meas = get_measurement_outcomes(qc, comp)
-    syndrome_int = meas[creg.name]["state_int"]
-```
-
 Call measurement wiring **immediately after** `quantum_circuit_to_qua` in the same QUA program — not as a separate Python post-processing step.
-
-## [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) return dictionary
-
-Returns `dict[key, subdict]` — one entry per classical register in the circuit, plus one entry per loose clbit under its own key `_bit0`, `_bit1`, … (loose bits are independent single bits, never packed into a single register). Every entry is sourced from `comp.outputs`, so `meas[key]["state_int"]` is exactly `comp.outputs.state_ints[key]`.
-
-| Key | Role |
-|-----|------|
-| **`value`** | The QUA variable holding discriminated 0/1 outcomes from the embedded circuit — a bool **array** for a multi-bit register, a bool **scalar** for a loose clbit. Use for bit-level QUA logic. |
-| **`is_array`** | Python `bool`: `True` when `value` is a QUA array, `False` when it is a scalar — pick `value[i]` vs `value` when saving. Mirrors `Parameter.is_array`. |
-| **`length`** | Python `int`, `Parameter` convention: `0` for a scalar output (loose clbit), otherwise the register's bit count. |
-| **`state_int`** | QUA `int` (when `compute_state_int=True`, the default): integer packing of all bits; **LSB = qubit index 0** (Qiskit convention). Lazily declared and cached on the underlying field. Use for compact syndromes or lookup-table indexing. |
-| **`stream`** | QUA stream object for `stream_processing()` — buffer outcomes to the host. |
-
-See [Parameter Table](parameter_table.md) for `stream_back` / `fetch_from_opx` on the Python side.
 
 ## Real-time parameters
 
@@ -134,13 +109,13 @@ The backend option `export_vector_as_array` (default `True`) exports each `Param
 
 ### [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.quam_macros.superconducting.add_basic_macros.rst)
 
-Seeds standard gate macros on a QuAM machine. **Flux-tunable transmon defaults** tied to `FluxTunableQuam` — see [Providers guide](providers.md#seeding-gate-macros-with-add-basic-macros). Override freely for other platforms. Canonical import: `from qiskit_qm_provider import add_basic_macros` (also re-exported from `backend.backend_utils`).
+Seeds standard gate macros on a QuAM machine. **Flux-tunable transmon defaults** tied to `FluxTunableQuam` — see [Providers guide](providers.md#seeding-gate-macros-with-add-basic-macros). Override freely for other platforms. Canonical import: `from qiskit_qm_provider import add_basic_macros`. Importing it from `qiskit_qm_provider.backend.backend_utils` is deprecated.
 
 ### `get_qua_script` / `dump_qua_script`
 
 Debug helpers to inspect generated QUA from compilation results.
 
-### [`assign_struct_with_table`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.assign_struct_with_table.rst)
+### [`assign_struct_with_table`](apidocs/stubs/qiskit_qm_provider.utils.quarc.struct_assign.assign_struct_with_table.rst)
 
 **QUA macro** for OPNIC struct assignment when a :class:`~.ParameterTable` and a Quarc ``QuaStructHandle`` share the same field layout. Call inside ``with program():`` after:
 
@@ -151,7 +126,7 @@ The macro copies each table parameter's QUA variable into the matching struct fi
 
 ```python
 from qm.qua import program
-from qiskit_qm_provider.backend.backend_utils import assign_struct_with_table
+from qiskit_qm_provider.utils.quarc.struct_assign import assign_struct_with_table
 
 with program() as prog:
     policy_table.declare()

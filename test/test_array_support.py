@@ -274,7 +274,7 @@ def _mixed_vector_pub():
 
 
 def _plan(primitive, pub, circuit_table, delivery_table):
-    from qiskit_qm_provider.job.primitive_plans import EstimatorPlan, SamplerPlan
+    from qiskit_qm_provider.job.primitive_plan import EstimatorPlan, SamplerPlan
 
     return (SamplerPlan if primitive == "sampler" else EstimatorPlan)(pub, 0, circuit_table, delivery_table)
 
@@ -495,7 +495,7 @@ def test_estimator_row_tables_named_by_plan_index():
     from qiskit.primitives.containers.estimator_pub import EstimatorPub
     from qiskit.quantum_info import SparsePauliOp
     from qiskit.circuit import ClassicalRegister
-    from qiskit_qm_provider.job.primitive_plans import EstimatorPlan
+    from qiskit_qm_provider.job.primitive_plan import EstimatorPlan
     from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
 
     plans = []

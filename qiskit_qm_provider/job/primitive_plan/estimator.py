@@ -12,16 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Per-PUB execution plans shared by the QM primitives.
+"""Estimator readout contract, grouping helpers, and per-PUB execution plan.
 
-A plan owns everything one PUB needs across the job: its input tables, the QUA macros that
-declare and load those inputs inside the program, and the host-side push order (used both
-for local pushes and for the IQCC sync hook, so the two cannot drift apart).
-
-* :class:`PrimitivePlan` -- circuit parameters (see :mod:`.pub_parameters`).
-* :class:`SamplerPlan` -- adds shots.
-* :class:`EstimatorPlan` -- adds measurement grouping, observable codes and their packed
-  delivery (one int row per binding), and the metadata used to assemble results.
+Author: Arthur Strauss
+Date: 2026-02-08
 """
 
 from __future__ import annotations
@@ -29,167 +23,87 @@ from __future__ import annotations
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from functools import cached_property
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 from qiskit.quantum_info import PauliList
 from qm.qua import declare, for_
 
-from ..backend.backend_utils import (
-    ESTIMATOR_READOUT_REGISTER,
-    estimator_basis_input,
-    get_non_trivial_observables,
-)
-from ..parameter_table import Direction, InputType, Parameter, ParameterTable, QUA2DArray
-from .pub_parameters import (
+from ...parameter_table import Direction, InputType, Parameter, ParameterTable, QUA2DArray
+from ..pub_parameters import (
+    ObsRow,
     assign_obs_codes,
-    assign_qiskit_row,
-    binding_rows,
     build_pub_tables,
-    check_fixed_range,
-    delivery_rows,
-    load_pub_row,
     obs_row_payload,
     obs_row_used_length,
     obs_words,
-    pack_obs_rows,
     push_obs_row,
     rcv_obs_row,
 )
-from .sync_hook import _qua_type_str, serialize_table
+from .base import PrimitivePlan
 
 if TYPE_CHECKING:
     from qiskit.primitives.containers.estimator_pub import EstimatorPub
-    from qiskit.primitives.containers.sampler_pub import SamplerPub
-    from ..primitives.qm_estimator import QMEstimatorOptions
+    from ...primitives.qm_estimator import QMEstimatorOptions
 
-HookSpec = Tuple[str, str, str]
-"""``(input_type, name, qua_type)`` of one sync-hook push target."""
+ESTIMATOR_RESERVED_PREFIX = "__"
+"""Prefix of the classical names the estimator adds to a PUB circuit; user circuits must not use it."""
 
-
-def _hook_specs(target) -> List[HookSpec]:
-    """Sync-hook specs of a push target: one per field of a table, one for a :class:`Parameter`."""
-    if isinstance(target, ParameterTable):
-        spec = serialize_table(target)
-        return [(spec["input_type"], p["name"], p["qua_type"]) for p in spec["params"]]
-    return [(target.input_type.value, target.name, _qua_type_str(target))]
+ESTIMATOR_READOUT_REGISTER = "__c"
+"""Classical register whose bit ``j`` holds the outcome of the ``j``-th measured qubit."""
 
 
-@dataclass(eq=False)
-class PrimitivePlan:
-    """Inputs of one PUB: the circuit table (what the circuit reads) and the delivery table.
+def estimator_basis_input(j: int) -> str:
+    """Name of the ``Uint`` input selecting the measurement basis of the ``j``-th measured qubit."""
+    return f"__obs_{j}"
 
-    ``param_table`` is the delivery table; it is the circuit table itself for compile-time
-    sweeps and OPNIC, and a dense row table for streamed inputs (see :mod:`.pub_parameters`).
+
+def estimator_measured_qubits(observables) -> list[int]:
+    """Indices of the qubits the estimator must measure for ``observables``.
+
+    ``observables`` is anything :class:`~qiskit.primitives.containers.observables_array.ObservablesArray`
+    can coerce, taken as ISA: it spans the circuit's full physical register (Qiskit's
+    ``apply_layout`` convention). A qubit is measured iff some term of some observable in the
+    array acts non-trivially on it, whether or not a gate touches it and whether or not it is an
+    ancilla. Every other qubit only ever carries an identity, so it cannot change any
+    expectation value and is not read. When every term is the identity, no qubit is measured:
+    ``<I> = 1`` exactly, so those terms are evaluated without running the circuit.
+
+    Raises:
+        ValueError: If a term is not a Pauli string (e.g. a ``SparseObservable`` projector
+            such as ``"0"``, ``"+"`` or ``"r"``), which the estimator does not support yet.
     """
+    from qiskit.primitives.containers.observables_array import ObservablesArray
 
-    pub: Any
-    index: int
-    circuit_table: Optional[ParameterTable]
-    param_table: Optional[ParameterTable]
-
-    def __post_init__(self):
-        check_fixed_range(self.binding_rows, self.pub.circuit.parameters, self.index)
-        self._param_values_qua: Optional[QUA2DArray] = None
-
-    @cached_property
-    def binding_rows(self) -> np.ndarray:
-        """All bindings as a ``(num_bindings, len(circuit.parameters))`` float matrix, built once."""
-        return binding_rows(self.pub)
-
-    @property
-    def num_bindings(self) -> int:
-        return self.pub.parameter_values.size
-
-    @property
-    def streams_params(self) -> bool:
-        return self.param_table is not None and self.param_table.input_type is not None
-
-    @property
-    def uses_compile_time_params(self) -> bool:
-        return self.param_table is not None and bool(self.param_table.parameters) and self.param_table.input_type is None
-
-    @property
-    def streams_inputs(self) -> bool:
-        """``True`` when the client must push anything for this PUB (decides the IQCC sync hook)."""
-        return self.streams_params
-
-    # ---------------------------------------------------------------------------------- QUA
-    def declare_params(self) -> None:
-        """QUA macro: declare the parameter tables, and the compile-time binding rows."""
-        if self.circuit_table is None:
-            return
-        self.circuit_table.declare()
-        if self.param_table is not self.circuit_table:
-            self.param_table.declare()
-        if self.uses_compile_time_params:
-            self._param_values_qua = QUA2DArray(f"param_values_{self.param_table.name}", self.binding_rows)
-            self._param_values_qua.declare()
-
-    def load_params(self, p) -> None:
-        """QUA macro: make binding ``p`` (a QUA int) visible to the circuit table."""
-        if self.uses_compile_time_params:
-            assign_qiskit_row(self.pub.circuit, self.circuit_table, self._param_values_qua[p])
-        elif self.streams_params:
-            load_pub_row(self.pub.circuit, self.circuit_table, self.param_table)
-
-    # --------------------------------------------------------------------------------- host
-    def _pushes(self) -> Iterator[Tuple[Any, Any]]:
-        """``(target, value)`` in push order: a delivery table with its per-binding values,
-        or a single :class:`Parameter` with its value. Consumed by :meth:`push` and
-        :meth:`sync_hook_pushes`."""
-        if not self.streams_params:
-            return
-        for p, values in enumerate(delivery_rows(self.pub, self.circuit_table, self.param_table, self.binding_rows)):
-            yield self.param_table, values
-            yield from self._binding_extras(p)
-
-    def _binding_extras(self, p: int) -> Iterator[Tuple[Any, Any]]:
-        """Pushes that follow binding ``p``'s parameters (none for the sampler)."""
-        return iter(())
-
-    def push(self, qm_job, qm=None) -> None:
-        """Push this PUB's streamed inputs to a running job."""
-        for target, value in self._pushes():
-            self._push_one(target, value, qm_job, qm)
-
-    def _push_one(self, target, value, qm_job, qm) -> None:
-        if isinstance(target, ParameterTable):
-            target.push_to_opx(dict(zip(target.table, value)), qm_job, qm)
-        else:
-            target.push_to_opx(value, qm_job, qm)
-
-    def sync_hook_pushes(self) -> Iterator[Tuple[HookSpec, Any]]:
-        """``(spec, value)`` per push, in order, for the IQCC sync hook (specs built once per target)."""
-        specs: Dict[int, List[HookSpec]] = {}
-        for target, value in self._pushes():
-            if id(target) not in specs:
-                specs[id(target)] = _hook_specs(target)
-            if isinstance(target, ParameterTable):
-                yield from zip(specs[id(target)], value)
-            else:
-                yield specs[id(target)][0], value
+    observables = ObservablesArray.coerce(observables).ravel().tolist()
+    labels = {label for observable in observables for label in observable if label.strip("I")}
+    non_pauli = sorted(label for label in labels if label.strip("IXYZ"))
+    if non_pauli:
+        raise ValueError(
+            f"Observable terms {non_pauli[:3]} are not Pauli strings. QMEstimatorV2 supports Pauli "
+            "observables only; expand projector terms into Paulis first, e.g. with "
+            "SparseObservable.as_paulis() (the number of terms doubles per projector)."
+        )
+    if not labels:
+        return []
+    paulis = PauliList(sorted(labels))
+    return np.flatnonzero(np.logical_or.reduce(paulis.x | paulis.z, axis=0)).tolist()
 
 
-@dataclass(eq=False)
-class SamplerPlan(PrimitivePlan):
-    """Plan for one :class:`~qiskit.primitives.containers.sampler_pub.SamplerPub`."""
+def get_non_trivial_observables(observables: PauliList, active_qubit_indices: List[int]) -> PauliList:
+    """Restrict observables to the given qubits.
 
-    @classmethod
-    def from_pub(cls, pub: "SamplerPub", input_type: Optional[InputType], index: int) -> "SamplerPlan":
-        circuit_table, param_table = build_pub_tables(pub.circuit, input_type, f"param_table_{index}")
-        return cls(pub, index, circuit_table, param_table)
+    Args:
+        observables: Pauli observables defined on the full qubit register.
+        active_qubit_indices: Indices of the qubits to keep, in the order of the result.
 
-    @property
-    def shots(self) -> int:
-        return self.pub.shots
-
-    @property
-    def has_tasks(self) -> bool:
-        """``False`` for a PUB with zero bindings: it is not compiled, sent or run, and its
-        result is empty (shape ``pub.shape``), as with Qiskit's reference sampler."""
-        return self.num_bindings > 0
+    Returns:
+        A :class:`~qiskit.quantum_info.PauliList` on ``len(active_qubit_indices)`` qubits whose
+        qubit ``j`` is qubit ``active_qubit_indices[j]`` of the input; other qubits are dropped.
+    """
+    observables = PauliList(observables)
+    indices = list(active_qubit_indices)
+    return PauliList.from_symplectic(observables.z[:, indices], observables.x[:, indices], observables.phase)
 
 
 def _basis_code(z: bool, x: bool) -> int:
@@ -224,6 +138,7 @@ def _estimator_readout(circuit) -> List[int]:
 
 
 def _is_identity(label: str) -> bool:
+    """Return whether ``label`` is an all-identity Pauli string (no measurement needed)."""
     return not label.strip("I")
 
 
@@ -276,10 +191,11 @@ class EstimatorPlan(PrimitivePlan):
     obs_codes: List[List[Tuple[int, ...]]] = field(default_factory=list)
     obs_table: Optional[ParameterTable] = None
     obs_row: Optional[Parameter] = None
-    obs_rows: List[List[int]] = field(default_factory=list)
+    obs_rows: List[ObsRow] = field(default_factory=list)
     words_per_obs: int = 1
 
     def __post_init__(self):
+        """Initialize observable delivery storage and QUA scratch variables."""
         super().__post_init__()
         self._obs_rows_qua: Optional[QUA2DArray] = None
         self._obs_word = self._obs_idx = self._obs_counter = None
@@ -319,7 +235,7 @@ class EstimatorPlan(PrimitivePlan):
             return cls(pub, index, None, None, param_indices=param_indices, obs_codes=obs_codes)
         distinct_codes = {tuple(codes) for codes, _ in groupings.values()}
         # Same basis codes for every binding: one row, sent (or preloaded) once.
-        rows = pack_obs_rows(list(distinct_codes) if len(distinct_codes) == 1 else obs_codes, len(measured))
+        rows = ObsRow.pack(list(distinct_codes) if len(distinct_codes) == 1 else obs_codes, len(measured))
 
         circuit_table, param_table = build_pub_tables(circuit, options.input_type, f"param_table_{tag}")
         obs_names = {estimator_basis_input(j) for j in range(len(measured))}
@@ -332,7 +248,7 @@ class EstimatorPlan(PrimitivePlan):
         if options.input_type is not None:
             obs_row = Parameter(
                 f"obs_row_{tag}",
-                value=[0] * len(rows[0]),
+                value=[0] * len(rows[0].wire),
                 qua_type=int,
                 input_type=options.input_type,
                 direction=Direction.INCOMING,
@@ -360,27 +276,33 @@ class EstimatorPlan(PrimitivePlan):
 
     @property
     def shared_obs_row(self) -> bool:
+        """``True`` when every binding uses the same packed observable row (one send or preload)."""
         return len(self.obs_rows) == 1
 
     @property
     def streams_obs(self) -> bool:
+        """``True`` when packed observable rows are loaded via ``INPUT_STREAM``/``IO1``/``IO2``."""
         return self.obs_row is not None
 
     @property
     def streams_inputs(self) -> bool:
+        """``True`` when the client must push circuit parameters and/or observable rows."""
         return self.streams_params or self.streams_obs
 
     @property
     def shots(self) -> int:
+        """Shot count implied by this PUB's target precision (``ceil(1 / precision²)``)."""
         return int(np.ceil(1 / self.pub.precision**2))
 
     @property
     def num_qubits(self) -> int:
+        """Number of qubits read out through the ``__c`` register."""
         return len(self.active_qubits)
 
     # ---------------------------------------------------------------------------------- QUA
     @property
     def obs_vars(self) -> list:
+        """QUA variables ``__obs_j`` that select the measurement basis per readout qubit."""
         return [self.obs_table.table[estimator_basis_input(j)].var for j in range(self.num_qubits)]
 
     def declare_observables(self) -> None:
@@ -392,7 +314,9 @@ class EstimatorPlan(PrimitivePlan):
         if self.streams_obs:
             self.obs_row.declare()
         else:
-            self._obs_rows_qua = QUA2DArray(f"obs_rows_{self.obs_table.name}", np.array(self.obs_rows), qua_type=int)
+            self._obs_rows_qua = QUA2DArray(
+                f"obs_rows_{self.obs_table.name}", np.array([row.wire for row in self.obs_rows]), qua_type=int
+            )
             self._obs_rows_qua.declare()
         self._obs_word, self._obs_idx, self._obs_counter = declare(int), declare(int), declare(int)
         if self.streams_obs and self.shared_obs_row:
@@ -417,6 +341,7 @@ class EstimatorPlan(PrimitivePlan):
 
     # --------------------------------------------------------------------------------- host
     def _pushes(self) -> Iterator[Tuple[Any, Any]]:
+        """Push order: shared observable row (if any), then parameter rows and per-binding obs rows."""
         if self.streams_obs and self.shared_obs_row:
             yield self.obs_row, self._obs_payload(0)
         if self.streams_params:
@@ -426,14 +351,16 @@ class EstimatorPlan(PrimitivePlan):
                 yield from self._binding_extras(p)
 
     def _binding_extras(self, p: int) -> Iterator[Tuple[Any, Any]]:
+        """Per-binding packed observable row when rows differ across bindings."""
         if self.streams_obs and not self.shared_obs_row:
             yield self.obs_row, self._obs_payload(p)
 
     def _obs_payload(self, p: int) -> List[int]:
-        """Row ``p`` as sent, for both the local push and the sync hook (see :func:`obs_row_payload`)."""
+        """Row ``p`` as sent, for both the local push and the sync hook (see :meth:`ObsRow.payload`)."""
         return obs_row_payload(self.obs_row, self.obs_rows[p], self.words_per_obs)
 
     def _push_one(self, target, value, qm_job, qm) -> None:
+        """Push an observable row or delegate to :meth:`~.base.PrimitivePlan._push_one`."""
         if target is self.obs_row:
             push_obs_row(target, value, qm_job, qm)
         else:

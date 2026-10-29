@@ -23,7 +23,7 @@ from qm.qua import assign, declare, declare_stream
 from qm.qua.type_hints import QuaScalar
 
 from ..parameter_table._scope import require_qua_program
-from .backend_utils import pack_register_to_int
+from ..utils.measurement.packing import pack_register_to_int
 
 if TYPE_CHECKING:
     from qm_qasm import CompilationResult

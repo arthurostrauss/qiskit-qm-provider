@@ -55,17 +55,16 @@ from quam.core import QuamRoot
 
 # Helper modules
 from ..parameter_table import ParameterTable, InputType, Parameter
-from .backend_utils import (
-    validate_machine,
-    look_for_standard_op,
-    get_extended_gate_name_mapping,
+from ..utils.calibrations.identifiers import operation_key
+from ..utils.circuit.physical_layout import ensure_circuit_physical
+from ..utils.circuit.target_support import ensure_native_operations
+from ..utils.gates.naming import get_extended_gate_name_mapping, look_for_standard_op
+from ..utils.gates.target_builtins import (
     control_flow_name_mapping,
-    variadic_builtin_instructions,
     qasm3_keyword_instructions,
-    operation_key,
-    ensure_circuit_physical,
-    ensure_native_operations,
+    variadic_builtin_instructions,
 )
+from ..utils.quam.validation import validate_machine
 from .qm_instruction_properties import QMInstructionProperties
 from ..conditional_play import (
     _ConditionalPlay,

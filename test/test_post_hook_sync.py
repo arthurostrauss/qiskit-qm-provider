@@ -32,7 +32,7 @@ from qiskit.quantum_info import SparsePauliOp
 
 from qiskit_qm_provider.parameter_table import InputType, ParameterPool, ParameterTable
 from qiskit_qm_provider.job.sync_hook import generate_sync_hook
-from qiskit_qm_provider.job.primitive_plans import EstimatorPlan, SamplerPlan
+from qiskit_qm_provider.job.primitive_plan import EstimatorPlan, SamplerPlan
 from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
 
 from ._obs_packing import unpack_obs_codes
@@ -224,8 +224,8 @@ def test_estimator_pushes_param_row_then_packed_obs_row():
     plan = _estimator_plan([SparsePauliOp("XY"), SparsePauliOp(["ZZ", "XX"])], values=[[0.1], [0.2]])
     assert plan.obs_codes[0] == [(2, 1)]  # qubit 0: Y -> 2, qubit 1: X -> 1
     assert sorted(plan.obs_codes[1]) == [(0, 0), (1, 1)]
-    assert plan.obs_rows[0] == [1, 2 | (1 << 2), 0]  # [n_obs, word(obs_0), padding]
-    assert [unpack_obs_codes([w], 2) for w in plan.obs_rows[1][1:]] == [list(c) for c in plan.obs_codes[1]]
+    assert list(plan.obs_rows[0].wire) == [1, 2 | (1 << 2), 0]  # [n_groups, word(group 0), padding]
+    assert [unpack_obs_codes([w], 2) for w in plan.obs_rows[1].wire[1:]] == [list(c) for c in plan.obs_codes[1]]
 
     code = generate_sync_hook([plan])
     _assert_no_provider_imports(code)
@@ -235,9 +235,9 @@ def test_estimator_pushes_param_row_then_packed_obs_row():
     # Per binding: one parameter-row push, then one observable-row push (no per-qubit pushes).
     assert job.streamed == [
         ("param_table_0_row", [0.1]),
-        ("obs_row_0", plan.obs_rows[0]),
+        ("obs_row_0", list(plan.obs_rows[0].wire)),
         ("param_table_0_row", [0.2]),
-        ("obs_row_0", plan.obs_rows[1]),
+        ("obs_row_0", list(plan.obs_rows[1].wire)),
     ]
 
 
@@ -250,8 +250,8 @@ def test_estimator_observables_only_shared_row():
     job = _StubJob()
     _exec_hook(code, job)
 
-    assert job.streamed == [("obs_row_0", plan.obs_rows[0])]
-    assert plan.obs_rows[0][0] == 2
+    assert job.streamed == [("obs_row_0", list(plan.obs_rows[0].wire))]
+    assert plan.obs_rows[0].n_groups == 2
 
 
 def test_estimator_io_obs_row_sends_only_used_prefix():
@@ -260,6 +260,6 @@ def test_estimator_io_obs_row_sends_only_used_prefix():
     job = _StubJob()
     _exec_hook(code, job)
 
-    expected = [0.1, *plan.obs_rows[0][:2], 0.2, *plan.obs_rows[1][:3]]  # binding 0 drops its padding word
+    expected = [0.1, *plan.obs_rows[0].payload(for_io=True), 0.2, *plan.obs_rows[1].payload(for_io=True)]
     assert job.io_values == [{"io1": v} for v in expected]
     assert job.resumed == len(expected)

@@ -33,10 +33,10 @@ from typing import Optional, Union, List, Dict, Tuple, TYPE_CHECKING
 from ..backend import QMBackend
 from ..parameter_table import InputType, ParameterPool
 from .iqcc_job_mixin import IQCCJobMixin
-from .primitive_plans import EstimatorPlan
+from .primitive_plan import EstimatorPlan
 from .qm_execution_options import (
     await_running_jobs,
-    join_job_ids,
+    resolve_qiskit_job_id,
     submit_qua_programs,
 )
 from .qua_programs import plan_estimator_programs, compute_locator
@@ -107,7 +107,7 @@ class QMEstimatorJob(QMPrimitiveJob):
     def runtime_pubs(self) -> List[EstimatorPlan]:
         """Execution plans for this estimator job.
 
-        One :class:`~qiskit_qm_provider.job.primitive_plans.EstimatorPlan` per input PUB. Each
+        One :class:`~qiskit_qm_provider.job.primitive_plan.EstimatorPlan` per input PUB. Each
         plan holds the measurement grouping metadata, the parameter tables and the packed
         observable rows that drive the per-qubit basis switches. Inspect it to see how
         observables were grouped or what is streamed per binding.
@@ -162,7 +162,7 @@ class QMEstimatorJob(QMPrimitiveJob):
         if self._qm_jobs is not None:
             raise RuntimeError("Job has already been submitted.")
         if not self._programs:
-            self._job_id, self._qm_jobs = "", []
+            self._job_id, self._qm_jobs = resolve_qiskit_job_id(), []
             return
 
         pending_jobs = submit_qua_programs(
@@ -171,7 +171,7 @@ class QMEstimatorJob(QMPrimitiveJob):
             self._programs,
             self._run_options,
         )
-        self._job_id = join_job_ids(pending_jobs)
+        self._job_id = resolve_qiskit_job_id(pending_jobs)
         self._qm_jobs = await_running_jobs(
             pending_jobs, self._chunk_layout, entity="PUB indices", on_running=self._push_chunk
         )
@@ -370,4 +370,4 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
                 if sync_hook_path is not None:
                     os.unlink(sync_hook_path)
 
-        self._job_id = join_job_ids(self._qm_jobs)
+        self._job_id = resolve_qiskit_job_id(self._qm_jobs)

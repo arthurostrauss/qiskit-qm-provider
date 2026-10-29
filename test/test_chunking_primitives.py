@@ -65,7 +65,7 @@ def _estimator_pubs(backend, count):
 
 def _sampler_plans(pubs, input_type=None):
     """Build one SamplerPlan per pub (pubs without parameters have no tables)."""
-    from qiskit_qm_provider.job.primitive_plans import SamplerPlan
+    from qiskit_qm_provider.job.primitive_plan import SamplerPlan
 
     ParameterPool.reset()
     return [SamplerPlan.from_pub(pub, input_type, i) for i, pub in enumerate(pubs)]
@@ -73,7 +73,7 @@ def _sampler_plans(pubs, input_type=None):
 
 def _estimator_plans(backend, count, input_type=InputType.INPUT_STREAM):
     """Return (pubs, plans) for estimator tests, built after a single pool reset."""
-    from qiskit_qm_provider.job.primitive_plans import EstimatorPlan
+    from qiskit_qm_provider.job.primitive_plan import EstimatorPlan
     from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
 
     pubs = _estimator_pubs(backend, count)

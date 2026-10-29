@@ -48,7 +48,8 @@ class QMPrimitiveJob(BasePrimitiveJob, ABC):
         inputs: Dict snapshot of pubs, ``input_type``, and ``metadata``.
         backend: :class:`~qiskit_qm_provider.backend.qm_backend.QMBackend` used for
             compilation and execution.
-        job_id: QM SDK job id (set on ``submit()``).
+        job_id: SDK job id when the backend provides one; otherwise a unique id
+            assigned on ``submit()``.
         metadata: Options forwarded from the primitive / ``run()`` call.
 
     Use :attr:`qm_job` and :attr:`result_handles` for the live QM SDK handle and

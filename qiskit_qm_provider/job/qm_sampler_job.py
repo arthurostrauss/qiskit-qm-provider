@@ -35,13 +35,14 @@ from qiskit.result.models import MeasLevel
 from qm.jobs.running_qm_job import RunningQmJob
 
 from ..backend import QMBackend
-from ..backend.backend_utils import measurement_output_bit_sizes, require_classified_meas_level
+from ..utils.measurement.classified import require_classified_meas_level
+from ..utils.measurement.job_metadata import measurement_output_bit_sizes
 from ..parameter_table import InputType, ParameterPool
-from .primitive_plans import SamplerPlan
+from .primitive_plan import SamplerPlan
 from .iqcc_job_mixin import IQCCJobMixin
 from .qm_execution_options import (
     await_running_jobs,
-    join_job_ids,
+    resolve_qiskit_job_id,
     submit_qua_programs,
 )
 from .qua_programs import plan_sampler_programs, compute_locator
@@ -123,7 +124,7 @@ class QMSamplerJob(QMPrimitiveJob):
         if self._qm_jobs is not None:
             raise RuntimeError("QM job has already been submitted")
         if not self._programs:  # every PUB has zero bindings: nothing to send
-            self._job_id, self._qm_jobs = "", []
+            self._job_id, self._qm_jobs = resolve_qiskit_job_id(), []
             return
 
         pending_jobs = submit_qua_programs(
@@ -132,7 +133,7 @@ class QMSamplerJob(QMPrimitiveJob):
             self._programs,
             self.metadata,
         )
-        self._job_id = join_job_ids(pending_jobs)
+        self._job_id = resolve_qiskit_job_id(pending_jobs)
         self._qm_jobs = await_running_jobs(
             pending_jobs, self._chunk_layout, entity="circuit indices", on_running=self._push_parameters
         )
@@ -140,7 +141,7 @@ class QMSamplerJob(QMPrimitiveJob):
     @property
     def runtime_pubs(self) -> List[SamplerPlan]:
         """Execution plans for this sampler job: one
-        :class:`~qiskit_qm_provider.job.primitive_plans.SamplerPlan` per input PUB."""
+        :class:`~qiskit_qm_provider.job.primitive_plan.SamplerPlan` per input PUB."""
         return self._plans
 
     def _push_parameters(self, qm_job, chunk: List[int]) -> None:
@@ -215,5 +216,5 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
                 if sync_hook_path is not None:
                     os.unlink(sync_hook_path)
 
-        self._job_id = join_job_ids(self._qm_jobs)
+        self._job_id = resolve_qiskit_job_id(self._qm_jobs)
 

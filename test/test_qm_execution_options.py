@@ -1,5 +1,6 @@
 """Tests for unified QM program submission across local, cloud, and OPX queues."""
 
+import uuid
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -13,6 +14,7 @@ from qiskit_qm_provider.job.qm_execution_options import (
     ensure_job_running,
     is_cloud_quantum_machines_manager,
     join_job_ids,
+    resolve_qiskit_job_id,
     submit_qua_programs,
 )
 
@@ -153,6 +155,15 @@ class TestEnqueueAndAwait:
         assert join_job_ids([MagicMock(id="a"), MagicMock(id="b")]) == "a,b"
         assert join_job_ids([MagicMock(spec=[]), MagicMock(id="b")]) == "b"
 
+    def test_resolve_qiskit_job_id_keeps_sdk_ids_and_fills_empty(self):
+        assert resolve_qiskit_job_id([MagicMock(id="a"), MagicMock(id="b")]) == "a,b"
+        # IQCC CloudJob.id is always ""; each submission still needs its own id.
+        first = resolve_qiskit_job_id([MagicMock(id="")])
+        second = resolve_qiskit_job_id([MagicMock(id="")])
+        uuid.UUID(first)
+        uuid.UUID(second)
+        assert first != second
+
 
 class TestStatusAggregation:
     def test_opx1000_status_strings(self):
@@ -192,6 +203,32 @@ class TestQMJobSubmit:
             job.programs[0], options={"timeout": 90}
         )
         assert job.job_id() == "cloud-job-1"
+
+    def test_submit_cloud_empty_sdk_id_is_unique_per_job(self):
+        from iqcc_cloud_client.qmm_cloud import CloudQuantumMachinesManager
+        from qiskit_qm_provider.job.qm_job import CloudQMJob
+
+        def make_job():
+            cloud_qm = MagicMock()
+            cloud_qm.execute.return_value = MagicMock(id="")
+
+            class FakeBackend:
+                qmm = object.__new__(CloudQuantumMachinesManager)
+
+            job = CloudQMJob(
+                FakeBackend(),
+                "pending",
+                cloud_qm,
+                MagicMock(),
+                result_function=MagicMock(),
+            )
+            job.submit()
+            return job
+
+        first, second = make_job(), make_job()
+        uuid.UUID(first.job_id())
+        uuid.UUID(second.job_id())
+        assert first.job_id() != second.job_id()
 
     def test_from_circuits_selects_cloud_qm_job(self):
         from iqcc_cloud_client.qmm_cloud import CloudQuantumMachinesManager

@@ -57,7 +57,7 @@ Per measured qubit `q_j`, the prepared circuit has a basis switch driven by an i
 
 ### How observables reach the OPX
 
-Each measured qubit gets one basis code per measurement group: 0 for Z or I, 1 for X, 2 for Y. These codes are packed 2 bits per qubit, 15 qubits per 32-bit word. For each parameter binding, the program receives one int row, `[number of groups, packed words...]`, and unpacks it in QUA with shifts and masks.
+Each measured qubit gets one basis code per measurement group: 0 for Z or I, 1 for X, 2 for Y. These codes are packed 2 bits per qubit, 15 qubits per 32-bit word. For each parameter binding, the program receives one int row, `[number of groups, packed words...]` (`ObsRow` on the host). QUA unpacks a group with shifts and masks only: the word and qubit loops are unrolled when the program is built, and the group offset is `1 + group_index * words_per_group`. The host's division that places bits into words is not replayed on the OPX.
 
 - **Input streams:** one push per binding. A row shared by every binding is sent once.
 - **IO1/IO2:** only the used part of the row is exchanged.
@@ -189,7 +189,7 @@ You can also inspect `job.run_data` after submission without calling `result()` 
 
 Every primitive job and `backend.run()` exposes the compiled QUA programs via `get_program()` (single/default) or by iterating `job.programs` (all chunks). See the [Jobs guide](jobs.md) for the full accessor table (`qm_jobs`, `get_qm_job()`, `get_program()`, `get_result_handles()`, `pubs`, IQCC `run_data`, …).
 
-Both primitive jobs also expose their execution plans on **`job.runtime_pubs`**: one `SamplerPlan` or `EstimatorPlan` (from `qiskit_qm_provider.job.primitive_plans`) per input PUB. An `EstimatorPlan` shows the measured qubits, how observables were grouped (`metadata`, `obs_codes`) and the packed rows streamed to the OPX (`obs_rows`).
+Both primitive jobs also expose their execution plans on **`job.runtime_pubs`**: one `SamplerPlan` or `EstimatorPlan` (from `qiskit_qm_provider.job.primitive_plan`) per input PUB. An `EstimatorPlan` shows the measured qubits, how observables were grouped (`metadata`, `obs_codes`) and the packed rows streamed to the OPX (`obs_rows`, each an `ObsRow`).
 
 ```python
 from qm import generate_qua_script

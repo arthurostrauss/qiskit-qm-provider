@@ -44,16 +44,16 @@ from qm.jobs.running_qm_job import RunningQmJob
 from qm.jobs.pending_job import QmPendingJob
 
 from qiskit_qm_provider.backend.qm_backend import QMBackend, QISKIT_PULSE_AVAILABLE
-from qiskit_qm_provider.backend.backend_utils import (
-    validate_circuits,
-    measurement_output_bit_sizes,
+from qiskit_qm_provider.utils.circuit.preparation import validate_circuits
+from qiskit_qm_provider.utils.measurement.job_metadata import (
     experiment_result_header,
+    measurement_output_bit_sizes,
 )
 from .iqcc_job_mixin import IQCCJobMixin, result_handles_from_qm_job, aggregate_job_statuses
 from .qm_execution_options import (
     ensure_job_running,
     is_cloud_quantum_machines_manager,
-    join_job_ids,
+    resolve_qiskit_job_id,
     submit_qua_programs,
 )
 from .stream_assembly import bit_array_from_stream
@@ -79,7 +79,8 @@ class QMJob(JobV1):
         qm: :class:`qm.QuantumMachine` or cloud QM used for execution.
         backend: :class:`~qiskit_qm_provider.backend.qm_backend.QMBackend` that built
             the program.
-        job_id: QM SDK job identifier (updated on ``submit()``).
+        job_id: SDK job id when the backend provides one; otherwise a unique id
+            assigned on ``submit()``.
         metadata: Run options dict (`compiler_options`, `simulate`, `timeout`, …).
 
     Use :attr:`qm_job` and :attr:`result_handles` for the live QM SDK object and
@@ -172,7 +173,7 @@ class QMJob(JobV1):
         (or a single program), the layout is a single chunk and the local index
         equals the global index, matching the historical behaviour.
         """
-        from ..backend.backend_utils import require_classified_meas_level
+        from ..utils.measurement.classified import require_classified_meas_level
         from .qua_programs import compute_locator
 
         require_classified_meas_level(meas_level, context="QMBackend.run()")
@@ -348,7 +349,7 @@ class QMJob(JobV1):
         self._qm_jobs = submit_qua_programs(
             self.qm, self._backend.qmm, self.programs, self.metadata
         )
-        self._job_id = join_job_ids(self._qm_jobs)
+        self._job_id = resolve_qiskit_job_id(self._qm_jobs)
 
     def cancel(self):
         """Cancel all underlying QM job(s)."""

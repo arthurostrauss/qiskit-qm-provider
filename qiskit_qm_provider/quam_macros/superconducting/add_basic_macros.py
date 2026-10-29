@@ -37,8 +37,8 @@ def add_basic_macros(
     """Populate a QuAM machine with standard superconducting gate-level macros.
 
     Canonical location: ``qiskit_qm_provider.quam_macros.superconducting``.
-    Also re-exported from :mod:`qiskit_qm_provider` and
-    :mod:`qiskit_qm_provider.backend.backend_utils` for backward compatibility.
+    Also re-exported from :mod:`qiskit_qm_provider`. Importing it from
+    :mod:`qiskit_qm_provider.backend.backend_utils` is deprecated.
 
     Adds ``x``, ``y``, ``sx``, ``sxdg``, ``rz``, ``sy``, ``sydg``, ``measure``, ``reset``,
     ``delay``, ``id``, and ``cz`` macros. These definitions are **tailored to flux-tunable

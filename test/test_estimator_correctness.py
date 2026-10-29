@@ -19,7 +19,8 @@ from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit.quantum_info import SparsePauliOp, Statevector
 from qiskit.transpiler import CouplingMap
 
-from qiskit_qm_provider.job.primitive_plans import EstimatorPlan
+from qiskit_qm_provider.job.primitive_plan import EstimatorPlan
+from qiskit_qm_provider.job.primitive_plan.estimator import estimator_measured_qubits
 from qiskit_qm_provider.job.qm_estimator_job import estimator_pub_result
 from qiskit_qm_provider.parameter_table import InputType, ParameterPool
 from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
@@ -167,8 +168,6 @@ def _transpiled_with_ancillas():
 
 
 def test_measured_qubits_include_idle_virtual_skip_unobserved_ancillas():
-    from qiskit_qm_provider.backend.backend_utils import estimator_measured_qubits
-
     tqc = _transpiled_with_ancillas()
     physical_q1 = tqc.layout.final_index_layout(filter_ancillas=True)[1]
     obs = SparsePauliOp("ZX").apply_layout(tqc.layout)  # X on virtual q0, Z on idle virtual q1
@@ -178,8 +177,6 @@ def test_measured_qubits_include_idle_virtual_skip_unobserved_ancillas():
 
 
 def test_measured_qubits_skip_unobserved_active_qubit():
-    from qiskit_qm_provider.backend.backend_utils import estimator_measured_qubits
-
     qc = QuantumCircuit(3)
     qc.h(0)
     qc.x(1)  # active but never observed
@@ -188,16 +185,12 @@ def test_measured_qubits_skip_unobserved_active_qubit():
 
 
 def test_measured_qubits_all_identity_measures_nothing():
-    from qiskit_qm_provider.backend.backend_utils import estimator_measured_qubits
-
     tqc = _transpiled_with_ancillas()
     assert estimator_measured_qubits([SparsePauliOp("II").apply_layout(tqc.layout)]) == []
 
 
 def test_projector_terms_rejected_with_clear_message():
     from qiskit.quantum_info import SparseObservable
-    from qiskit_qm_provider.backend.backend_utils import estimator_measured_qubits
-
     with pytest.raises(ValueError, match=r"not Pauli strings.*as_paulis"):
         estimator_measured_qubits([SparseObservable("0X")])
 
@@ -240,8 +233,6 @@ def test_idle_observed_qubit_is_measured_not_assumed():
 
 
 def test_measured_qubits_include_observed_ancilla():
-    from qiskit_qm_provider.backend.backend_utils import estimator_measured_qubits
-
     tqc = _transpiled_with_ancillas()
     virtual_q0 = tqc.layout.final_index_layout(filter_ancillas=True)[0]
     ancilla = next(q for q in range(tqc.num_qubits) if q not in tqc.layout.final_index_layout(filter_ancillas=True))
@@ -253,8 +244,6 @@ def test_measured_qubits_include_observed_ancilla():
 
 
 def test_measured_qubits_union_over_observables_array():
-    from qiskit_qm_provider.backend.backend_utils import estimator_measured_qubits
-
     qc = QuantumCircuit(4)
     observables = [[SparsePauliOp("IIIZ")], [SparsePauliOp(["IXII", "IIII"])]]
     assert estimator_measured_qubits(observables) == [0, 2]

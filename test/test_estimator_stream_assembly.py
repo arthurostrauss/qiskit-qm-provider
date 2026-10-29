@@ -7,7 +7,7 @@ from qiskit.circuit.classical import types
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit.quantum_info import SparsePauliOp
 
-from qiskit_qm_provider.job.primitive_plans import EstimatorPlan
+from qiskit_qm_provider.job.primitive_plan import EstimatorPlan
 from qiskit_qm_provider.job.qm_estimator_job import counts_from_estimator_stream
 from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
 

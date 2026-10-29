@@ -12,7 +12,7 @@ from qm import qua
 from qm.qua._expressions import QuaArrayVariable
 
 from qiskit_qm_provider import Parameter, ParameterPool, ParameterTable
-from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes
+from qiskit_qm_provider.utils.measurement.outcomes import get_measurement_outcomes
 from qiskit_qm_provider.backend.measurement_field import MeasurementRegisterField
 from qiskit_qm_provider.backend.qua_circuit_compilation import (
     MeasurementOutcomeTable,

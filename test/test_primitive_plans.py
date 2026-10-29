@@ -11,16 +11,17 @@ from qiskit import QuantumCircuit
 from qiskit.circuit import ClassicalRegister, Parameter
 from qiskit.circuit.classical import types
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
-from qiskit.quantum_info import SparsePauliOp
+from qiskit.quantum_info import Pauli, PauliList, SparsePauliOp
 from qm import generate_qua_script, qua
 
 from qiskit_qm_provider.job import qua_programs
-from qiskit_qm_provider.job.primitive_plans import EstimatorPlan
+from qiskit_qm_provider.job.primitive_plan import EstimatorPlan
+from qiskit_qm_provider.job.primitive_plan.estimator import get_non_trivial_observables
 from qiskit_qm_provider.job.pub_parameters import (
     OBS_QUBITS_PER_WORD,
+    ObsRow,
     obs_words,
     pack_obs_codes,
-    pack_obs_rows,
 )
 from qiskit_qm_provider.parameter_table import InputType, ParameterPool
 from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
@@ -76,8 +77,12 @@ def test_pack_round_trip_at_word_boundaries(num_qubits):
 
 
 def test_obs_rows_are_padded_and_counted():
-    rows = pack_obs_rows([[(1, 2, 0)], [(0, 0, 1), (2, 2, 2)]], 3)
-    assert rows == [[1, 1 | (2 << 2), 0], [2, 1 << 4, 2 | (2 << 2) | (2 << 4)]]
+    rows = ObsRow.pack([[(1, 2, 0)], [(0, 0, 1), (2, 2, 2)]], 3)
+    assert [list(row.wire) for row in rows] == [
+        [1, 1 | (2 << 2), 0],
+        [2, 1 << 4, 2 | (2 << 2) | (2 << 4)],
+    ]
+    assert rows[0].n_groups == 1 and rows[1].group_base(1) == 2
 
 
 # ---------------------------------------------------------------------------------------------
@@ -144,9 +149,9 @@ def test_local_push_matches_sync_hook_order(monkeypatch):
     hook = [(spec[1], value) for spec, value in plan.sync_hook_pushes()]
     assert [v for _, v in pushed] == [
         {"param_table_0_row": [0.1]},
-        plan.obs_rows[0],
+        list(plan.obs_rows[0].wire),
         {"param_table_0_row": [0.2]},
-        plan.obs_rows[1],
+        list(plan.obs_rows[1].wire),
     ]
     assert [name for name, _ in hook] == ["param_table_0_row", "obs_row_0"] * 2
 
@@ -190,7 +195,7 @@ def test_zero_bindings_sampler_plan_runs_nothing(parametrized):
     import numpy as np
     from qiskit.primitives.containers.sampler_pub import SamplerPub
 
-    from qiskit_qm_provider.job.primitive_plans import SamplerPlan
+    from qiskit_qm_provider.job.primitive_plan import SamplerPlan
 
     qc = QuantumCircuit(1, 1)
     if parametrized:
@@ -215,7 +220,7 @@ def test_unparametrized_sampler_runs_shots_directly(monkeypatch, shape):
     import numpy as np
     from qiskit.primitives.containers.sampler_pub import SamplerPub
 
-    from qiskit_qm_provider.job.primitive_plans import SamplerPlan
+    from qiskit_qm_provider.job.primitive_plan import SamplerPlan
 
     calls = []
     monkeypatch.setattr(qua_programs, "_process_circuit", lambda qc, backend, shots, *rest, **kw: calls.append((shots, rest)))
@@ -283,7 +288,7 @@ def test_io_obs_row_needs_qm_for_legacy_jobs():
     sent = []
     qm = SimpleNamespace(set_io_values=lambda **kw: sent.append(kw))
     plan.push(job, qm=qm)
-    assert sent == [{"io1": v} for v in plan.obs_rows[0][:2]]
+    assert sent == [{"io1": v} for v in plan.obs_rows[0].payload(for_io=True)]
 
 
 def test_estimator_job_run_options_none():
@@ -317,7 +322,7 @@ def test_fixed_range_bounds_accepted():
 
 def test_sampler_rejects_values_outside_fixed_range():
     from qiskit.primitives.containers.sampler_pub import SamplerPub
-    from qiskit_qm_provider.job.primitive_plans import SamplerPlan
+    from qiskit_qm_provider.job.primitive_plan import SamplerPlan
 
     qc = QuantumCircuit(1)
     qc.rx(Parameter("theta"), 0)
@@ -354,3 +359,32 @@ def test_plans_without_tasks_get_no_program(monkeypatch):
     assert qua_programs.plan_estimator_programs(backend, [identity]) == ([], [])
     programs, layout = qua_programs.plan_estimator_programs(backend, [identity, measured, identity])
     assert programs == ["prog"] and layout == [[1]] and built == [[measured]]
+
+
+class TestGetNonTrivialObservables:
+    def test_single_qubit(self):
+        observables = PauliList([Pauli("IXI")])
+        active_indices = [1]
+        result = get_non_trivial_observables(observables, active_indices)
+        assert len(result) == 1
+        assert result[0] == Pauli("X")
+
+    def test_multi_qubit(self):
+        observables = PauliList([Pauli("XYZ")])
+        active_indices = [0, 1, 2]
+        result = get_non_trivial_observables(observables, active_indices)
+        assert len(result) == 1
+        # Qubit j of the result is qubit active_indices[j]: the order is preserved.
+        assert result[0] == Pauli("XYZ")
+
+    def test_subset_of_qubits(self):
+        observables = PauliList([Pauli("XIYIZ")])
+        active_indices = [0, 2, 4]
+        result = get_non_trivial_observables(observables, active_indices)
+        assert len(result) == 1
+        assert result[0] == Pauli("XYZ")
+
+    def test_subset_keeps_qubit_order(self):
+        # Qubit 0 is Z, qubit 2 is X: restricting to [0, 2] gives label "XZ" (qubit 0 rightmost).
+        result = get_non_trivial_observables(PauliList([Pauli("XIZ")]), [0, 2])
+        assert result[0] == Pauli("XZ")

@@ -30,8 +30,11 @@ from qiskit.primitives import StatevectorEstimator  # noqa: E402
 from qiskit.primitives.containers.estimator_pub import EstimatorPub  # noqa: E402
 from qiskit.quantum_info import SparsePauliOp, Statevector  # noqa: E402
 
-from qiskit_qm_provider.backend.backend_utils import estimator_basis_input  # noqa: E402
-from qiskit_qm_provider.job.primitive_plans import EstimatorPlan, _estimator_readout  # noqa: E402
+from qiskit_qm_provider.job.primitive_plan import EstimatorPlan
+from qiskit_qm_provider.job.primitive_plan.estimator import (  # noqa: E402
+    _estimator_readout,
+    estimator_basis_input,
+)
 from qiskit_qm_provider.job.pub_parameters import OBS_QUBITS_PER_WORD, obs_row_payload  # noqa: E402
 from qiskit_qm_provider.job.qm_estimator_job import estimator_pub_result  # noqa: E402
 from qiskit_qm_provider.parameter_table import InputType, ParameterPool  # noqa: E402
@@ -118,10 +121,12 @@ def _emulate_stream(plan, rng):
     words = plan.words_per_obs
     buffers = []
     for p in range(plan.num_bindings):
-        row = plan.obs_rows[0 if plan.shared_obs_row else p]
+        packed = plan.obs_rows[0 if plan.shared_obs_row else p]
         if plan.streams_obs:  # what reaches the controller (IO: the used prefix only)
-            payload = obs_row_payload(plan.obs_row, row, words)
-            row = payload + [0] * (len(row) - len(payload))
+            payload = obs_row_payload(plan.obs_row, packed, words)
+            row = payload + [0] * (len(packed.wire) - len(payload))
+        else:
+            row = list(packed.wire)
         bound = circuit.assign_parameters(dict(zip(circuit.parameters, plan.binding_rows[p])))
         for group in range(row[0]):
             state = QuantumCircuit(circuit.num_qubits)
@@ -235,7 +240,7 @@ def test_generated_qua_follows_readout(backend_factory):
     job = QMEstimatorJob(backend, [pub], None, switch_obs_circuit=estimator._switch_obs_circuit, abelian_grouping=True)
     plan = job.runtime_pubs[0]
     assert _estimator_readout(plan.pub.circuit) == [0, 2]
-    assert plan.obs_rows == [[1, 2 | (1 << 2)]]  # one group: __obs_0 = 2 (Y), __obs_1 = 1 (X)
+    assert [list(row.wire) for row in plan.obs_rows] == [[1, 2 | (1 << 2)]]  # one group: __obs_0 = 2 (Y), __obs_1 = 1 (X)
     assert [estimator_basis_input(j) for j in range(2)] == ["__obs_0", "__obs_1"]
 
     script = generate_qua_script(job.programs[0])

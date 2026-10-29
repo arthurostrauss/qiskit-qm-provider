@@ -30,6 +30,7 @@ IQCC sync-hook submission is **not** handled here — see ``IQCCSamplerJob`` /
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Callable, List, Mapping, Optional, Sequence
 
 from qm import Program, SimulationConfig, QuantumMachinesManager
@@ -127,6 +128,16 @@ def ensure_job_running(job: Any) -> Any:
 def join_job_ids(jobs: Sequence[Any]) -> str:
     """Comma-join SDK job ids, stripping empty trailing entries."""
     return ",".join(str(getattr(j, "id", "") or "") for j in jobs).strip(",")
+
+
+def resolve_qiskit_job_id(jobs: Sequence[Any] = ()) -> str:
+    """Qiskit job id for *jobs*, or a new UUID when the backend has none.
+
+    IQCC ``CloudJob.id`` is always ``""``. ``ExperimentData.add_jobs`` stores
+    jobs by ``job.job_id()`` and skips any later job that reuses an id, so an
+    empty id would drop results from jobs that already ran.
+    """
+    return join_job_ids(jobs) or str(uuid.uuid4())
 
 
 def await_running_jobs(

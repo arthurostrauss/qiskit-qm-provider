@@ -38,12 +38,12 @@ from qiskit.circuit import QuantumCircuit, ClassicalRegister
 from ..parameter_table import InputType
 
 from ..backend.qm_backend import QMBackend
-from ..backend.backend_utils import (
+from ..utils.circuit.preparation import validate_circuits
+from ..job.primitive_plan.estimator import (
     ESTIMATOR_READOUT_REGISTER,
     ESTIMATOR_RESERVED_PREFIX,
     estimator_basis_input,
     estimator_measured_qubits,
-    validate_circuits,
 )
 
 
