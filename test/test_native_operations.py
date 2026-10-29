@@ -14,11 +14,9 @@ from qiskit.circuit.classical import expr, types
 from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit.quantum_info import SparsePauliOp
 
-from qiskit_qm_provider.backend.backend_utils import (
-    ensure_circuit_physical,
-    ensure_native_operations,
-    validate_circuits,
-)
+from qiskit_qm_provider.utils.circuit.physical_layout import ensure_circuit_physical
+from qiskit_qm_provider.utils.circuit.preparation import validate_circuits
+from qiskit_qm_provider.utils.circuit.target_support import ensure_native_operations
 from qiskit_qm_provider.backend.qm_backend import QMBackend
 
 from ._in_memory_quam import build_backend, build_machine

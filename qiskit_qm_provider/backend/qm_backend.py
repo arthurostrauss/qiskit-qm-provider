@@ -38,6 +38,7 @@ from inspect import Signature, Parameter as sigParam
 from qiskit.circuit import (
     QuantumCircuit,
     Parameter as QiskitParameter,
+    ParameterVector,
     Instruction,
 )
 from qiskit.circuit.controlflow import CONTROL_FLOW_OP_NAMES
@@ -54,17 +55,16 @@ from quam.core import QuamRoot
 
 # Helper modules
 from ..parameter_table import ParameterTable, InputType, Parameter
-from .backend_utils import (
-    validate_machine,
-    look_for_standard_op,
-    get_extended_gate_name_mapping,
+from ..utils.calibrations.identifiers import operation_key
+from ..utils.circuit.physical_layout import ensure_circuit_physical
+from ..utils.circuit.target_support import ensure_native_operations
+from ..utils.gates.naming import get_extended_gate_name_mapping, look_for_standard_op
+from ..utils.gates.target_builtins import (
     control_flow_name_mapping,
-    variadic_builtin_instructions,
     qasm3_keyword_instructions,
-    operation_key,
-    ensure_circuit_physical,
-    ensure_native_operations,
+    variadic_builtin_instructions,
 )
+from ..utils.quam.validation import validate_machine
 from .qm_instruction_properties import QMInstructionProperties
 from ..conditional_play import (
     _ConditionalPlay,
@@ -79,7 +79,6 @@ if TYPE_CHECKING:
         CloudQuantumMachinesManager,
     )
     from qm_qasm import QubitsMapping, Compiler
-    from quam.utils.qua_types import Scalar
     from qiskit.pulse import Schedule, ScheduleBlock
     from qiskit.pulse.channels import Channel as QiskitChannel
     from ..job.qm_job import QMJob
@@ -210,7 +209,13 @@ class QMBackend(Backend):
 
         Defaults: ``shots=1024``, ``compiler_options=None``, ``simulate=None``,
         ``memory=False``, ``skip_reset=False``, ``meas_level=MeasLevel.CLASSIFIED``,
-        ``meas_return=MeasReturnType.AVERAGE``, ``timeout=60``.
+        ``meas_return=MeasReturnType.AVERAGE``, ``timeout=60``, ``max_circuits=30``,
+        ``export_vector_as_array=True``.
+
+        ``export_vector_as_array`` makes :attr:`qasm3_exporter` emit each ``ParameterVector`` as
+        one full-length ``input array[float[64], N]``. It needs the ``full_real_time_expr``
+        Qiskit branch (its ``PARAMETER_VECTORS_AS_ARRAYS`` exporter feature) and is ignored on
+        stock Qiskit, which always exports one scalar input per used element.
         """
         return Options(
             shots=1024,
@@ -222,6 +227,7 @@ class QMBackend(Backend):
             meas_return=MeasReturnType.AVERAGE,
             timeout=60,
             max_circuits=30,
+            export_vector_as_array=True,
         )
 
     @property
@@ -962,7 +968,7 @@ class QMBackend(Backend):
         self,
         qc: QuantumCircuit,
         param_table: Optional[
-            ParameterTable | Sequence[ParameterTable | Parameter] | Dict[str | QiskitParameter | Var, Scalar]
+            ParameterTable | Sequence[ParameterTable | Parameter] | Dict[str | QiskitParameter | ParameterVector | Var, Any]
         ] = None,
     ) -> QuaCircuitCompilation:
         """Convert a :class:`~qiskit.circuit.QuantumCircuit` to a QUA program fragment.
@@ -976,11 +982,23 @@ class QMBackend(Backend):
             param_table: Parameter mapping for real-time QUA variables. Required
                 when the circuit contains symbolic parameters or classical inputs
                 that must be streamed during execution.
+                Dictionary keys are circuit objects or their names: a whole
+                ``ParameterVector`` (or its name) takes a full-length QUA array,
+                which also binds elements exported as scalar inputs; a single
+                element (or ``"name[i]"``) takes a scalar, and only binds an
+                element exported as a scalar input.
 
         Returns:
             :class:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation`
             wrapping the compilation result and
             wired measurement outputs.
+
+        Raises:
+            ValueError: if a circuit input has no binding, or a binding of the
+                wrong shape (scalar vs. array, array length). Inputs are matched
+                by Qiskit object, so an input the exporter renamed (e.g. a
+                vector ``x`` next to the ``x`` gate, exported as ``x_0``) still
+                binds to its table field.
         """
         from .qua_circuit_compilation import QuaCircuitCompilation
 
@@ -999,17 +1017,19 @@ class QMBackend(Backend):
                         f"Custom calibration {gate_name} not in basis gates {basis_gates}",
                         f"Run update_calibrations() before compiling the circuit",
                     )
-        exporter = QMOpenQASM3Exporter(
-            includes=(),
-            basis_gates=basis_gates,
-            disable_constants=True,
+        from ..parameter_table.qiskit_classical import (
+            bind_exported_inputs, qiskit_input_key, validate_classical_types, validate_qiskit_input_names,
+            vector_element_key,
         )
+        from qiskit.circuit.parametervector import ParameterVectorElement
+
+        validate_classical_types(qc)
+        validate_qiskit_input_names(qc)
         # Barriers are kept: qm-qasm lowers each one to a QUA ``align`` over the elements
         # of the barrier's qubits.
-        open_qasm_code = exporter.dumps(qc)
-        inputs = None
+        open_qasm_code, exported_inputs = self.qasm3_exporter.export(qc)
+        bindings = {}
         if param_table is not None:
-            inputs = {}
             if isinstance(param_table, (ParameterTable, Parameter)):
                 param_table = [param_table]
             if isinstance(param_table, Sequence):
@@ -1018,14 +1038,26 @@ class QMBackend(Backend):
                         # Unified API: declare() works for both Parameter and ParameterTable.
                         table.declare(pause_program=False)
                     variables = table.variables_dict if isinstance(table, ParameterTable) else {table.name: table.var}
-                    inputs.update(variables)
+                    bindings.update(variables)
             elif isinstance(param_table, Dict):
+                # String keys naming a circuit parameter (``"t[2]"``) or vector (``"t"``) bind like
+                # the corresponding objects.
+                named_inputs = {
+                    p.vector.name: p.vector for p in qc.parameters if isinstance(p, ParameterVectorElement)
+                }
+                named_inputs.update((p.name, p) for p in qc.parameters)
                 for key, value in param_table.items():
-                    if isinstance(key, (QiskitParameter, Var)):
-                        inputs[key.name] = value
+                    if isinstance(key, str):
+                        key = named_inputs.get(key, key)
+                    if isinstance(key, ParameterVectorElement):
+                        bindings[vector_element_key(key)] = value
+                    elif isinstance(key, (ParameterVector, QiskitParameter, Var)):
+                        bindings[qiskit_input_key(key)] = value
                     else:
-                        inputs[key] = value
+                        bindings[key] = value
 
+        # Inputs are matched by Qiskit object: the exporter may have renamed them.
+        inputs = bind_exported_inputs(exported_inputs, bindings) if exported_inputs else None
         result = self.compiler.compile(
             open_qasm_code,
             compilation_name=f"{qc.name}_qua",
@@ -1125,8 +1157,16 @@ class QMBackend(Backend):
         responsibility, not this exporter's -- prefer calling that instead of
         ``.dumps()`` directly unless you have already validated ``qc`` yourself.
         """
+        from qiskit.qasm3 import ExperimentalFeatures
+
+        from ..parameter_table.qiskit_classical import VECTOR_ARRAYS_FEATURE
+
+        experimental = ExperimentalFeatures(0)
+        if self.options.export_vector_as_array:
+            experimental |= getattr(ExperimentalFeatures, VECTOR_ARRAYS_FEATURE, ExperimentalFeatures(0))
         return QMOpenQASM3Exporter(
             includes=(),
             basis_gates=self.qm_qasm_basis_gates,
             disable_constants=True,
+            experimental=experimental,
         )

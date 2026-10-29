@@ -15,42 +15,62 @@
 """Tests for self-contained, Jinja-based sync-hook generation.
 
 The generated hooks must run on the IQCC cloud side without importing
-``qiskit_qm_provider`` or ``numpy``. These tests build small parameter tables and
-fake pubs/execution plans, render the hooks, and exec them against a stub job to
-verify the right QM-job calls are made with the right coercions.
+``qiskit_qm_provider`` or ``numpy``. These tests build small sampler/estimator plans,
+render the hooks, and exec them against a stub job to verify the right QM-job calls
+are made, in order, with the right coercions.
 """
 
 import numpy as np
 import pytest
 from qm.qua import fixed
+from qiskit import QuantumCircuit
+from qiskit.circuit import ClassicalRegister, Parameter
+from qiskit.circuit.classical import types
+from qiskit.primitives.containers.bindings_array import BindingsArray
+from qiskit.primitives.containers.estimator_pub import EstimatorPub
+from qiskit.quantum_info import SparsePauliOp
 
-from qiskit_qm_provider.parameter_table import InputType, ParameterTable
-from qiskit_qm_provider.job.post_hook_sampler import generate_sync_hook_sampler
-from qiskit_qm_provider.job.post_hook_estimator import generate_sync_hook_estimator
+from qiskit_qm_provider.parameter_table import InputType, ParameterPool, ParameterTable
+from qiskit_qm_provider.job.sync_hook import generate_sync_hook
+from qiskit_qm_provider.job.primitive_plan import EstimatorPlan, SamplerPlan
+from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions
+
+from ._obs_packing import unpack_obs_codes
 
 
-class _FakeArray:
-    def __init__(self, arr):
-        self._arr = np.asarray(arr)
-
-    def ravel(self):
-        return self
-
-    def as_array(self):
-        return self._arr
+@pytest.fixture(autouse=True)
+def reset_pool():
+    ParameterPool.reset()
+    yield
+    ParameterPool.reset()
 
 
 class _FakePub:
-    def __init__(self, values):
-        self.parameter_values = _FakeArray(values)
+    def __init__(self, values, names=("theta",)):
+        self.circuit = QuantumCircuit(1)
+        parameters = [Parameter(name) for name in names]
+        for parameter in parameters:
+            self.circuit.rx(parameter, 0)
+        self.parameter_values = BindingsArray({tuple(parameters): np.asarray(values)})
 
 
-class _FakePlan:
-    def __init__(self, pub, param_table, observables_var, obs_indices):
-        self.pub = pub
-        self.param_table = param_table
-        self.observables_var = observables_var
-        self.obs_indices = obs_indices
+def _table_plan(pub, table):
+    """A sampler plan whose table both is read by the circuit and delivers (packed fields)."""
+    return SamplerPlan(pub, 0, table, table)
+
+
+def _estimator_plan(observables, values=None, input_type=InputType.INPUT_STREAM, num_qubits=2):
+    """Estimator plan for a circuit shaped like a validated estimator PUB (``__c`` + ``__obs_j``)."""
+    qc = QuantumCircuit(num_qubits)
+    theta = Parameter("theta")
+    if values is not None:
+        qc.rx(theta, 0)
+    qc.add_register(ClassicalRegister(num_qubits, "__c"))
+    for j in range(num_qubits):
+        qc.add_input(f"__obs_{j}", types.Uint(4))
+    qc.measure(range(num_qubits), range(num_qubits))
+    pub = EstimatorPub.coerce((qc, observables, values) if values is not None else (qc, observables))
+    return EstimatorPlan.from_pub(pub, QMEstimatorOptions(input_type=input_type), plan_index=0)
 
 
 class _StubJob:
@@ -112,8 +132,8 @@ def test_sampler_input_stream_pushes_with_coercion():
         {"x": (0.0, fixed, InputType.INPUT_STREAM), "n": (0, int, InputType.INPUT_STREAM)},
         name="t",
     )
-    pub = _FakePub([[0.1, 2.0], [0.3, 4.0]])
-    code = generate_sync_hook_sampler([pub], [table])
+    pub = _FakePub([[0.1, 2.0], [0.3, 4.0]], names=("x", "n"))
+    code = generate_sync_hook([_table_plan(pub, table)])
     _assert_no_provider_imports(code)
 
     job = _StubJob()
@@ -125,10 +145,33 @@ def test_sampler_input_stream_pushes_with_coercion():
     assert all(isinstance(v, int) for (n, v) in job.streamed if n == "n")
 
 
+def test_sampler_dense_row_one_push_per_binding():
+    pub = _FakePub([[0.1, 2.0], [0.3, 4.0]], names=("x", "y"))
+    code = generate_sync_hook([SamplerPlan.from_pub(pub, InputType.INPUT_STREAM, 0)])
+    _assert_no_provider_imports(code)
+
+    job = _StubJob()
+    _exec_hook(code, job)
+
+    # One push of the whole raw row per binding, in circuit-parameter order.
+    assert job.streamed == [("param_table_0_row", [0.1, 2.0]), ("param_table_0_row", [0.3, 4.0])]
+
+
+def test_sampler_dense_row_io_pushes_elementwise():
+    pub = _FakePub([[0.5, 0.25]], names=("x", "y"))
+    code = generate_sync_hook([SamplerPlan.from_pub(pub, InputType.IO1, 0)])
+
+    job = _StubJob()
+    _exec_hook(code, job)
+
+    assert job.io_values == [{"io1": 0.5}, {"io1": 0.25}]
+    assert job.resumed == 2
+
+
 def test_sampler_io_pushes_pause_resume():
     table = ParameterTable({"a": (0.0, fixed, InputType.IO1)}, name="io")
-    pub = _FakePub([[0.5]])
-    code = generate_sync_hook_sampler([pub], [table])
+    pub = _FakePub([[0.5]], names=("a",))
+    code = generate_sync_hook([_table_plan(pub, table)])
     _assert_no_provider_imports(code)
 
     job = _StubJob()
@@ -140,7 +183,7 @@ def test_sampler_io_pushes_pause_resume():
 
 def test_sampler_none_table_pushes_nothing():
     pub = _FakePub([[0.1]])
-    code = generate_sync_hook_sampler([pub], [None])
+    code = generate_sync_hook([SamplerPlan(pub, 0, None, None)])
     _assert_no_provider_imports(code)
 
     job = _StubJob()
@@ -149,65 +192,74 @@ def test_sampler_none_table_pushes_nothing():
     assert job.io_values == []
 
 
-def test_estimator_pushes_params_and_observables():
-    param_table = ParameterTable({"theta": (0.0, fixed, InputType.INPUT_STREAM)}, name="p")
-    obs_var = ParameterTable(
-        {"obs_0": (0, int, InputType.INPUT_STREAM), "obs_1": (0, int, InputType.INPUT_STREAM)},
-        name="obs",
-    )
-    obs_length_var = ParameterTable({"obs_length_var": (0, int, InputType.INPUT_STREAM)}, name="L").get_parameter(
-        "obs_length_var"
-    )
+@pytest.mark.parametrize("primitive", ["sampler", "estimator"])
+@pytest.mark.parametrize("input_type", [InputType.INPUT_STREAM, InputType.IO1])
+def test_array_pub_sync_hook(primitive, input_type, monkeypatch):
+    from qiskit.circuit import ParameterVector
+    from qiskit_qm_provider.parameter_table import qiskit_classical
 
-    pub = _FakePub([[0.1], [0.2]])
-    # One obs-index list per parameter set; each is a list of 2-qubit tuples.
-    obs_indices = [[(1, 2)], [(3, 0), (1, 1)]]
-    plan = _FakePlan(pub, param_table, obs_var, obs_indices)
+    monkeypatch.setattr(qiskit_classical, "qiskit_supports_vector_arrays", lambda: True)
+    qc = QuantumCircuit(1)
+    vec = ParameterVector("theta", 4)
+    scalar = Parameter("a")
+    qc.rx(vec[2], 0)
+    qc.rz(scalar, 0)
+    pub = _FakePub([[0.2, 0.1]])
+    pub.circuit = qc
+    pub.parameter_values = BindingsArray({(vec[2], scalar): [[0.2, 0.1]]})
+    table = ParameterTable.from_qiskit(qc, input_type=input_type)
+    plan_cls = SamplerPlan if primitive == "sampler" else EstimatorPlan
+    code = generate_sync_hook([plan_cls(pub, 0, table, table)])
+    job = _StubJob()
+    _exec_hook(code, job)
+    if input_type == InputType.INPUT_STREAM:
+        assert job.streamed == [("a", 0.1), ("theta", [0.0, 0.0, 0.2, 0.0])]
+    else:
+        assert job.io_values == [{"io1": value} for value in [0.1, 0.0, 0.0, 0.2, 0.0]]
+        assert job.resumed == 5
 
-    code = generate_sync_hook_estimator([plan], obs_length_var)
+
+def test_estimator_pushes_param_row_then_packed_obs_row():
+    # Binding 0 measures XY (one group); binding 1 measures ZZ and XX (two groups).
+    plan = _estimator_plan([SparsePauliOp("XY"), SparsePauliOp(["ZZ", "XX"])], values=[[0.1], [0.2]])
+    assert plan.obs_codes[0] == [(2, 1)]  # qubit 0: Y -> 2, qubit 1: X -> 1
+    assert sorted(plan.obs_codes[1]) == [(0, 0), (1, 1)]
+    assert list(plan.obs_rows[0].wire) == [1, 2 | (1 << 2), 0]  # [n_groups, word(group 0), padding]
+    assert [unpack_obs_codes([w], 2) for w in plan.obs_rows[1].wire[1:]] == [list(c) for c in plan.obs_codes[1]]
+
+    code = generate_sync_hook([plan])
     _assert_no_provider_imports(code)
-
     job = _StubJob()
     _exec_hook(code, job)
 
-    # param set 0: theta=0.1, obs_length=1, obs_0/obs_1 = (1,2)
-    # param set 1: theta=0.2, obs_length=2, then (3,0) and (1,1)
+    # Per binding: one parameter-row push, then one observable-row push (no per-qubit pushes).
     assert job.streamed == [
-        ("theta", 0.1),
-        ("obs_length_var", 1),
-        ("obs_0", 1),
-        ("obs_1", 2),
-        ("theta", 0.2),
-        ("obs_length_var", 2),
-        ("obs_0", 3),
-        ("obs_1", 0),
-        ("obs_0", 1),
-        ("obs_1", 1),
+        ("param_table_0_row", [0.1]),
+        ("obs_row_0", list(plan.obs_rows[0].wire)),
+        ("param_table_0_row", [0.2]),
+        ("obs_row_0", list(plan.obs_rows[1].wire)),
     ]
 
 
-def test_estimator_observables_only_no_params():
-    obs_var = ParameterTable(
-        {"obs_0": (0, int, InputType.INPUT_STREAM), "obs_1": (0, int, InputType.INPUT_STREAM)},
-        name="obs",
-    )
-    obs_length_var = ParameterTable({"obs_length_var": (0, int, InputType.INPUT_STREAM)}, name="L").get_parameter(
-        "obs_length_var"
-    )
-    pub = _FakePub([])
-    obs_indices = [[(0, 1), (2, 3)]]
-    plan = _FakePlan(pub, None, obs_var, obs_indices)
+def test_estimator_observables_only_shared_row():
+    plan = _estimator_plan([SparsePauliOp(["ZX", "XZ"])])
+    assert plan.shared_obs_row and plan.streams_inputs and not plan.streams_params
 
-    code = generate_sync_hook_estimator([plan], obs_length_var)
+    code = generate_sync_hook([plan])
     _assert_no_provider_imports(code)
-
     job = _StubJob()
     _exec_hook(code, job)
 
-    assert job.streamed == [
-        ("obs_length_var", 2),
-        ("obs_0", 0),
-        ("obs_1", 1),
-        ("obs_0", 2),
-        ("obs_1", 3),
-    ]
+    assert job.streamed == [("obs_row_0", list(plan.obs_rows[0].wire))]
+    assert plan.obs_rows[0].n_groups == 2
+
+
+def test_estimator_io_obs_row_sends_only_used_prefix():
+    plan = _estimator_plan([SparsePauliOp("XY"), SparsePauliOp(["ZZ", "XX"])], values=[[0.1], [0.2]], input_type=InputType.IO1)
+    code = generate_sync_hook([plan])
+    job = _StubJob()
+    _exec_hook(code, job)
+
+    expected = [0.1, *plan.obs_rows[0].payload(for_io=True), 0.2, *plan.obs_rows[1].payload(for_io=True)]
+    assert job.io_values == [{"io1": v} for v in expected]
+    assert job.resumed == len(expected)

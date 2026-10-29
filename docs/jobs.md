@@ -139,7 +139,7 @@ print(generate_qua_script(job.get_program(2)))  # third chunk
 | `inputs` | `dict` | Snapshot of pubs, `input_type`, and `metadata` |
 | `programs` | `list[Program]` | Same as above — sampler/estimator QUA programs |
 | `result_handles` | `list[QM result fetcher]` | One fetcher per submitted job (via [`QMPrimitiveJob`](apidocs/stubs/qiskit_qm_provider.job.qm_primitive_job.QMPrimitiveJob.rst)); use `get_result_handles()` for single-job access |
-| `runtime_pubs` *(estimator only)* | `list[_ExecutionPlan]` | Compiled execution plans — one per EstimatorPub; exposes observable grouping, parameter tables, and the switch-statement data streamed to the OPX |
+| `runtime_pubs` | `list[SamplerPlan \| EstimatorPlan]` | Execution plans, one per PUB (`qiskit_qm_provider.job.primitive_plan`); expose parameter tables and, for the estimator, measured qubits, observable grouping and the packed observable rows streamed to the OPX |
 
 ### IQCC wrapper jobs
 

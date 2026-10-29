@@ -70,7 +70,7 @@ def flux_tunable_backend(quam_machine):
     from qiskit_qm_provider.backend.flux_tunable_transmon_backend import (
         FluxTunableTransmonBackend,
     )
-    from qiskit_qm_provider.backend.backend_utils import add_basic_macros
+    from qiskit_qm_provider import add_basic_macros
 
     provider = QMProvider()
     backend = provider.get_backend(quam_machine, FluxTunableTransmonBackend)

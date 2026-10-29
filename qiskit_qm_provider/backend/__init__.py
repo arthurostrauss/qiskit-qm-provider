@@ -21,14 +21,11 @@ Date: 2026-02-08
 from .qm_backend import QMBackend, QISKIT_PULSE_AVAILABLE
 from .flux_tunable_transmon_backend import FluxTunableTransmonBackend
 from .qm_instruction_properties import QMInstructionProperties
-from .backend_utils import (
-    add_basic_macros,
-    assign_struct_with_table,
-    get_measurement_outcomes,
-    dump_qua_script,
-    get_qua_script,
-    pack_register_to_int,
-)
+from ..quam_macros import add_basic_macros
+from ..utils.compilation.qua_script import dump_qua_script, get_qua_script
+from ..utils.measurement.outcomes import get_measurement_outcomes
+from ..utils.measurement.packing import pack_register_to_int
+from ..utils.quarc.struct_assign import assign_struct_with_table
 from .qua_circuit_compilation import (
     QuaCircuitCompilation,
     MeasurementOutcomeTable,

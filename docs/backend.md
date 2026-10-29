@@ -87,32 +87,7 @@ with program() as prog:
 
 [`QuaCircuitCompilation`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation.rst) exposes wired handles via [`comp.outputs`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.MeasurementOutcomeTable.rst) ([`MeasurementRegisterField`](apidocs/stubs/qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField.rst) per creg). See the [Measurement outputs guide](measurement_outputs.md) for the accessor contract and locality model.
 
-Legacy shim (dict API):
-
-```python
-from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes
-
-with program() as prog:
-    comp = backend.quantum_circuit_to_qua(qc, param_table=my_param_table)
-    meas = get_measurement_outcomes(qc, comp)
-    syndrome_int = meas[creg.name]["state_int"]
-```
-
 Call measurement wiring **immediately after** `quantum_circuit_to_qua` in the same QUA program — not as a separate Python post-processing step.
-
-## [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) return dictionary
-
-Returns `dict[key, subdict]` — one entry per classical register in the circuit, plus one entry per loose clbit under its own key `_bit0`, `_bit1`, … (loose bits are independent single bits, never packed into a single register). Every entry is sourced from `comp.outputs`, so `meas[key]["state_int"]` is exactly `comp.outputs.state_ints[key]`.
-
-| Key | Role |
-|-----|------|
-| **`value`** | The QUA variable holding discriminated 0/1 outcomes from the embedded circuit — a bool **array** for a multi-bit register, a bool **scalar** for a loose clbit. Use for bit-level QUA logic. |
-| **`is_array`** | Python `bool`: `True` when `value` is a QUA array, `False` when it is a scalar — pick `value[i]` vs `value` when saving. Mirrors `Parameter.is_array`. |
-| **`length`** | Python `int`, `Parameter` convention: `0` for a scalar output (loose clbit), otherwise the register's bit count. |
-| **`state_int`** | QUA `int` (when `compute_state_int=True`, the default): integer packing of all bits; **LSB = qubit index 0** (Qiskit convention). Lazily declared and cached on the underlying field. Use for compact syndromes or lookup-table indexing. |
-| **`stream`** | QUA stream object for `stream_processing()` — buffer outcomes to the host. |
-
-See [Parameter Table](parameter_table.md) for `stream_back` / `fetch_from_opx` on the Python side.
 
 ## Real-time parameters
 
@@ -120,17 +95,27 @@ Unlike typical Qiskit backends, parameters need not be bound at compile time. Us
 
 **Warning:** QOP rejects non-ASCII parameter names. Use ASCII names (`theta`, `phi`) — not Greek symbols — so OpenQASM 3 and QUA compilation succeed.
 
+Table fields keep the Qiskit names. The OpenQASM 3 exporter may rename an input (gates and variables share one namespace, so a `ParameterVector` called `x` exported as an array next to the `x` gate becomes `x_0`; a name that is not an identifier, such as `theta.1`, is escaped). `quantum_circuit_to_qua` matches inputs by Qiskit object, so a renamed input still binds to its field. It raises `ValueError`, naming each input, when one has no binding or a binding of the wrong shape (scalar vs. array, array length): qm-qasm itself would broadcast a scalar into an array input without complaint, and fails on a missing input with an opaque `Qua1GenerationPass failed`.
+
+### Exporting `ParameterVector`s as arrays
+
+The backend option `export_vector_as_array` (default `True`) exports each `ParameterVector` as one full-length `input array[float[64], N]`. It needs the [`full_real_time_expr` Qiskit branch](real_time_expressions.md) (its `PARAMETER_VECTORS_AS_ARRAYS` exporter feature) and is ignored on stock Qiskit, which exports one scalar input per used element. Turn it off with `backend.set_options(export_vector_as_array=False)`. Tables built by `ParameterTable.from_qiskit` on the branch hold a vector as one array field, which binds either export.
+
+### The OpenQASM 3 exporter is internal
+
+`quantum_circuit_to_qua` always exports through `backend.qasm3_exporter`, which is configured for this backend (its basis gates, constants disabled, and the `export_vector_as_array` option). qm-qasm expects that output: circuits laid out on physical qubits and expressed in the backend's native operations. Exporting with your own `Exporter` (or other options) and feeding the result to qm-qasm yourself is possible, but it is not a supported path: nothing checks that its operations, qubits or input declarations match what the compiler and your tables expect.
+
 ## Utilities
 
 ### [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.quam_macros.superconducting.add_basic_macros.rst)
 
-Seeds standard gate macros on a QuAM machine. **Flux-tunable transmon defaults** tied to `FluxTunableQuam` — see [Providers guide](providers.md#seeding-gate-macros-with-add-basic-macros). Override freely for other platforms. Canonical import: `from qiskit_qm_provider import add_basic_macros` (also re-exported from `backend.backend_utils`).
+Seeds standard gate macros on a QuAM machine. **Flux-tunable transmon defaults** tied to `FluxTunableQuam` — see [Providers guide](providers.md#seeding-gate-macros-with-add-basic-macros). Override freely for other platforms. Canonical import: `from qiskit_qm_provider import add_basic_macros`. Importing it from `qiskit_qm_provider.backend.backend_utils` is deprecated.
 
 ### `get_qua_script` / `dump_qua_script`
 
 Debug helpers to inspect generated QUA from compilation results.
 
-### [`assign_struct_with_table`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.assign_struct_with_table.rst)
+### [`assign_struct_with_table`](apidocs/stubs/qiskit_qm_provider.utils.quarc.struct_assign.assign_struct_with_table.rst)
 
 **QUA macro** for OPNIC struct assignment when a :class:`~.ParameterTable` and a Quarc ``QuaStructHandle`` share the same field layout. Call inside ``with program():`` after:
 
@@ -141,7 +126,7 @@ The macro copies each table parameter's QUA variable into the matching struct fi
 
 ```python
 from qm.qua import program
-from qiskit_qm_provider.backend.backend_utils import assign_struct_with_table
+from qiskit_qm_provider.utils.quarc.struct_assign import assign_struct_with_table
 
 with program() as prog:
     policy_table.declare()

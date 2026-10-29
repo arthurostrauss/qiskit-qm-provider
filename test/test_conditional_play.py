@@ -18,7 +18,7 @@ from qiskit.transpiler import Target
 from qiskit.qasm3.exceptions import QASM3ExporterError
 
 from qiskit_qm_provider import add_conditional_play
-from qiskit_qm_provider.backend.backend_utils import ensure_native_operations
+from qiskit_qm_provider.utils.circuit.target_support import ensure_native_operations
 from qiskit_qm_provider.backend.qm_backend import QMBackend
 from qiskit_qm_provider.conditional_play import (
     _box_matches_conditional_play_contract,

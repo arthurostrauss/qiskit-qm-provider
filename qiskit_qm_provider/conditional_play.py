@@ -235,3 +235,41 @@ def _conditional_play_macro(qubit, pulse_name: str):
         qubit.get_pulse(pulse_name).play(condition=condition)
 
     return qua_macro
+
+
+def _raise_for_unregistered_conditional_plays(qc: QuantumCircuit, missing_names: set[str]) -> None:
+    """Raise if ``missing_names`` includes a conditional play that was never registered.
+
+    Private. :func:`~qiskit_qm_provider.utils.circuit.target_support.ensure_native_operations`
+    calls this before the generic missing-operation error so the message names the
+    pulse label and ``register_conditional_play``. A prefixed name that is not a
+    real conditional play is left for that generic error.
+    """
+    if not any(name.startswith(CONDITIONAL_PLAY_PREFIX) for name in missing_names):
+        return
+    # Failure path only: walk the circuit to recover the pulse labels behind the
+    # missing operation names (a name with a digest suffix cannot be inverted).
+    pulse_names = list(
+        dict.fromkeys(operation.pulse_name for operation, _ in _iter_conditional_plays(qc) if operation.name in missing_names)
+    )
+    if not pulse_names:
+        # A prefixed name that is not a conditional play: leave it to the generic error.
+        return
+    raise ValueError(
+        f"ConditionalPlay pulse(s) {', '.join(map(repr, pulse_names))} are not registered. "
+        f"Call backend.register_conditional_play({', '.join(map(repr, pulse_names))}) before compiling."
+    )
+
+
+def _validate_conditional_plays(qc: QuantumCircuit, target) -> None:
+    """Check that every conditional play in ``qc`` is registered in ``target``.
+
+    Private. Registration is a name lookup because
+    :meth:`~qiskit_qm_provider.backend.QMBackend.register_conditional_play` always
+    registers a pulse on every active qubit. Prefer
+    :func:`~qiskit_qm_provider.utils.circuit.target_support.ensure_native_operations`,
+    which calls the same check as the first step of a full Target check.
+    """
+    from .utils.circuit.target_support import missing_operation_names
+
+    _raise_for_unregistered_conditional_plays(qc, missing_operation_names(qc, target))

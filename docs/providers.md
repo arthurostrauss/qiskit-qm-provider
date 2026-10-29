@@ -24,7 +24,7 @@ add_basic_macros(backend)
 
 **Important:** these macros (`x`, `sx`, `rz`, `sy`, `sydg`, `measure`, `reset`, `delay`, `id`, `cz`) are **currently tailored to flux-tunable transmon** topology. They assume pulse and macro naming conventions from `FluxTunableQuam` / quam-builder (e.g. `x180`, `x90`, readout pulses, `CZGate` on pairs). They are a **starting point**, not a universal hardware definition. Users on other platforms should override or replace macros on their own `QuamRoot`, and coordinate with the **Quantum Machines team** for appropriate [quam-builder](https://github.com/Quantum-Machines/quam-builder) extensions for their architecture.
 
-The function lives under `qiskit_qm_provider.quam_macros.superconducting` and is also re-exported from the top-level package and `qiskit_qm_provider.backend.backend_utils`. Extra keyword arguments are forwarded to `ResetMacro` via `**reset_macro_kwargs`.
+The function lives under `qiskit_qm_provider.quam_macros.superconducting` and is also re-exported from the top-level package. Importing it from `qiskit_qm_provider.backend.backend_utils` is deprecated. Extra keyword arguments are forwarded to `ResetMacro` via `**reset_macro_kwargs`.
 
 ## [`QMProvider`](apidocs/stubs/qiskit_qm_provider.providers.QMProvider.rst) — local QOP
 

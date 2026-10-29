@@ -13,7 +13,7 @@ pip install qiskit-qm-provider
 [quam-builder](https://github.com/qua-platform/quam-builder) is required for the built-in `FluxTunableTransmonBackend` and related QuAM components. It is not published on PyPI and must be installed from source:
 
 ```bash
-pip install git+https://github.com/qua-platform/quam-builder.git@v0.4.0
+pip install git+https://github.com/qua-platform/quam-builder.git@v0.6.0
 ```
 
 For IQCC cloud access and QM SaaS simulation (requires `iqcc-cloud-client` and `qm-saas`):
@@ -248,9 +248,7 @@ We envision this tool as more than just a Qiskit bridge; it is a new interface t
 When embedding Qiskit circuits into QUA programs, compile with `backend.quantum_circuit_to_qua()` and read classical outcomes from the returned **`QuaCircuitCompilation`** wrapper:
 
 1. **`comp = backend.quantum_circuit_to_qua(qc, ...)`** — compiles the Qiskit circuit into QUA instructions inside the current `with program():` block. Returns a `QuaCircuitCompilation` that delegates to the underlying `CompilationResult` (`.result_program`, `.name`, …) and exposes **`comp.outputs`**: a local-only `MeasurementOutcomeTable` of `MeasurementRegisterField` handles (one per classical register, plus `_bit0`, … for loose clbits).
-2. **Access measurement outputs** — `comp.outputs["c"]` returns the QUA var; use `comp.outputs.state_ints["c"]` and `comp.outputs.streams["c"]` for packed integers and streams. Field handles: `comp.outputs.get_parameter("c")`. `comp.outputs` is not registered in the runtime OPNIC registry; bridge to transport tables manually when needed.
-
-Legacy **`get_measurement_outcomes(qc, comp, compute_state_int=True)`** remains available and returns the older dict-of-dicts API (`"value"`, `"is_array"`, `"length"`, `"state_int"`, `"stream"` per register; loose clbits appear under per-bit keys `_bit0`, `_bit1`, …). Every entry is sourced from `comp.outputs`.
+2. **Access measurement outputs** — `comp.outputs["c"]` returns the QUA var; use `comp.outputs.state_ints["c"]` and `comp.outputs.streams["c"]` for packed integers and streams. Field handles: `comp.outputs.get_parameter("c")`. `comp.outputs` is not registered in the runtime OPNIC registry; bridge to transport tables manually when needed. See [Measurement outputs](docs/measurement_outputs.md).
 
 ### Example: Embedding Qiskit Circuits in QUA
 
@@ -269,12 +267,11 @@ with program() as prog:
 
 For scalable error correction workflows, where hybrid classical-quantum computing is essential, we introduce the **Parameter Table**. This module provides a full interface to express parametric programs and seamless communication between a client (or classical host over QUARC-backed OPNIC) and the QUA program.
 
-Below is an example of an error correction workflow where data handling is critical. This showcases how to deal with parameter wake workflows when Qiskit cannot save data on the fly but must store it in new memory slots for each syndrome declaration. Note the use of `get_measurement_outcomes` to extract the syndrome state for feedback.
+Below is an example of an error correction workflow where data handling is critical. This showcases how to deal with parameter wake workflows when Qiskit cannot save data on the fly but must store it in new memory slots for each syndrome declaration. Syndrome readout uses `comp.outputs.state_ints` from each embedded circuit compilation.
 
 ```python
 from qm.qua import *
 from qiskit_qm_provider import Parameter, ParameterTable, ParameterPool, Direction, InputType, QUA2DArray, add_basic_macros
-from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes
 from qiskit import transpile
 
 # ... (Assume backend, syndrome_circuit, recovery_circuit, encoding_circuit are defined) ...
@@ -312,11 +309,9 @@ with program() as qec_prog:
     with for_(m, 0, m < memory_exp_length, m + 1):
         with for_(round, 0, round < num_cycles, round + 1):
             # Execute syndrome measurement circuit converted to QUA
-            syndrome_meas_result = backend.quantum_circuit_to_qua(syndrome_circuit)
+            syndrome_comp = backend.quantum_circuit_to_qua(syndrome_circuit)
 
-            # Extract measurement outcomes for real-time processing
-            syndrome_meas_result_meas = get_measurement_outcomes(syndrome_circuit, syndrome_meas_result)
-            state_int_val = syndrome_meas_result_meas[ancilla_creg.name]["state_int"]
+            state_int_val = syndrome_comp.outputs.state_ints[ancilla_creg.name]
 
             # Update syndrome data parameter and stream back
             syndrome_data.assign(state_int_val)
@@ -358,7 +353,7 @@ ParameterTable(parameters_dict, name=None)
 - `**stream_back(reset=False)**`: QUA Macro to stream values back to the client/server.
 - `**from_qiskit(qc, input_type, filter_function)**`: Class method to create a table from a Qiskit QuantumCircuit's parameters.
 
-**Note — ParameterVector and OpenQASM 3:** A known limitation of the Qiskit OpenQASM 3 exporter is that `ParameterVector` instances are exported as a series of individual parameters (one per element) rather than as a single array. This provider supports this by creating one parameter per element when building a table with `ParameterTable.from_qiskit`, so behaviour is correct and nothing changes from the user’s perspective; it is only an implementation detail to be aware of.
+**Note — ParameterVector and OpenQASM 3:** Stock Qiskit's OpenQASM 3 exporter emits each used `ParameterVector` element as its own scalar input, so `ParameterTable.from_qiskit` creates one field per used element. With the [`full_real_time_expr` Qiskit branch](docs/real_time_expressions.md), a vector is one array field, and the backend exports it as one `input array` (backend option `export_vector_as_array`, on by default). Either way, inputs are bound by Qiskit object, so renamed inputs (e.g. a vector named `x`, like the gate) still bind.
 
 ### `Parameter`
 

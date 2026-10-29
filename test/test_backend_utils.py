@@ -9,26 +9,35 @@ from types import SimpleNamespace
 
 from qiskit.circuit import QuantumRegister
 
-from qiskit_qm_provider.backend.backend_utils import (
-    look_for_standard_op,
-    get_extended_gate_name_mapping,
-    has_reset_at_boundary,
+from qiskit_qm_provider.utils.calibrations.identifiers import (
     has_conflicting_calibrations,
     operation_key,
-    validate_circuits,
-    measurement_output_bit_sizes,
-    experiment_result_header,
-    binary,
+)
+from qiskit_qm_provider.utils.circuit.physical_layout import ensure_circuit_physical
+from qiskit_qm_provider.utils.circuit.preparation import (
+    has_reset_at_boundary,
     logically_active_qubits,
-    get_non_trivial_observables,
-    assign_struct_with_table,
-    pack_register_to_int,
-    ensure_circuit_physical,
+    validate_circuits,
+)
+from qiskit_qm_provider.utils.circuit.target_support import (
     ensure_native_operations,
     missing_operation_names,
-    validate_conditional_plays,
-    _measurement_var_is_array,
 )
+from qiskit_qm_provider.utils.formatting.binary import binary
+from qiskit_qm_provider.utils.gates.naming import (
+    get_extended_gate_name_mapping,
+    look_for_standard_op,
+)
+from qiskit_qm_provider.utils.measurement.job_metadata import (
+    experiment_result_header,
+    measurement_output_bit_sizes,
+)
+from qiskit_qm_provider.utils.measurement.packing import (
+    _measurement_var_is_array,
+    pack_register_to_int,
+)
+from qiskit_qm_provider.utils.quarc.struct_assign import assign_struct_with_table
+from qiskit_qm_provider.conditional_play import _validate_conditional_plays
 
 
 class TestLookForStandardOp:
@@ -534,30 +543,6 @@ class TestPackRegisterToInt:
             pack_register_to_int(scalar, 0)
 
 
-class TestGetNonTrivialObservables:
-    def test_single_qubit(self):
-        observables = PauliList([Pauli("IXI")])
-        active_indices = [1]
-        result = get_non_trivial_observables(observables, active_indices)
-        assert len(result) == 1
-        assert result[0] == Pauli("X")
-
-    def test_multi_qubit(self):
-        observables = PauliList([Pauli("XYZ")])
-        active_indices = [0, 1, 2]
-        result = get_non_trivial_observables(observables, active_indices)
-        assert len(result) == 1
-        # The function builds the label by forward-iterating over qubits
-        # extracting from the reversed label, resulting in reversed order
-        assert result[0] == Pauli("ZYX")
-
-    def test_subset_of_qubits(self):
-        observables = PauliList([Pauli("XIYIZ")])
-        active_indices = [0, 2, 4]
-        result = get_non_trivial_observables(observables, active_indices)
-        assert len(result) == 1
-
-
 class TestOperationKey:
     """``operation_key`` is the value-hashable stand-in used everywhere the
     provider used to key a dict/set with a raw ``qm_qasm.OperationIdentifier``
@@ -653,7 +638,7 @@ def _x_target(qargs, *, with_builtins=True):
     from qiskit.circuit.controlflow import get_control_flow_name_mapping
     from qiskit.transpiler import Target
 
-    from qiskit_qm_provider.backend.backend_utils import variadic_builtin_instructions
+    from qiskit_qm_provider.utils.gates.target_builtins import variadic_builtin_instructions
 
     target = Target(num_qubits=2)
     target.add_instruction(XGate(), {qarg: None for qarg in qargs})
@@ -709,7 +694,7 @@ class TestEnsureNativeOperations:
 
         message = r"pulse\(s\) '-y90', 'y90' are not registered.*register_conditional_play\('-y90', 'y90'\)"
         with pytest.raises(ValueError, match=message):
-            validate_conditional_plays(qc, _x_target([(0,), (1,)]))
+            _validate_conditional_plays(qc, _x_target([(0,), (1,)]))
         with pytest.raises(ValueError, match=message):
             ensure_native_operations(qc, _x_target([(0,), (1,)]))
 

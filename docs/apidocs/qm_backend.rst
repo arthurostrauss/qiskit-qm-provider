@@ -43,7 +43,7 @@ For the measurement-output locality model, see :doc:`Measurement outputs </measu
 
    add_basic_macros
 
-.. currentmodule:: qiskit_qm_provider.backend.backend_utils
+.. currentmodule:: qiskit_qm_provider.utils.quarc.struct_assign
 
 .. rubric:: Functions
 
@@ -51,9 +51,20 @@ For the measurement-output locality model, see :doc:`Measurement outputs </measu
    :toctree: stubs/
 
    assign_struct_with_table
-   get_measurement_outcomes
+
+.. currentmodule:: qiskit_qm_provider.utils.compilation.qua_script
+
+.. autosummary::
+   :toctree: stubs/
+
    get_qua_script
    dump_qua_script
+
+.. currentmodule:: qiskit_qm_provider.utils.measurement.packing
+
+.. autosummary::
+   :toctree: stubs/
+
    pack_register_to_int
 
 .. automodule:: qiskit_qm_provider.backend
@@ -76,7 +87,17 @@ For the measurement-output locality model, see :doc:`Measurement outputs </measu
    :no-inherited-members:
    :no-special-members:
 
-.. automodule:: qiskit_qm_provider.backend.backend_utils
+.. automodule:: qiskit_qm_provider.utils.quarc.struct_assign
+   :no-members:
+   :no-inherited-members:
+   :no-special-members:
+
+.. automodule:: qiskit_qm_provider.utils.compilation.qua_script
+   :no-members:
+   :no-inherited-members:
+   :no-special-members:
+
+.. automodule:: qiskit_qm_provider.utils.measurement.packing
    :no-members:
    :no-inherited-members:
    :no-special-members:

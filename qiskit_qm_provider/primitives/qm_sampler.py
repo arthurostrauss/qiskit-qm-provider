@@ -33,7 +33,8 @@ from dataclasses import dataclass
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from ..job.qm_sampler_job import QMSamplerJob, IQCCSamplerJob
 
-from ..backend.backend_utils import validate_circuits, require_classified_meas_level
+from ..utils.circuit.preparation import validate_circuits
+from ..utils.measurement.classified import require_classified_meas_level
 from ..parameter_table import InputType
 from ..backend.qm_backend import QMBackend
 from qiskit.result.models import MeasLevel, MeasReturnType
@@ -159,7 +160,7 @@ class QMSamplerV2(BaseSamplerV2):
 
     def _validate_pubs(self, pubs: list[SamplerPub]):
         for i, pub in enumerate(pubs):
-            from ..backend.backend_utils import measurement_output_bit_sizes
+            from ..utils.measurement.job_metadata import measurement_output_bit_sizes
 
             if not measurement_output_bit_sizes(pub.circuit):
                 warnings.warn(

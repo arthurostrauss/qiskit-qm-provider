@@ -32,7 +32,7 @@ Both `ParameterTable` and `Parameter` share **the same canonical verb names**, s
 - **`rcv(filter_function=None)`**
     Loads values from the configured input mechanism (Input Stream, IO, OPNIC).
 
-**ASCII parameter names:** QOP rejects non-ASCII names. Use `theta`, `phi`, not Greek symbols, when building tables from Qiskit circuits.
+**ASCII parameter names:** QOP rejects non-ASCII names. Use `theta`, `phi`, not Greek symbols, when building tables from Qiskit circuits. Fields keep the Qiskit names; if the OpenQASM 3 exporter renames an input (e.g. a vector `x` next to the `x` gate becomes `x_0`), `quantum_circuit_to_qua` still binds it, since inputs are matched by Qiskit object.
 
 ## Lifecycle
 
@@ -412,7 +412,7 @@ Enum for input mechanisms:
 - `IO1`, `IO2`: GPIO inputs.
 - **[`ParameterPool`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterPool.rst)** — coordinate multiple tables in one program.
 - **[`QUA2DArray`](apidocs/stubs/qiskit_qm_provider.parameter_table.QUA2DArray.rst) / [`QUAArray`](apidocs/stubs/qiskit_qm_provider.parameter_table.QUAArray.rst)** — multi-index parameter memory (flattened QUA arrays).
-- **`ParameterVector` note:** OpenQASM 3 exports `ParameterVector` elements as individual parameters; `from_qiskit` handles this transparently.
+- **`ParameterVector` note:** With stock Qiskit, OpenQASM 3 exports each used `ParameterVector` element as its own scalar input, and `from_qiskit` creates one scalar field per *used* element (`_name_i_`). With the [`full_real_time_expr` Qiskit branch](real_time_expressions.md) (detected from its `PARAMETER_VECTORS_AS_ARRAYS` exporter feature), `from_qiskit` creates a single array `Parameter` named after the vector, of the vector's full length; a `filter_function` that keeps any used element keeps the whole vector. That field binds the backend's export either way: the full-length `input array[float[64], N]` (backend option `export_vector_as_array=True`, the default) or one scalar input per used element (option off), through the array's cells. Classical `types.Array` inputs map to array `Parameter`s the same way. If the exporter renames an input (e.g. a vector `x` next to the `x` gate becomes `x_0`), `quantum_circuit_to_qua` still binds it, since inputs are matched by Qiskit object. Duration/Stretch variables and zero-size arrays are rejected with a `ValueError` (durations are compile-time only; use them in delays).
 
 ## Related
 

@@ -58,7 +58,7 @@ When Pulse is available:
 - Convert **gate pulse schedules** via [`schedule_to_qua_macro`](apidocs/stubs/qiskit_qm_provider.pulse.schedule_to_qua_macro.rst).
 - Seed macros with [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.quam_macros.superconducting.add_basic_macros.rst) (flux-tunable defaults — see [Providers guide](providers.md#seeding-gate-macros-with-add-basic-macros)).
 
-**Pulse caveat:** supported for **gate schedules only**. Qiskit Pulse **`Measure` / measurement instructions** are **not** supported. Use circuit-level `measure` + [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) and read outcomes from **`comp.outputs`** in hybrid programs (see [Measurement outputs](measurement_outputs.md)). Legacy [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) remains available.
+**Pulse caveat:** supported for **gate schedules only**. Qiskit Pulse **`Measure` / measurement instructions** are **not** supported. Use circuit-level `measure` + [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) and read outcomes from **`comp.outputs`** in hybrid programs (see [Measurement outputs](measurement_outputs.md)).
 
 - **Guide:** [Backend — Pulse scope](backend.md#pulse-support-qiskit-1-x-legacy)
 - **Example:** `examples/circuit_calibrations_pulse.py`
@@ -161,8 +161,6 @@ with program() as prog:
 
 See [measurement_outputs.md](measurement_outputs.md) for the full locality model.
 
-Legacy [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) remains available and accepts either `QuaCircuitCompilation` or a raw `CompilationResult`.
-
 Powerful for error correction, closed-loop calibration, and QUARC/OPNIC hybrid loops.
 
 - **Guides:** [Backend](backend.md), [Parameter Table](parameter_table.md)
@@ -170,7 +168,7 @@ Powerful for error correction, closed-loop calibration, and QUARC/OPNIC hybrid l
 
 ## 5. Error-correction workflow (overview)
 
-Repeated cycles: encode → syndrome measure (Qiskit circuit) → stream syndrome → classical decode → push recovery params → apply recovery (Qiskit circuit). [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) and [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) keep the classical-quantum boundary explicit.
+Repeated cycles: encode → syndrome measure (Qiskit circuit) → stream syndrome → classical decode → push recovery params → apply recovery (Qiskit circuit). [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) and [`comp.outputs`](measurement_outputs.md) keep the classical-quantum boundary explicit.
 
 - **Guide:** [Error-Correction Workflow](error_correction.md)
 

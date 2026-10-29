@@ -25,7 +25,7 @@ from quam.utils.qua_types import QuaVariable, QuaScalarInt
 from ..parameter_table import ParameterPool
 from ..parameter_table._mixins import QuaFieldTable
 from ..parameter_table._scope import require_qua_program
-from .backend_utils import _QASM3_DUMP_LOOSE_BIT_PREFIX
+from ..utils.gates.target_builtins import _QASM3_DUMP_LOOSE_BIT_PREFIX
 from .measurement_field import MeasurementRegisterField
 
 if TYPE_CHECKING:
