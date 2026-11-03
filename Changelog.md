@@ -7,10 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-03
+
 ### Added
 
 - **`QMBackend.get_qubit_pair` qubit pair name** — ``get_qubit_pair`` accepts a single string (the QuAM qubit pair name) in addition to a tuple of two qubit indices, names, or ``Qubit`` objects; ``FluxTunableTransmonBackend.get_qubit_pair`` follows the same signature.
 - **`QMInstructionProperties.fidelity_dict` and Target extra properties** — mapping-valued QuAM ``fidelity`` (typical of two-qubit gate macros) is exposed as ``fidelity_dict`` without setting scalar ``error``. ``properties`` feeds Qiskit's Target extra-properties printout with a compact ``quam_macro`` repr or callable qualified name, and unrolls each fidelity benchmark as its own extra property. The Rust ``InstructionProperties`` base still stores only ``duration`` and ``error``.
+
+### Changed
+
+- **OpenQASM 3 exporter uses `pi`, `euler`, and `tau`** — `QMBackend.qasm3_exporter` sets `disable_constants=False` (previously `True`), so parameter values close to multiples of those OpenQASM 3 constants are written in terms of the constants instead of raw floats.
 
 ### Fixed
 
