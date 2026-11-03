@@ -290,7 +290,12 @@ class QMJob(JobV1):
         # into several programs (<= backend.max_circuits circuits each) that are
         # queued sequentially; ``chunk_layout`` records which global circuit
         # indices live in each program so results can be stitched back together.
-        programs, chunk_layout = plan_run_programs(backend, num_shots, new_circuits)
+        programs, chunk_layout = plan_run_programs(
+            backend,
+            num_shots,
+            new_circuits,
+            max_circuits=options_.get("max_circuits"),
+        )
         qm = backend.qm
 
         job_id = "pending"

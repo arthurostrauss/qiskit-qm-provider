@@ -46,9 +46,15 @@ Set it at construction time or update it at any point before submitting a job:
 # At construction time:
 backend = FluxTunableTransmonBackend(machine, max_circuits=10)
 
-# Or update after construction — applies to the next backend.run() / sampler.run() call:
+# Or update after construction — default for the next backend.run() / primitive run
+# that does not override max_circuits in run_options:
 backend.set_options(max_circuits=10)
+
+# Per-call override (does not mutate backend.options):
+job = backend.run(circuits, max_circuits=1)
 ```
+
+Primitive `run_options["max_circuits"]` is the same kind of per-job override. Qiskit Experiments still splits its own jobs from `backend.max_circuits`; see [Primitives — large PUB batches](primitives.md#large-pub-batches-and-max_circuits).
 
 **Splitting rules** (in priority order):
 

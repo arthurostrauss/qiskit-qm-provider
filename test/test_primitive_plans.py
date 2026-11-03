@@ -351,13 +351,17 @@ def test_bindings_matrix_built_once(monkeypatch, no_circuit):
 
 def test_plans_without_tasks_get_no_program(monkeypatch):
     built = []
-    monkeypatch.setattr(qua_programs, "estimator_program", lambda backend, plans, **kw: built.append(plans) or "prog")
+    monkeypatch.setitem(
+        qua_programs._PRIMITIVE_PROGRAMS,
+        EstimatorPlan,
+        lambda backend, plans, **kw: built.append(plans) or "prog",
+    )
     backend = SimpleNamespace(options=SimpleNamespace(max_circuits=30))
     identity = _estimator_plan([SparsePauliOp("II")])
     measured = _estimator_plan([SparsePauliOp("ZX")])
     assert not identity.has_tasks and measured.has_tasks
-    assert qua_programs.plan_estimator_programs(backend, [identity]) == ([], [])
-    programs, layout = qua_programs.plan_estimator_programs(backend, [identity, measured, identity])
+    assert qua_programs.plan_primitive_programs(backend, [identity]) == ([], [])
+    programs, layout = qua_programs.plan_primitive_programs(backend, [identity, measured, identity])
     assert programs == ["prog"] and layout == [[1]] and built == [[measured]]
 
 

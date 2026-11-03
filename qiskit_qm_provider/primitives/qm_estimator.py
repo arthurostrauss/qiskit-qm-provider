@@ -88,8 +88,11 @@ class QMEstimatorOptions:
     Default: None."""
 
     run_options: dict[str, Any] | None = None
-    """A dictionary of options to pass to the backend's ``run()`` method.
-    Default: None (no option passed to backend's ``run`` method)
+    """Per-job overrides of backend run options (``shots``, ``max_circuits``,
+    ``timeout``, ``simulate``, …). Merged over :attr:`QMBackend.options` when
+    :meth:`~.QMEstimatorV2.run` is called; they do not mutate the backend.
+    ``max_circuits`` here is the QUA program chunk size for that job.
+    Default: None (use the backend defaults).
     """
 
     def __post_init__(self):
@@ -173,6 +176,7 @@ class QMEstimatorV2(BaseEstimatorV2):
             if is_cloud_quantum_machines_manager(self.backend.qmm)
             else QMEstimatorJob
         )
+        # Copy backend defaults, then let this estimator's run_options win for the job.
         backend_options = deepcopy(self.backend.options.__dict__)
         backend_options.update(self._options.run_options or {})
         job = job_obj(

@@ -432,6 +432,8 @@ class QMBackend(Backend):
 
         Must be a positive integer (>= 1). Defaults to 30.
         Can be updated at any time via ``backend.set_options(max_circuits=N)``.
+        Primitive ``run_options["max_circuits"]`` and ``backend.run(..., max_circuits=N)``
+        override this value for that job only and do not change this property.
         """
         return self.options.max_circuits
 

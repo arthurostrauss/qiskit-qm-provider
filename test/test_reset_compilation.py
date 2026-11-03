@@ -60,7 +60,7 @@ def test_estimator_pub_plans_to_a_qua_program(backend):
     """One Estimator PUB, prepared by ``validate_estimator_pubs`` (which adds the reset),
     plans to a single QUA program without hardware."""
     from qiskit_qm_provider.job.primitive_plan import EstimatorPlan
-    from qiskit_qm_provider.job.qua_programs import plan_estimator_programs
+    from qiskit_qm_provider.job.qua_programs import plan_primitive_programs
     from qiskit_qm_provider.parameter_table import ParameterPool
     from qiskit_qm_provider.parameter_table.input_type import InputType
     from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorOptions, QMEstimatorV2
@@ -77,7 +77,7 @@ def test_estimator_pub_plans_to_a_qua_program(backend):
     ParameterPool.reset()
     plan = EstimatorPlan.from_pub(prepared, options, plan_index=0)
 
-    programs, layout = plan_estimator_programs(backend, [plan])
+    programs, layout = plan_primitive_programs(backend, [plan])
 
     assert layout == [[0]]
     [program] = programs

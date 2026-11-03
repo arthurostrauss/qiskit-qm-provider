@@ -69,8 +69,11 @@ class QMSamplerOptions:
     Default: None."""
 
     run_options: dict[str, Any] | None = None
-    """A dictionary of options to pass to the backend's ``run()`` method.
-    Default: None (no option passed to backend's ``run`` method)
+    """Per-job overrides of backend run options (``shots``, ``max_circuits``,
+    ``timeout``, ``simulate``, …). Merged over :attr:`QMBackend.options` when
+    :meth:`~.QMSamplerV2.run` is called; they do not mutate the backend.
+    ``max_circuits`` here is the QUA program chunk size for that job.
+    Default: None (use the backend defaults).
     """
     meas_level: Literal["classified", "kerneled", "avg_kerneled"] = "classified"
     """Measurement level. Only ``"classified"`` (0/1 counts) is supported end-to-end
@@ -140,6 +143,7 @@ class QMSamplerV2(BaseSamplerV2):
             raise NotImplementedError(
                 "OPNIC input_type is not yet supported for IQCC cloud jobs; use INPUT_STREAM or IO1/IO2."
             )
+        # Copy backend defaults, then let this sampler's run_options win for the job.
         backend_options = deepcopy(self.backend.options.__dict__)
 
         backend_options["meas_level"] = meas_level_dict[self._options.meas_level]

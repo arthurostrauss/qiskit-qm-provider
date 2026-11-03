@@ -91,26 +91,48 @@ See the [QUA reference guide](https://docs.quantum-machines.co/latest/docs/Guide
 | `default_shots` | ✓ | — | Default shots when not specified in `run()` |
 | `default_precision` | — | ✓ | Default precision (e.g. 1/√4096) when not specified |
 | `abelian_grouping` | — | ✓ | Group commuting observables (default `True`) |
-| `run_options` | ✓ | ✓ | Extra dict passed through to `backend.run()` |
+| `run_options` | ✓ | ✓ | Per-job overrides of backend run options (`max_circuits`, `timeout`, `simulate`, …). Does **not** mutate `backend.options`. |
 | `meas_level` | ✓ | — | **Use `"classified"` only** — see limitation above |
 
 Configure options via [`QMSamplerOptions`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerOptions.rst) or [`QMEstimatorOptions`](apidocs/stubs/qiskit_qm_provider.primitives.QMEstimatorOptions.rst). Set `input_type=None` to bind all parameter values at compile time (suitable only when the number of distinct parameter sets is small).
 
 ## Large PUB batches and `max_circuits`
 
-When the number of PUBs passed to `sampler.run()` or `estimator.run()` exceeds `backend.options.max_circuits` (default `30`), the provider automatically splits them into consecutive chunks. Each chunk is compiled into its own QUA program and queued sequentially on QOP. The returned `PrimitiveResult` always has one entry per input PUB **in the original order** — the splitting is fully transparent to calling code.
+On primitives, `max_circuits` counts **PUBs**, not Qiskit circuits and not parameter bindings. Each PUB is already one circuit plus its bindings (and observables for the estimator). The provider never splits a PUB across programs: every binding of that PUB stays in the same QUA loop.
+
+When `len(pubs)` exceeds `max_circuits`, PUBs are packed into consecutive chunks of at most that many PUBs. Each chunk becomes one QUA program, queued sequentially on QOP. The returned `PrimitiveResult` still has one entry per input PUB **in the original order**.
+
+**Precedence** (that job only; `backend.options` is not mutated):
+
+1. `QMSamplerOptions.run_options["max_circuits"]` / `QMEstimatorOptions.run_options["max_circuits"]`
+2. else `backend.options.max_circuits` (default `30`)
 
 ```python
-# Reduce the limit so that even small batches trigger splitting:
-backend.set_options(max_circuits=5)
-
-sampler = QMSamplerV2(backend=backend)
-# 12 PUBs -> 3 programs of 5, 5, 2 PUBs queued sequentially
+# Per-job override (backend default stays 30):
+sampler = QMSamplerV2(
+    backend=backend,
+    options=QMSamplerOptions(run_options={"max_circuits": 1}),
+)
+# 12 PUBs → 12 QUA programs (one PUB each). Bindings inside a PUB are not split.
+# backend.options.max_circuits is still 30
 job = sampler.run([pub_0, pub_1, ..., pub_11])
-result = job.result()  # 12 SamplerPubResult entries, in original order
+
+# Or change the backend default for every caller (including Qiskit Experiments job splitting):
+backend.set_options(max_circuits=5)
 ```
 
-Set `max_circuits=None` to disable splitting and always build a single program regardless of batch size.
+Qiskit Experiments `exp.run(sampler=sampler)` is a second, earlier split. It reads `backend.max_circuits` (and optional `exp.set_experiment_options(max_circuits=N)`) and hands the sampler a list of **circuits**. Each of those circuits becomes one PUB. Experiments never reads sampler `run_options`.
+
+If both knobs are set, `run_options` win **inside** that `sampler.run()` / `estimator.run()` call:
+
+| Who sets what | Experiments `sampler.run()` size | QUA programs from those PUBs |
+|---------------|----------------------------------|------------------------------|
+| Only `backend.set_options(max_circuits=5)` | 5 circuits → 5 PUBs | 1 program of 5 PUBs |
+| Only sampler `run_options={"max_circuits": 1}` | 30 circuits → 30 PUBs (backend default) | 30 programs of 1 PUB |
+| Backend `5` **and** sampler `1` | 5 circuits → 5 PUBs | 5 programs of 1 PUB |
+| Backend `1` **and** sampler `30` | 1 circuit → 1 PUB | 1 program (the sampler cap cannot enlarge a smaller Experiments batch) |
+
+To make Experiments submit fewer circuits per Python job **and** pack one PUB per QUA program, set the backend (or `exp.set_experiment_options(max_circuits=N)`). Use sampler `run_options` when you only want a tighter PUB-per-program limit without changing the shared backend.
 
 ## Running on IQCC Cloud
 

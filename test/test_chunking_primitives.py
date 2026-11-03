@@ -1,4 +1,4 @@
-"""Tests for Primitives chunking: plan_sampler_programs, plan_estimator_programs,
+"""Tests for Primitives chunking: plan_primitive_programs,
 QMSamplerJob, and QMEstimatorJob pre/post-processing (up to program generation).
 
 All tests stop before submitting to hardware (no QM connection required).
@@ -13,8 +13,7 @@ from qm import Program
 
 from qiskit_qm_provider.job.qua_programs import (
     compute_chunk_layout,
-    plan_sampler_programs,
-    plan_estimator_programs,
+    plan_primitive_programs,
 )
 from qiskit_qm_provider.parameter_table import ParameterPool
 from qiskit_qm_provider.parameter_table.input_type import InputType
@@ -87,7 +86,7 @@ def _locator(chunk_layout):
 
 
 # ---------------------------------------------------------------------------
-# plan_sampler_programs
+# plan_primitive_programs
 # ---------------------------------------------------------------------------
 
 class TestPlanSamplerPrograms:
@@ -96,7 +95,7 @@ class TestPlanSamplerPrograms:
         flux_tunable_backend.set_options(max_circuits=10)
         pubs = _sampler_pubs(flux_tunable_backend, 3)
         plans = _sampler_plans(pubs)
-        programs, layout = plan_sampler_programs(flux_tunable_backend, plans)
+        programs, layout = plan_primitive_programs(flux_tunable_backend, plans)
         assert layout == [[0, 1, 2]]
         assert len(programs) == 1
         assert isinstance(programs[0], Program)
@@ -105,7 +104,7 @@ class TestPlanSamplerPrograms:
         flux_tunable_backend.set_options(max_circuits=3)
         pubs = _sampler_pubs(flux_tunable_backend, 7)
         plans = _sampler_plans(pubs)
-        programs, layout = plan_sampler_programs(flux_tunable_backend, plans)
+        programs, layout = plan_primitive_programs(flux_tunable_backend, plans)
         assert layout == [[0, 1, 2], [3, 4, 5], [6]]
         assert len(programs) == 3
         assert all(isinstance(p, Program) for p in programs)
@@ -114,7 +113,7 @@ class TestPlanSamplerPrograms:
         flux_tunable_backend.set_options(max_circuits=100)
         pubs = _sampler_pubs(flux_tunable_backend, 5)
         plans = _sampler_plans(pubs)
-        programs, layout = plan_sampler_programs(flux_tunable_backend, plans)
+        programs, layout = plan_primitive_programs(flux_tunable_backend, plans)
         assert len(programs) == 1
         assert layout == [list(range(5))]
 
@@ -123,7 +122,7 @@ class TestPlanSamplerPrograms:
         n = 8
         pubs = _sampler_pubs(flux_tunable_backend, n)
         plans = _sampler_plans(pubs)
-        _, layout = plan_sampler_programs(flux_tunable_backend, plans)
+        _, layout = plan_primitive_programs(flux_tunable_backend, plans)
         flat = [g for chunk in layout for g in chunk]
         assert flat == list(range(n))
 
@@ -132,12 +131,20 @@ class TestPlanSamplerPrograms:
         flux_tunable_backend.set_options(max_circuits=max_c)
         pubs = _sampler_pubs(flux_tunable_backend, 10)
         plans = _sampler_plans(pubs)
-        _, layout = plan_sampler_programs(flux_tunable_backend, plans)
+        _, layout = plan_primitive_programs(flux_tunable_backend, plans)
         assert all(len(chunk) <= max_c for chunk in layout)
+
+    def test_kwarg_overrides_backend_max_circuits(self, flux_tunable_backend):
+        flux_tunable_backend.set_options(max_circuits=30)
+        pubs = _sampler_pubs(flux_tunable_backend, 4)
+        plans = _sampler_plans(pubs)
+        _, layout = plan_primitive_programs(flux_tunable_backend, plans, max_circuits=1)
+        assert layout == [[0], [1], [2], [3]]
+        assert flux_tunable_backend.options.max_circuits == 30
 
 
 # ---------------------------------------------------------------------------
-# plan_estimator_programs
+# plan_primitive_programs
 # ---------------------------------------------------------------------------
 
 class TestPlanEstimatorPrograms:
@@ -145,7 +152,7 @@ class TestPlanEstimatorPrograms:
     def test_single_program_under_limit(self, flux_tunable_backend):
         flux_tunable_backend.set_options(max_circuits=10)
         _, plans = _estimator_plans(flux_tunable_backend, 2)
-        programs, layout = plan_estimator_programs(
+        programs, layout = plan_primitive_programs(
             flux_tunable_backend, plans
         )
         assert layout == [[0, 1]]
@@ -155,7 +162,7 @@ class TestPlanEstimatorPrograms:
     def test_splits_into_multiple_programs(self, flux_tunable_backend):
         flux_tunable_backend.set_options(max_circuits=2)
         _, plans = _estimator_plans(flux_tunable_backend, 5)
-        programs, layout = plan_estimator_programs(
+        programs, layout = plan_primitive_programs(
             flux_tunable_backend, plans
         )
         assert layout == [[0, 1], [2, 3], [4]]
@@ -165,7 +172,7 @@ class TestPlanEstimatorPrograms:
     def test_large_max_circuits_never_splits(self, flux_tunable_backend):
         flux_tunable_backend.set_options(max_circuits=100)
         _, plans = _estimator_plans(flux_tunable_backend, 4)
-        programs, layout = plan_estimator_programs(
+        programs, layout = plan_primitive_programs(
             flux_tunable_backend, plans
         )
         assert len(programs) == 1
@@ -175,11 +182,18 @@ class TestPlanEstimatorPrograms:
         flux_tunable_backend.set_options(max_circuits=3)
         n = 7
         _, plans = _estimator_plans(flux_tunable_backend, n)
-        _, layout = plan_estimator_programs(
+        _, layout = plan_primitive_programs(
             flux_tunable_backend, plans
         )
         flat = [g for chunk in layout for g in chunk]
         assert flat == list(range(n))
+
+    def test_kwarg_overrides_backend_max_circuits(self, flux_tunable_backend):
+        flux_tunable_backend.set_options(max_circuits=30)
+        _, plans = _estimator_plans(flux_tunable_backend, 4)
+        _, layout = plan_primitive_programs(flux_tunable_backend, plans, max_circuits=1)
+        assert layout == [[0], [1], [2], [3]]
+        assert flux_tunable_backend.options.max_circuits == 30
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +300,7 @@ class TestQMSamplerJobConstruction:
 class TestQMEstimatorJobConstruction:
     """Verify QMEstimatorJob chunking structure (chunk_layout, locator, programs list).
 
-    ``plan_estimator_programs`` is patched to return dummy Programs so we can
+    ``plan_primitive_programs`` is patched to return dummy Programs so we can
     test chunking logic without the per-plan QUA compilation, which requires
     every plan to have fresh Parameter objects — a constraint that is only met
     in production by resetting the pool once and processing plans sequentially
@@ -317,7 +331,7 @@ class TestQMEstimatorJobConstruction:
             for i in range(0, count, max_circuits)
         ]
         with patch(
-            "qiskit_qm_provider.job.qm_estimator_job.plan_estimator_programs",
+            "qiskit_qm_provider.job.qm_estimator_job.plan_primitive_programs",
             return_value=([dummy] * n_chunks, fake_layout),
         ):
             return QMEstimatorJob(
@@ -390,4 +404,55 @@ class TestMaxCircuitsBackendOption:
         pubs = _sampler_pubs(flux_tunable_backend, 6)
         job = QMSamplerJob(flux_tunable_backend, pubs, InputType.INPUT_STREAM)
         assert len(job._chunk_layout) == 3  # 6 / 2 = 3 chunks
+
+    def test_sampler_job_run_options_override_backend(self, flux_tunable_backend):
+        from qiskit_qm_provider.job.qm_sampler_job import QMSamplerJob
+
+        flux_tunable_backend.set_options(max_circuits=30)
+        pubs = _sampler_pubs(flux_tunable_backend, 4)
+        job = QMSamplerJob(
+            flux_tunable_backend, pubs, InputType.INPUT_STREAM, max_circuits=1
+        )
+        assert job._chunk_layout == [[0], [1], [2], [3]]
+        assert flux_tunable_backend.options.max_circuits == 30
+
+    def test_estimator_job_run_options_override_backend(self, flux_tunable_backend):
+        from qiskit_qm_provider.job.qm_estimator_job import QMEstimatorJob
+        from qiskit_qm_provider.primitives.qm_estimator import QMEstimatorV2
+
+        flux_tunable_backend.set_options(max_circuits=30)
+        pubs = _estimator_pubs(flux_tunable_backend, 4)
+        switch_circ = QMEstimatorV2(
+            flux_tunable_backend, options={"input_type": InputType.INPUT_STREAM}
+        )._switch_obs_circuit
+        job = QMEstimatorJob(
+            flux_tunable_backend,
+            pubs,
+            InputType.INPUT_STREAM,
+            switch_obs_circuit=switch_circ,
+            run_options={"max_circuits": 1},
+        )
+        assert job._chunk_layout == [[0], [1], [2], [3]]
+        assert flux_tunable_backend.options.max_circuits == 30
+
+    def test_sampler_v2_run_options_override_without_mutating_backend(
+        self, flux_tunable_backend, monkeypatch
+    ):
+        from qiskit_qm_provider.job.qm_sampler_job import QMSamplerJob
+        from qiskit_qm_provider.primitives.qm_sampler import QMSamplerV2, QMSamplerOptions
+
+        flux_tunable_backend.set_options(max_circuits=30)
+        pubs = _sampler_pubs(flux_tunable_backend, 4)
+
+        def _skip_submit(self):
+            self._qm_jobs = []
+
+        monkeypatch.setattr(QMSamplerJob, "submit", _skip_submit)
+        sampler = QMSamplerV2(
+            flux_tunable_backend,
+            options=QMSamplerOptions(run_options={"max_circuits": 1}),
+        )
+        job = sampler.run(pubs)
+        assert job._chunk_layout == [[0], [1], [2], [3]]
+        assert flux_tunable_backend.options.max_circuits == 30
 

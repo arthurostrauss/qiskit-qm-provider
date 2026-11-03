@@ -26,10 +26,9 @@ from qiskit import QuantumCircuit
 from qm import Program
 from qm.qua import *
 from ..parameter_table import ParameterTable
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional
 
-if TYPE_CHECKING:
-    from .primitive_plan import EstimatorPlan, SamplerPlan
+from .primitive_plan import EstimatorPlan, SamplerPlan
 
 
 def _process_circuit(
@@ -136,6 +135,12 @@ def estimator_program(backend: QMBackend, plans: List[EstimatorPlan], **kwargs) 
     return estimator_prog
 
 
+_PRIMITIVE_PROGRAMS = {
+    SamplerPlan: sampler_program,
+    EstimatorPlan: estimator_program,
+}
+
+
 def _build_single_program(
     backend: QMBackend, num_shots, circuits: List[QuantumCircuit]
 ) -> Program:
@@ -161,6 +166,18 @@ def _build_single_program(
                     field.stream.save_all(f"{creg_name}_{i}")
 
     return prog
+
+
+def resolve_max_circuits(backend: QMBackend, max_circuits: int | None = None) -> int:
+    """Chunk size for one job: *max_circuits* if set, else the backend default.
+
+    Primitive ``run_options["max_circuits"]`` and ``backend.run(..., max_circuits=N)``
+    override :attr:`QMBackend.options.max_circuits` for that job only. They do not
+    mutate the backend.
+    """
+    if max_circuits is None:
+        return backend.options.max_circuits
+    return max_circuits
 
 
 def compute_chunk_layout(
@@ -210,6 +227,7 @@ def plan_run_programs(
     backend: QMBackend,
     num_shots,
     circuits: List[QuantumCircuit],
+    max_circuits: int | None = None,
 ) -> tuple[List[Program], List[List[int]]]:
     """Plan the QUA program(s) for ``backend.run``.
 
@@ -221,21 +239,22 @@ def plan_run_programs(
 
     Splitting rules, in priority order:
         1. Conflicting calibrations -> one circuit per program.
-        2. ``backend.options.max_circuits`` set and ``len(circuits) > max_circuits`` ->
-           consecutive groups of ``max_circuits``.
+        2. ``len(circuits) > max_circuits`` -> consecutive groups of ``max_circuits``.
         3. Otherwise -> a single program holding all circuits.
 
     Args:
         backend: The QMBackend to use.
         num_shots: Number of shots to execute per circuit.
         circuits: List of QuantumCircuits to execute.
+        max_circuits: Per-job chunk size. ``None`` (default) uses
+            ``backend.options.max_circuits``.
 
     Returns:
         Tuple of (list of QUA programs, chunk layout).
     """
     chunk_layout = compute_chunk_layout(
         len(circuits),
-        max_circuits=backend.options.max_circuits,
+        max_circuits=resolve_max_circuits(backend, max_circuits),
         conflicting_calibrations=has_conflicting_calibrations(circuits),
     )
 
@@ -246,27 +265,33 @@ def plan_run_programs(
     return programs, chunk_layout
 
 
-def plan_sampler_programs(
+def plan_primitive_programs(
     backend: QMBackend,
-    plans: List[SamplerPlan],
+    plans: List[SamplerPlan] | List[EstimatorPlan],
     **kwargs,
 ) -> tuple[List[Program], List[List[int]]]:
-    """Plan the QUA program(s) for ``QMSamplerV2``.
+    """Plan QUA program(s) for a homogeneous list of sampler or estimator plans.
 
-    When the number of PUBs exceeds ``max_circuits``, the list is split into
-    consecutive chunks, each compiled into its own QUA program.  Results are
-    stitched back by the caller using the returned ``chunk_layout``.
+    Plans without tasks are left out (no programs and an empty layout when none
+    remain). When the number of remaining plans exceeds ``max_circuits`` (from
+    ``kwargs`` or ``backend.options.max_circuits``), they are split into consecutive
+    chunks. Each chunk is compiled with the builder registered for that plan type
+    in ``_PRIMITIVE_PROGRAMS``. Results are stitched back by the caller using the
+    returned ``chunk_layout`` (global plan indices).
 
-    Within each program, the local PUB index (0-based within the chunk) is used
-    for stream keys ``f"{creg_name}_{local_idx}"``.
-
-    Plans with zero bindings are left out: they need no program (no programs and an empty
-    layout when no plan has bindings).
+    Within each program, the local plan index (0-based within the chunk) is used
+    for stream keys (``f"{creg_name}_{local_idx}"`` for sampler PUBs,
+    ``f"__c_{local_idx}"`` for estimator plans). Sampler plans with zero bindings
+    and estimator plans with only identity terms have no tasks and are omitted.
 
     Args:
         backend: The QMBackend to use.
-        plans: One :class:`~qiskit_qm_provider.job.primitive_plan.SamplerPlan` per pub.
-        **kwargs: Forwarded to :func:`sampler_program`.
+        plans: One plan per PUB; all entries must be the same plan class
+            (:class:`~.primitive_plan.SamplerPlan` or
+            :class:`~.primitive_plan.EstimatorPlan`).
+        **kwargs: Forwarded to the selected program builder, except
+            ``max_circuits`` which overrides the backend default for this job's
+            chunking.
 
     Returns:
         Tuple of (list of QUA programs, chunk layout).
@@ -274,46 +299,13 @@ def plan_sampler_programs(
     runnable = [g for g, plan in enumerate(plans) if plan.has_tasks]
     if not runnable:
         return [], []
+    program_fn = _PRIMITIVE_PROGRAMS[type(plans[runnable[0]])]
+    max_circuits = resolve_max_circuits(backend, kwargs.pop("max_circuits", None))
     chunk_layout = [
         [runnable[i] for i in chunk]
-        for chunk in compute_chunk_layout(len(runnable), max_circuits=backend.options.max_circuits)
+        for chunk in compute_chunk_layout(len(runnable), max_circuits=max_circuits)
     ]
-    programs = [sampler_program(backend, [plans[g] for g in chunk], **kwargs) for chunk in chunk_layout]
-    return programs, chunk_layout
-
-
-def plan_estimator_programs(
-    backend: QMBackend,
-    plans: List[EstimatorPlan],
-    **kwargs,
-) -> tuple[List[Program], List[List[int]]]:
-    """Plan the QUA program(s) for ``QMEstimatorV2``.
-
-    Plans without tasks (only identity terms) are left out: they need no program. When the
-    number of remaining plans exceeds ``backend.options.max_circuits``, they are split into
-    consecutive chunks, each compiled into its own QUA program.  Results are stitched back by
-    the caller using the returned ``chunk_layout`` (global plan indices; no programs and an
-    empty layout when no plan has tasks).
-
-    Within each program, the local plan index (0-based within the chunk) is
-    used for stream keys ``f"__c_{local_idx}"``.
-
-    Args:
-        backend: The QMBackend to use.
-        plans: One :class:`~qiskit_qm_provider.job.primitive_plan.EstimatorPlan` per pub.
-        **kwargs: Forwarded to :func:`estimator_program`.
-
-    Returns:
-        Tuple of (list of QUA programs, chunk layout).
-    """
-    runnable = [g for g, plan in enumerate(plans) if plan.has_tasks]
-    if not runnable:
-        return [], []
-    chunk_layout = [
-        [runnable[i] for i in chunk]
-        for chunk in compute_chunk_layout(len(runnable), max_circuits=backend.options.max_circuits)
-    ]
-    programs = [estimator_program(backend, [plans[g] for g in chunk], **kwargs) for chunk in chunk_layout]
+    programs = [program_fn(backend, [plans[g] for g in chunk], **kwargs) for chunk in chunk_layout]
     return programs, chunk_layout
 
 

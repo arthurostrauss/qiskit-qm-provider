@@ -178,7 +178,12 @@ Repeated cycles: encode → syndrome measure (Qiskit circuit) → stream syndrom
 
 **Batch vs real-time:** Experiments emit large batches of near-identical circuits (AWG-style preloading). QUA prefers one program with real-time loops and streaming. For calibration sweeps, consider [Qualibrate](https://qualibrate-docs.quantum-machines.co/) or [qua-libs](https://github.com/qua-platform/qua-libs). Use this provider to **compose** Qiskit circuits into real-time QUA programs when that is the right model.
 
-When you do run large Experiment batches through `backend.run`, tune [`max_circuits`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) on the backend so each QUA program stays within compile/size limits while results are still stitched into one Qiskit `Result` — see [Backend — multi-circuit batches](backend.md#multi-circuit-batches-and-max_circuits-backend-run-only).
+When you do run large Experiment batches through `backend.run` or `exp.run(sampler=QMSamplerV2(...))`, there are **two** independent `max_circuits` knobs:
+
+- **Qiskit Experiments** splits the circuit list using `backend.max_circuits` (and optional `exp.set_experiment_options(max_circuits=N)`). It does not read `QMSamplerOptions.run_options`.
+- **This provider** then chunks each `sampler.run()` / `backend.run()` into QUA programs using `run_options["max_circuits"]` if set, otherwise `backend.options.max_circuits`.
+
+Sampler `run_options={"max_circuits": 1}` therefore yields one circuit per QUA program even when Experiments still hands the sampler 30 circuits at a time. Set `backend.set_options(max_circuits=1)` if you also want Experiments to submit one circuit per Python job. See [Primitives — large PUB batches](primitives.md#large-pub-batches-and-max_circuits).
 
 **Counts only:** experiments needing raw I/Q or kerneled data will not work yet. Only classified 0/1 outcomes are supported.
 

@@ -49,11 +49,15 @@ result = job.result()                      # blocks until streams are complete
 When the number of circuits or PUBs exceeds `max_circuits`, the provider automatically splits them into consecutive QUA programs and executes each chunk in order.  Results are stitched back transparently — callers see a single `Result` / `PrimitiveResult` regardless of how many chunks were used.
 
 ```python
+from qiskit_qm_provider import QMSamplerV2, QMSamplerOptions
+
 # Run 50 PUBs with a hardware limit of 20 circuits per program
-sampler = QMSamplerV2(backend)
-job = sampler.run(pubs, max_circuits=20)   # produces ceil(50/20) = 3 QUA programs
+sampler = QMSamplerV2(backend, options=QMSamplerOptions(run_options={"max_circuits": 20}))
+job = sampler.run(pubs)                    # produces ceil(50/20) = 3 QUA programs
 result = job.result()                      # stitched PrimitiveResult with 50 entries
 ```
+
+`run_options["max_circuits"]` overrides `backend.options.max_circuits` for this job and does not change the backend. `sampler.run()` itself only accepts `shots` as a keyword; pass chunking through `QMSamplerOptions.run_options`.
 
 The compiled programs are accessible on `job.programs` (a list) and via `get_program(idx)`:
 

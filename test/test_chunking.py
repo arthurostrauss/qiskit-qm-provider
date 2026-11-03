@@ -154,3 +154,13 @@ class TestPlanRunPrograms:
         assert layout == [[0], [1], [2], [3]]
         assert len(programs) == 4
         assert all(isinstance(p, Program) for p in programs)
+
+    def test_argument_overrides_backend_max_circuits(self, flux_tunable_backend):
+        flux_tunable_backend.set_options(max_circuits=30)
+        circuits = _measure_circuits(flux_tunable_backend, 4)
+        programs, layout = plan_run_programs(
+            flux_tunable_backend, 100, circuits, max_circuits=1
+        )
+        assert layout == [[0], [1], [2], [3]]
+        assert len(programs) == 4
+        assert flux_tunable_backend.options.max_circuits == 30

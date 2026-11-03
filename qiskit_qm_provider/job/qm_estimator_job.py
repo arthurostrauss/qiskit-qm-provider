@@ -39,7 +39,7 @@ from .qm_execution_options import (
     resolve_qiskit_job_id,
     submit_qua_programs,
 )
-from .qua_programs import plan_estimator_programs, compute_locator
+from .qua_programs import plan_primitive_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
 from ..primitives.qm_estimator import QMEstimatorOptions
 import os
@@ -138,7 +138,9 @@ class QMEstimatorJob(QMPrimitiveJob):
             EstimatorPlan.from_pub(pub, options=options, plan_index=i) for i, pub in enumerate(pubs)
         ]
         self._switch_obs_circuit: QuantumCircuit = switch_obs_circuit
-        programs, self._chunk_layout = plan_estimator_programs(backend, self._plans)
+        programs, self._chunk_layout = plan_primitive_programs(
+            backend, self._plans, max_circuits=self._run_options.get("max_circuits")
+        )
         self._programs = programs
         self._locator = compute_locator(self._chunk_layout)
 
@@ -301,7 +303,7 @@ class QMEstimatorJob(QMPrimitiveJob):
         pub_results = []
         for i, plan in enumerate(self._plans):
             raw = None
-            if plan.has_tasks:  # plans without tasks were never run (see plan_estimator_programs)
+            if plan.has_tasks:  # plans without tasks were never run (see plan_primitive_programs)
                 chunk_idx, local_idx = self._locator[i]
                 raw = results_handles[chunk_idx].get(f"__c_{local_idx}").fetch_all()
             pub_results.append(estimator_pub_result(plan, raw))
@@ -330,7 +332,7 @@ class IQCCEstimatorJob(IQCCJobMixin, QMEstimatorJob):
     def submit(self):
         """Submit all QUA programs to the IQCC cloud backend.
 
-        For each chunk produced by :func:`~.plan_estimator_programs`, a separate
+        For each chunk produced by :func:`~.plan_primitive_programs`, a separate
         cloud job is executed synchronously.  When any of the chunk's plans streams
         inputs (parameters or observables), a sync-hook script is written to a
         temporary file and passed to ``execute()``; the file is unlinked

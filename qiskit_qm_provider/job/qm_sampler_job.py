@@ -45,7 +45,7 @@ from .qm_execution_options import (
     resolve_qiskit_job_id,
     submit_qua_programs,
 )
-from .qua_programs import plan_sampler_programs, compute_locator
+from .qua_programs import plan_primitive_programs, compute_locator
 from .qm_primitive_job import QMPrimitiveJob
 from .stream_assembly import bit_array_from_measurement_stream
 
@@ -85,7 +85,7 @@ class QMSamplerJob(QMPrimitiveJob):
         self._plans: List[SamplerPlan] = [
             SamplerPlan.from_pub(pub, self._input_type, i) for i, pub in enumerate(self._pubs)
         ]
-        programs, self._chunk_layout = plan_sampler_programs(self._backend, self._plans, **self.metadata)
+        programs, self._chunk_layout = plan_primitive_programs(self._backend, self._plans, **self.metadata)
         self._programs = programs
         self._locator = compute_locator(self._chunk_layout)
 
@@ -176,7 +176,7 @@ class IQCCSamplerJob(IQCCJobMixin, QMSamplerJob):
     def submit(self):
         """Submit all QUA programs to the IQCC cloud backend.
 
-        For each chunk produced by :func:`~.plan_sampler_programs`, a separate
+        For each chunk produced by :func:`~.plan_primitive_programs`, a separate
         cloud job is executed synchronously.  When the chunk's PUBs have
         parameterised circuits, a sync-hook script is written to a temporary
         file and passed to ``execute()``; the file is unlinked immediately
