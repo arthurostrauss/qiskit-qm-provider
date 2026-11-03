@@ -1176,6 +1176,6 @@ class QMBackend(Backend):
         return QMOpenQASM3Exporter(
             includes=(),
             basis_gates=self.qm_qasm_basis_gates,
-            disable_constants=False,
+            disable_constants=True,
             experimental=experimental,
         )
