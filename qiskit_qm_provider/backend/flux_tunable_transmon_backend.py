@@ -178,12 +178,14 @@ class FluxTunableTransmonBackend(QMBackend):
         """
         return super().get_qubit(qubit)
 
-    def get_qubit_pair(self, qubits: Tuple[int | str | Transmon, int | str | Transmon]) -> TransmonPair:
+    def get_qubit_pair(
+        self, qubits: str | Tuple[int | str | Transmon, int | str | Transmon]
+    ) -> TransmonPair:
         """
         Retrieve a Transmon pair by its indices or names.
 
         Args:
-            qubits: A tuple containing the indices or names of the qubits in the pair.
+            qubits: Qubit pair name, or a tuple of indices or names of the qubits in the pair.
         Returns:
             QubitPair: The Transmon pair object.
         """

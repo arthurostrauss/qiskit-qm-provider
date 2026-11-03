@@ -164,6 +164,11 @@ backend.update_target()  # mandatory — syncs qm_qasm with the Target
 
 Whenever you modify `backend.target`, call `update_target` so both transpilation and `quantum_circuit_to_qua` see the same gate set.
 
+[`QMInstructionProperties`](apidocs/stubs/qiskit_qm_provider.backend.QMInstructionProperties.rst) also exposes extra Target display data:
+
+- ``quam_macro`` / ``qua_pulse_macro`` remain the programmatic accessors. ``print(backend.target)`` (on Qiskit versions that render extra properties) shows a compact ``quam_macro`` repr, or a callable's qualified name rather than ``<function ... at 0x...>``.
+- Two-qubit QuAM macros often store ``fidelity`` as a mapping of benchmark names (not a float). That map is available as ``fidelity_dict``. ``print(backend.target)`` unrolls each benchmark (``rb``, ``xeb``, …) as its own extra property. It is **not** converted into a scalar ``error``: the Rust ``InstructionProperties`` used by the transpiler still only sees ``duration`` and ``error``.
+
 ## Barrier and store
 
 Besides the QUA-backed operations above, every QM backend `Target` defines `barrier` and `store` as global, variable-width operations, just as it defines control flow (`if_else`, `box`, ...). They have no QUA macro of their own and never appear in the qm-qasm operations mapping, because qm-qasm lowers them itself:

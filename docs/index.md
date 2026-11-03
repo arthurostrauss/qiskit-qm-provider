@@ -68,7 +68,7 @@ Advanced real-time parameter workflows can be accelerated through Quantum Machin
 
 ## Using Qiskit Experiments with this provider
 
-Many users want to combine [Qiskit Experiments](https://quantum.cloud.ibm.com/docs/en/guides/qiskit-experiments) with this provider (especially via [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst)). Two caveats are worth reading **before** you start:
+Many users want to combine [Qiskit Experiments](https://quantum.cloud.ibm.com/docs/en/guides/qiskit-experiments) with this provider (especially via [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst)). Three caveats are worth reading **before** you start:
 
 ### 1. Match the tool to the execution model
 
@@ -85,6 +85,12 @@ IQCC + Experiments (see `examples/iqcc_t1_experiment.py`) is supported and usefu
 Experiments that need raw **I & Q**, kerneled shots, or other non-discriminated data are **not yet supported** end-to-end. Only **classified** results (0/1 counts / bitstrings) are reliably returned today. Contributors are welcome if IQ/kernels matter for your workflow.
 
 *(Note: `meas_level` options may appear in the API, but non-classified paths are not production-ready.)*
+
+### 3. Transpile on the QM backend (layout metadata)
+
+[`QMSamplerV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerV2.rst) and [`QMBackend.run`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) compile circuits through OpenQASM 3 lowering that expects **canonical physical form**: full backend width, a single `q` register, native operations, and a `TranspileLayout` on the circuit. Some Qiskit Experiments (notably randomized benchmarking) use a **custom** “transpile” that only composes gates onto `physical_qubits` without attaching layout metadata — that is fine on IBM Runtime but fails here with *“Circuit is not expressed in terms of this backend's N physical qubits”*.
+
+**Recommendation:** before `experiment.run(...)`, call `experiment.set_transpile_options(optimization_level=0)` so the experiment uses full `transpile(..., backend=...)` with `initial_layout` taken from `physical_qubits` (you cannot set `initial_layout` yourself in Experiments). Pass the **same QM backend** at construction or in `run(backend=...)` / `run(sampler=QMSamplerV2(backend=...))`. See [Workflows — transpile options for Experiments](workflows.md#transpile-options-for-qiskit-experiments-on-qm).
 
 ## Where to go next
 

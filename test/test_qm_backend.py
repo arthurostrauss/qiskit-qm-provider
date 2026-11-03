@@ -146,6 +146,16 @@ class TestQMBackendQubitPairAccess:
             result = flux_tunable_backend.get_qubit_pair((ctrl_idx, tgt_idx))
             assert result.name == pair.name
 
+    def test_get_qubit_pair_by_name(self, flux_tunable_backend, quam_machine):
+        if len(quam_machine.active_qubit_pairs) > 0:
+            pair = quam_machine.active_qubit_pairs[0]
+            result = flux_tunable_backend.get_qubit_pair(pair.name)
+            assert result.name == pair.name
+
+    def test_get_qubit_pair_unknown_name_raises(self, flux_tunable_backend):
+        with pytest.raises(ValueError, match="not found in the machine's active qubit pairs"):
+            flux_tunable_backend.get_qubit_pair("__no_such_qubit_pair__")
+
     def test_get_qubit_pair_invalid_not_tuple_raises(self, flux_tunable_backend):
         with pytest.raises(ValueError, match="tuple of two qubits"):
             flux_tunable_backend.get_qubit_pair([0, 1, 2])

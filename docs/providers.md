@@ -74,7 +74,7 @@ qmm = QuantumMachinesManager(**provider.instance.qmm_connection_params)
 
 Use [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst) for devices at the Israeli Quantum Computing Center. Requires `pip install qiskit-qm-provider[iqcc]`. Always returns [`FluxTunableTransmonBackend`](apidocs/stubs/qiskit_qm_provider.backend.FluxTunableTransmonBackend.rst).
 
-This is a common entry point for **Qiskit Experiments** characterization — see the [Qiskit Experiments caveats on the home page](index.md#using-qiskit-experiments-with-this-provider).
+This is a common entry point for **Qiskit Experiments** characterization — see the [Qiskit Experiments caveats on the home page](index.md#using-qiskit-experiments-with-this-provider) (including [transpile options on QM backends](workflows.md#transpile-options-for-qiskit-experiments-on-qm)).
 
 ```python
 from qiskit_qm_provider import IQCCProvider

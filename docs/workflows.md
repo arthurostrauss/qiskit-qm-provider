@@ -184,6 +184,54 @@ When you do run large Experiment batches through `backend.run`, tune [`max_circu
 
 **Positive framing:** the compiler's value is frictionless advanced QUA with Qiskit handling circuit synthesis, visualization, transpilation, and portability — not replacing QUA entirely with Qiskit.
 
+### Transpile options for Qiskit Experiments on QM
+
+When an experiment calls `run(backend=...)` or `run(sampler=QMSamplerV2(backend=...))`, Qiskit Experiments builds circuits, then transpiles them in [`_transpiled_circuits`](https://github.com/Qiskit/qiskit-experiments/blob/main/qiskit_experiments/framework/base_experiment.py) before submission. This provider rejects circuits that look “physically placed” but lack layout provenance (see [`ensure_circuit_physical`](https://github.com/arthurostrauss/qiskit-qm-provider/blob/main/qiskit_qm_provider/utils/circuit/physical_layout.py)).
+
+| Experiment style | Default transpile behavior | On QM backends |
+|------------------|-------------------------|----------------|
+| Most characterization (T1, tomography, …) | Full `transpile(..., backend)` with default `optimization_level=0` | Usually works if `physical_qubits` and `backend` match the machine |
+| Randomized benchmarking (`StandardRB`, `InterleavedRB`, …) | Custom Clifford path: compose onto `physical_qubits`, **no** `TranspileLayout` | **Fails** until you force full transpile (below) |
+
+**What to do:** set transpile options **minimally** — in practice, `optimization_level=0` is enough for RB-family experiments to take the generic transpile path. Do **not** pass `initial_layout` in `set_transpile_options`; Experiments forbid it and instead set `initial_layout=list(physical_qubits)` for you (virtual qubit `i` → backend line `physical_qubits[i]`). Choose `physical_qubits` in the experiment constructor, including qubit **order** for directed two-qubit gates.
+
+```python
+from qiskit import QuantumCircuit
+from qiskit.circuit.library import CXGate
+from qiskit_experiments.library import ProcessTomography
+from qiskit_qm_provider import QMSamplerV2, add_basic_macros
+
+# backend = ...  # QMBackend or IQCC backend from your provider
+add_basic_macros(backend)
+
+# Circuit under test (virtual qubits 0, 1 in the ProcessTomography API)
+qc = QuantumCircuit(2)
+qc.append(CXGate(), [0, 1])
+
+# Map virtual lines onto real hardware (order matters for CX direction)
+physical_qubits = (5, 18)
+
+qpt = ProcessTomography(
+    qc,
+    physical_qubits=physical_qubits,
+    backend=backend,
+)
+
+# Explicit minimal transpile: full backend transpile at optimization level 0.
+# Required for RB / InterleavedRB (their default path skips TranspileLayout).
+# Harmless and recommended for tomography and other experiments too.
+qpt.set_transpile_options(optimization_level=0)
+
+sampler = QMSamplerV2(backend=backend)
+exp_data = qpt.run(sampler=sampler, shots=2000).block_for_results()
+```
+
+For **interleaved randomized benchmarking**, the same `set_transpile_options(optimization_level=0)` applies before `InterleavedRB(...).run(sampler=...)`. Keep the interleaved gate Clifford (as Qiskit Experiments requires) and use the QM backend when constructing the experiment so Clifford synthesis and final transpile target the same `Target`.
+
+**Why optimization level 0:** it runs the preset transpiler enough to attach layout metadata and native gates without aggressive routing that can permute qubits (problematic for RB analysis). Higher levels or extra transpile kwargs are possible but should be chosen deliberately.
+
+**Alternative:** transpile experiment circuits yourself with `transpile(..., backend=backend, initial_layout=list(physical_qubits), optimization_level=0)` and submit via `backend.run` or `QMSamplerV2.run` without the Experiments runner — you then bypass analysis orchestration but keep full control.
+
 ## Related
 
 - **API Reference:** [apidocs/qm](apidocs/qm.rst)

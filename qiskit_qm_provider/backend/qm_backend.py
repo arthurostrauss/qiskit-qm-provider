@@ -306,16 +306,23 @@ class QMBackend(Backend):
         else:
             raise ValueError("Qubit should be an integer index or a string name")
 
-    def get_qubit_pair(self, qubits: Tuple[int | str | Qubit, int | str | Qubit]) -> QubitPair:
+    def get_qubit_pair(
+        self, qubits: str | Tuple[int | str | Qubit, int | str | Qubit]
+    ) -> QubitPair:
         """Get the QubitPair for two qubit indices or names.
 
         Args:
-            qubits: Pair of qubit indices, names, or :class:`~quam.components.Qubit`
-                objects.
+            qubits: Qubit pair name, or a pair of qubit indices, names, or
+                :class:`~quam.components.Qubit` objects.
 
         Returns:
             The corresponding :class:`~quam.components.QubitPair`.
         """
+        if isinstance(qubits, str):
+            if qubits not in self._qubit_pair_dict:
+                raise ValueError(f"Qubit pair {qubits} not found in the machine's active qubit pairs")
+            return self.get_qubit_pair(self._qubit_pair_dict[qubits])
+
         if isinstance(qubits, tuple) and len(qubits) == 2:
             qubit1, qubit2 = qubits
             if isinstance(qubit1, int):
@@ -344,7 +351,7 @@ class QMBackend(Backend):
             except TypeError:
                 raise ValueError(f"Qubit pair {qubits} not found in the machine's active qubit pairs")
         else:
-            raise ValueError("Qubit pair should be a tuple of two qubits")
+            raise ValueError("Qubit pair should be a qubit pair name or a tuple of two qubits")
 
     @property
     def qubit_mapping(self) -> QubitsMapping:
@@ -1167,6 +1174,6 @@ class QMBackend(Backend):
         return QMOpenQASM3Exporter(
             includes=(),
             basis_gates=self.qm_qasm_basis_gates,
-            disable_constants=True,
+            disable_constants=False,
             experimental=experimental,
         )
