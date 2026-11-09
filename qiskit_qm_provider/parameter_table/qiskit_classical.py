@@ -259,15 +259,23 @@ def with_placeholders(exported: Mapping[Any, Any], bindings: Mapping[str, Any]) 
     """``bindings`` plus a typed zero for every exported input it leaves unbound.
 
     The zero is ``False``, ``0`` or ``0.0`` (a list of those for an array input), keyed by the
-    exported identifier. Lets a circuit compile outside a QUA program (e.g. to print its pulse
-    sequence), where no table can be declared.
+    exported identifier. A vector exported as one array keeps the values bound to its single
+    elements and starts only the others from zero. Lets a circuit compile outside a QUA program
+    (e.g. to print its pulse sequence), where no table can be declared.
     """
+    from qiskit.circuit import ParameterVector
+
     zeros = {bool: False, int: 0}
     filled = dict(bindings)
     for obj, spec in exported.items():
         if _lookup_exported_binding(obj, spec, bindings)[0] is None:
             zero = zeros.get(_input_dtype(obj), 0.0)
-            filled[spec.name] = zero if spec.length is None else [zero] * spec.length
+            if spec.length is None:
+                filled[spec.name] = zero
+            elif isinstance(obj, ParameterVector):
+                filled[spec.name] = [bindings.get(vector_element_key(p), zero) for p in obj]
+            else:
+                filled[spec.name] = [zero] * spec.length
     return filled
 
 

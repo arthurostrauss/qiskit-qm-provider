@@ -74,6 +74,22 @@ def test_get_qua_script_defaults_unbound_inputs_to_zero(compilation_backend):
     assert "frame_rotation" in get_qua_script(compilation_backend, physical, param_table={"theta": 0.25, "x": [0.1, 0.2]})
 
 
+def test_get_qua_script_keeps_element_values(compilation_backend):
+    # A value bound to one element survives whether the vector is exported as an array (the rest
+    # of the array starts from zero) or as scalars.
+    from qiskit_qm_provider import get_qua_script
+
+    x = ParameterVector("x", 2)
+    circuit = QuantumCircuit(1)
+    circuit.rz(x[0], 0)
+    circuit.rx(x[1], 0)
+    circuit.measure_all()
+    physical = transpile(circuit, compilation_backend, optimization_level=0)
+    for key in (x[0], "x[0]"):
+        script = get_qua_script(compilation_backend, physical, param_table={key: 0.375})
+        assert "0.375" in script and "0.0" in script
+
+
 def test_get_qua_script_rejects_tables(compilation_backend):
     from qiskit_qm_provider import get_qua_script
 
