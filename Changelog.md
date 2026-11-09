@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`QMBackend.quantum_circuit_to_qua(..., table_by_ref=...)`** — `param_table` still copies each binding into a new QUA variable. `table_by_ref` passes declared `Parameter` / `ParameterTable` variables through qm-qasm `inputs_by_ref` so the circuit uses them directly. The same exported input in both arguments raises `ValueError`.
+
+### Changed
+
+- **Require `qm-qasm>=1.10`.** The backend OpenQASM 3 exporter sets `disable_constants=False`, so named constants such as `pi` are exported instead of being inlined as floats.
+- **Require `qm-qua>=1.5.0`.** Circuit-input array lengths are read from ``QuaArrayVariable.creation_length`` instead of the private ``_size`` attribute.
+
 ## [0.4.1] - 2026-11-03
 
 ### Added

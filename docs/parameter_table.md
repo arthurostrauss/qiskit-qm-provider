@@ -39,7 +39,7 @@ Both `ParameterTable` and `Parameter` share **the same canonical verb names**, s
 **QUA side:**
 
 1. `declare()` — create QUA variables inside `with program():` (works for both `Parameter` and `ParameterTable`).
-2. Pass the table to `quantum_circuit_to_qua(qc, param_table=...)`.
+2. Pass the table to `quantum_circuit_to_qua(qc, param_table=...)` to copy its variables, or to `table_by_ref=...` to alias them.
 3. `rcv()` — read streamed parameters from the host.
 4. `stream_back()` — push values to output streams.
 

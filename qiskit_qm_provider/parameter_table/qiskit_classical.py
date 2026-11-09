@@ -102,16 +102,12 @@ def validate_qiskit_input_names(qc: QuantumCircuit) -> None:
             names[name] = owner
 
 
-_UNKNOWN = object()
-
-
 def _qua_length(value):
-    """Array length of a QUA value bound to an input, ``None`` for a scalar, or ``_UNKNOWN``."""
+    """Array length of a QUA value bound to an input, ``None`` for a scalar."""
     from qm.qua._expressions import QuaArrayVariable
 
     if isinstance(value, QuaArrayVariable):
-        size = getattr(value, "_size", None)
-        return size if isinstance(size, int) else _UNKNOWN
+        return value.creation_length
     if hasattr(value, "__len__"):  # a QUA2DArray row
         return len(value)
     return None
@@ -128,7 +124,37 @@ def _input_label(obj) -> str:
     return f"{kind} '{obj.name}'"
 
 
-def bind_exported_inputs(exported: Mapping[Any, Any], bindings: Mapping[str, Any]) -> Dict[str, Any]:
+def _lookup_exported_binding(obj, spec, bindings: Mapping[str, Any]):
+    """Return ``(value, hint)`` for one exported input; ``value`` is ``None`` if unbound."""
+    from qiskit.circuit import ParameterVector
+    from qiskit.circuit.parametervector import ParameterVectorElement
+
+    hint = ""
+    if isinstance(obj, ParameterVector):  # exported as one input array
+        value = bindings.get(obj.name)
+        if value is None and any(vector_element_key(p) in bindings for p in obj):
+            hint = (
+                " The bindings hold separate element fields; bind the whole vector with a "
+                f"length-{len(obj)} array, or set the backend option export_vector_as_array=False."
+            )
+    elif isinstance(obj, ParameterVectorElement):  # exported as a scalar input
+        value = bindings.get(vector_element_key(obj))
+        array = bindings.get(obj.vector.name)
+        if value is None and array is not None and _qua_length(array) == len(obj.vector):
+            value = array[obj.index]  # an array field binds the element's cell
+    else:
+        value = bindings.get(obj.name)
+    if value is None:
+        value = bindings.get(spec.name)
+    return value, hint
+
+
+def bind_exported_inputs(
+    exported: Mapping[Any, Any],
+    bindings: Mapping[str, Any],
+    *,
+    require_all: bool = True,
+) -> Dict[str, Any]:
     """Map QUA values onto the ``input`` declarations of an exported circuit.
 
     The exporter may rename an input (OpenQASM 3 gives gates and variables one namespace, so a
@@ -142,6 +168,8 @@ def bind_exported_inputs(exported: Mapping[Any, Any], bindings: Mapping[str, Any
             :func:`vector_element_key` for a single element). A value may also be keyed by the
             exported identifier itself. Keys matching no input are ignored, so a table shared by
             several circuits can be passed whole.
+        require_all: If ``True`` (default), every exported input must have a binding. If
+            ``False``, unbound inputs are omitted so a second binding set can cover them.
 
     Returns:
         The QUA value for each exported identifier, ready for the qm-qasm compiler.
@@ -150,34 +178,16 @@ def bind_exported_inputs(exported: Mapping[Any, Any], bindings: Mapping[str, Any
         ValueError: listing every input with no binding or with a binding of the wrong shape
             (qm-qasm would otherwise fail opaquely, or silently broadcast a scalar to an array).
     """
-    from qiskit.circuit import ParameterVector
-    from qiskit.circuit.parametervector import ParameterVectorElement
-
     inputs, problems = {}, []
     for obj, spec in exported.items():
-        value, hint = _UNKNOWN, ""
-        if isinstance(obj, ParameterVector):  # exported as one input array
-            value = bindings.get(obj.name, _UNKNOWN)
-            if value is _UNKNOWN and any(vector_element_key(p) in bindings for p in obj):
-                hint = (
-                    " The bindings hold separate element fields; bind the whole vector with a "
-                    f"length-{len(obj)} array, or set the backend option export_vector_as_array=False."
-                )
-        elif isinstance(obj, ParameterVectorElement):  # exported as a scalar input
-            value = bindings.get(vector_element_key(obj), _UNKNOWN)
-            array = bindings.get(obj.vector.name, _UNKNOWN)
-            if value is _UNKNOWN and array is not _UNKNOWN and _qua_length(array) in (len(obj.vector), _UNKNOWN):
-                value = array[obj.index]  # an array field binds the element's cell
-        else:
-            value = bindings.get(obj.name, _UNKNOWN)
-        if value is _UNKNOWN:
-            value = bindings.get(spec.name, _UNKNOWN)
+        value, hint = _lookup_exported_binding(obj, spec, bindings)
         label = f"{_input_label(obj)} (exported as '{spec.name}', {_shape(spec.length)})"
-        if value is _UNKNOWN:
-            problems.append(f"{label} has no binding.{hint}")
+        if value is None:
+            if require_all:
+                problems.append(f"{label} has no binding.{hint}")
             continue
         length = _qua_length(value)
-        if length is not _UNKNOWN and length != spec.length:
+        if length != spec.length:
             problems.append(f"{label} is bound to {_shape(length)}.")
             continue
         inputs[spec.name] = value

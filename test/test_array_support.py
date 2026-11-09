@@ -17,7 +17,7 @@ from qiskit.circuit import Parameter as QiskitParameter, ParameterVector
 from qiskit.circuit.classical import expr, types
 from qm import qua, generate_qua_script
 
-from qiskit_qm_provider import InputType, ParameterPool, ParameterTable, QUA2DArray
+from qiskit_qm_provider import InputType, Parameter, ParameterPool, ParameterTable, QUA2DArray
 from qiskit_qm_provider.parameter_table import qiskit_classical
 from qiskit_qm_provider.parameter_table.qiskit_classical import (
     bind_exported_inputs,
@@ -54,7 +54,7 @@ def _export(qc, vector_arrays):
     experimental = qasm3.ExperimentalFeatures(0)
     if vector_arrays:
         experimental = qasm3.ExperimentalFeatures.PARAMETER_VECTORS_AS_ARRAYS
-    exporter = QMOpenQASM3Exporter(includes=(), basis_gates=BASIS, disable_constants=True, experimental=experimental)
+    exporter = QMOpenQASM3Exporter(includes=(), basis_gates=BASIS, disable_constants=False, experimental=experimental)
     return exporter.export(qc)
 
 
@@ -71,8 +71,10 @@ class _RecordingCompiler:
     def __init__(self):
         self.calls = []
 
-    def compile(self, qasm, compilation_name=None, inputs=None):
-        self.calls.append(SimpleNamespace(qasm=qasm, name=compilation_name, inputs=inputs))
+    def compile(self, qasm, compilation_name=None, inputs=None, inputs_by_ref=None):
+        self.calls.append(
+            SimpleNamespace(qasm=qasm, name=compilation_name, inputs=inputs, inputs_by_ref=inputs_by_ref)
+        )
         return SimpleNamespace(name=compilation_name, result_program=None, uuid="0", source_code=qasm)
 
 
@@ -81,12 +83,12 @@ def compile_circuit(compilation_backend, monkeypatch):
     """Compile through a real machine-derived target; replace only the compiler when
     inspecting input mappings that deliberately emulate the other Qiskit variant.
     """
-    def compile(qc, table, compiler=None):
+    def compile(qc, table=None, compiler=None, **kwargs):
         physical = transpile(qc, compilation_backend, optimization_level=0)
         with monkeypatch.context() as patch:
             if compiler is not None:
                 patch.setattr(type(compilation_backend), "compiler", property(lambda self: compiler))
-            return compilation_backend.quantum_circuit_to_qua(physical, table)
+            return compilation_backend.quantum_circuit_to_qua(physical, table, **kwargs)
 
     return compile
 
@@ -232,8 +234,8 @@ def test_e2e_fork_real_compiler(compile_circuit):
     from packaging.version import Version
     from importlib.metadata import version
 
-    if Version(version("qm-qasm")) < Version("1.8.0"):
-        pytest.skip("array inputs need qm-qasm >= 1.8.0")
+    if Version(version("qm-qasm")) < Version("1.10"):
+        pytest.skip("array inputs need qm-qasm >= 1.10")
     qc, _ = _partial_vector_circuit()
     table = ParameterTable.from_qiskit(qc)
     with qua.program():
@@ -248,6 +250,71 @@ def test_e2e_stock_real_compiler(compile_circuit):
     with qua.program() as prog:
         compile_circuit(qc, table)
     assert "frame_rotation" in generate_qua_script(prog)
+
+
+def _two_angle_circuit():
+    theta = QiskitParameter("theta")
+    phi = QiskitParameter("phi")
+    qc = QuantumCircuit(1)
+    qc.rx(theta, 0)
+    qc.rz(phi, 0)
+    return qc
+
+
+def test_param_table_copies_and_omits_inputs_by_ref(compile_circuit):
+    qc = _two_angle_circuit()
+    table = ParameterTable.from_qiskit(qc)
+    compiler = _RecordingCompiler()
+    with qua.program():
+        compile_circuit(qc, table, compiler)
+    call = compiler.calls[0]
+    assert set(call.inputs) == {"theta", "phi"}
+    assert call.inputs_by_ref is None
+
+
+def test_table_by_ref_aliases_inputs(compile_circuit):
+    qc = _two_angle_circuit()
+    table = ParameterTable.from_qiskit(qc)
+    compiler = _RecordingCompiler()
+    with qua.program():
+        compile_circuit(qc, None, compiler, table_by_ref=table)
+        call = compiler.calls[0]
+        assert call.inputs is None
+        assert call.inputs_by_ref["theta"] is table.get_parameter("theta").var
+        assert call.inputs_by_ref["phi"] is table.get_parameter("phi").var
+
+
+def test_split_param_table_and_table_by_ref(compile_circuit):
+    qc = _two_angle_circuit()
+    copied = Parameter("theta", 0.0)
+    aliased = Parameter("phi", 0.0)
+    compiler = _RecordingCompiler()
+    with qua.program():
+        compile_circuit(qc, copied, compiler, table_by_ref=aliased)
+        call = compiler.calls[0]
+        assert call.inputs["theta"] is copied.var
+        assert call.inputs_by_ref["phi"] is aliased.var
+        assert "phi" not in call.inputs
+        assert "theta" not in call.inputs_by_ref
+
+
+def test_overlap_of_copy_and_by_ref_raises_before_compile(compile_circuit):
+    qc = _two_angle_circuit()
+    table = ParameterTable.from_qiskit(qc)
+    compiler = _RecordingCompiler()
+    with qua.program():
+        with pytest.raises(ValueError, match="by copy and by reference"):
+            compile_circuit(qc, table, compiler, table_by_ref=table)
+    assert compiler.calls == []
+
+
+def test_missing_binding_still_raises(compile_circuit):
+    qc = _two_angle_circuit()
+    compiler = _RecordingCompiler()
+    with qua.program():
+        with pytest.raises(ValueError, match="has no binding"):
+            compile_circuit(qc, None, compiler)
+    assert compiler.calls == []
 
 
 def test_qua2d_row_assign_length_mismatch():

@@ -1,5 +1,6 @@
 """Parameterized circuits through a real machine-derived backend and qm-qasm."""
 
+import numpy as np
 import pytest
 from qiskit import QuantumCircuit, transpile
 from qiskit.circuit import Parameter, ParameterVector
@@ -25,3 +26,34 @@ def test_parameterized_circuit_compiles_on_machine_backend(compilation_backend, 
     assert "frame_rotation" in script
     assert '"q0.xy"' in script or "'q0.xy'" in script
     assert compiled.outputs.get_parameter("meas").length == 1
+
+
+def test_table_by_ref_compiles_on_machine_backend(compilation_backend):
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(1)
+    circuit.rx(theta, 0)
+    circuit.measure_all()
+    physical = transpile(circuit, compilation_backend, optimization_level=0)
+    table = ParameterTable.from_qiskit(physical)
+
+    with qua.program() as program:
+        compiled = compilation_backend.quantum_circuit_to_qua(physical, table_by_ref=table)
+
+    script = generate_qua_script(program)
+    assert "frame_rotation" in script
+    assert compiled.outputs.get_parameter("meas").length == 1
+
+
+def test_openqasm_constants_are_exported(compilation_backend):
+    circuit = QuantumCircuit(1)
+    circuit.rx(np.pi / 2, 0)
+    circuit.measure_all()
+    physical = transpile(circuit, compilation_backend, optimization_level=0)
+    qasm, _ = compilation_backend.qasm3_exporter.export(physical)
+    assert "pi" in qasm
+    assert "1.570796" not in qasm
+
+    with qua.program() as program:
+        compilation_backend.quantum_circuit_to_qua(physical)
+
+    assert "frame_rotation" in generate_qua_script(program)

@@ -103,13 +103,22 @@ Unlike typical Qiskit backends, parameters need not be bound at compile time. Us
 
 Table fields keep the Qiskit names. The OpenQASM 3 exporter may rename an input (gates and variables share one namespace, so a `ParameterVector` called `x` exported as an array next to the `x` gate becomes `x_0`; a name that is not an identifier, such as `theta.1`, is escaped). `quantum_circuit_to_qua` matches inputs by Qiskit object, so a renamed input still binds to its field. It raises `ValueError`, naming each input, when one has no binding or a binding of the wrong shape (scalar vs. array, array length): qm-qasm itself would broadcast a scalar into an array input without complaint, and fails on a missing input with an opaque `Qua1GenerationPass failed`.
 
+`param_table` copies each binding into a new QUA variable. Pass declared tables or standalone `Parameter` objects in `table_by_ref` to alias those variables instead: the circuit uses them directly, and an assignment in the OpenQASM program updates the caller's variable. Each circuit input must come from one argument or the other; the same exported input in both raises `ValueError`.
+
+```python
+with program() as prog:
+    copied.declare()
+    aliased.declare()
+    backend.quantum_circuit_to_qua(qc, param_table=copied, table_by_ref=aliased)
+```
+
 ### Exporting `ParameterVector`s as arrays
 
 The backend option `export_vector_as_array` (default `True`) exports each `ParameterVector` as one full-length `input array[float[64], N]`. It needs the [`full_real_time_expr` Qiskit branch](real_time_expressions.md) (its `PARAMETER_VECTORS_AS_ARRAYS` exporter feature) and is ignored on stock Qiskit, which exports one scalar input per used element. Turn it off with `backend.set_options(export_vector_as_array=False)`. Tables built by `ParameterTable.from_qiskit` on the branch hold a vector as one array field, which binds either export.
 
 ### The OpenQASM 3 exporter is internal
 
-`quantum_circuit_to_qua` always exports through `backend.qasm3_exporter`, which is configured for this backend (its basis gates, constants disabled, and the `export_vector_as_array` option). qm-qasm expects that output: circuits laid out on physical qubits and expressed in the backend's native operations. Exporting with your own `Exporter` (or other options) and feeding the result to qm-qasm yourself is possible, but it is not a supported path: nothing checks that its operations, qubits or input declarations match what the compiler and your tables expect.
+`quantum_circuit_to_qua` always exports through `backend.qasm3_exporter`, which is configured for this backend (its basis gates, OpenQASM `const` declarations enabled, and the `export_vector_as_array` option). qm-qasm expects that output: circuits laid out on physical qubits and expressed in the backend's native operations. Exporting with your own `Exporter` (or other options) and feeding the result to qm-qasm yourself is possible, but it is not a supported path: nothing checks that its operations, qubits or input declarations match what the compiler and your tables expect.
 
 ## Utilities
 
