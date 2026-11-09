@@ -58,8 +58,6 @@ from ..parameter_table import ParameterTable, InputType, Parameter
 from ..utils.calibrations.identifiers import operation_key
 from ..utils.circuit.physical_layout import ensure_circuit_physical
 from ..utils.circuit.target_support import ensure_native_operations
-from ..utils.compilation.qua_reference import is_qua_reference
-from ..utils.formatting.parameter_bindings import parameter_bindings
 from ..utils.gates.naming import get_extended_gate_name_mapping, look_for_standard_op
 from ..utils.gates.target_builtins import (
     control_flow_name_mapping,
@@ -1000,16 +998,18 @@ class QMBackend(Backend):
                 ``ParameterVector`` (or its name) takes a full-length QUA array,
                 which also binds elements exported as scalar inputs; a single
                 element (or ``"name[i]"``) takes a scalar, and only binds an
-                element exported as a scalar input.
+                element exported as a scalar input. Undeclared tables are
+                declared at this call site.
             table_by_ref: Parameter tables and standalone parameters passed by
                 reference to qm-qasm. Accepts one :class:`~.Parameter`, one
-                :class:`~.ParameterTable`, or a sequence of either. Each value
-                must already be a declared QUA variable, array, or array cell;
-                the compiler uses that object directly, so assignments inside
-                the OpenQASM program update it. Each circuit input comes from
-                ``param_table`` or from ``table_by_ref``, not both: the same
-                exported input in both raises ``ValueError``. Omit it to copy
-                every binding into a new QUA variable.
+                :class:`~.ParameterTable`, or a sequence of either (no dict).
+                Each must already be declared, and each value bound to an
+                input must be a QUA variable, array, or array cell of the
+                input's dtype (``fixed`` for a float input). The compiler uses
+                that object directly, so assignments inside the OpenQASM
+                program update it. Each circuit input comes from
+                ``param_table`` or from ``table_by_ref``, not both. Omit it to
+                copy every binding into a new QUA variable.
 
         Returns:
             :class:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation`
@@ -1020,10 +1020,14 @@ class QMBackend(Backend):
             ValueError: if a circuit input has no binding, a binding of the
                 wrong shape (scalar vs. array, array length), the same exported
                 input is supplied in both ``param_table`` and ``table_by_ref``,
-                or a ``table_by_ref`` value is not a QUA variable, array or
-                array cell. Inputs are matched by Qiskit object, so an input
-                the exporter renamed (e.g. a vector ``x`` next to the ``x``
-                gate, exported as ``x_0``) still binds to its table field.
+                a ``table_by_ref`` table is not declared, or a ``table_by_ref``
+                value is not a QUA variable, array or array cell of the input's
+                dtype. Every problem is listed, naming the argument it came
+                from. Inputs are matched by Qiskit object, so an input the
+                exporter renamed (e.g. a vector ``x`` next to the ``x`` gate,
+                exported as ``x_0``) still binds to its table field.
+            TypeError: if ``param_table`` or ``table_by_ref`` is not one of the
+                accepted types (a dict is accepted only by ``param_table``).
         """
         from .qua_circuit_compilation import QuaCircuitCompilation
 
@@ -1043,7 +1047,8 @@ class QMBackend(Backend):
                         f"Run update_calibrations() before compiling the circuit",
                     )
         from ..parameter_table.qiskit_classical import (
-            bind_exported_inputs,
+            bind_circuit_inputs,
+            parameter_bindings,
             validate_classical_types,
             validate_qiskit_input_names,
         )
@@ -1053,34 +1058,13 @@ class QMBackend(Backend):
         # Barriers are kept: qm-qasm lowers each one to a QUA ``align`` over the elements
         # of the barrier's qubits.
         open_qasm_code, exported_inputs = self.qasm3_exporter.export(qc)
-        if table_by_ref is not None and isinstance(table_by_ref, Dict):
-            raise TypeError(
-                "table_by_ref accepts a Parameter, ParameterTable, or a sequence of either"
-            )
         copy_bindings = parameter_bindings(param_table, qc)
-        ref_bindings = parameter_bindings(table_by_ref, qc)
-        inputs = None
-        inputs_by_ref = None
+        ref_bindings = parameter_bindings(table_by_ref, qc, by_ref=True)
+        inputs = inputs_by_ref = None
         if exported_inputs:
             # Inputs are matched by Qiskit object: the exporter may have renamed them.
-            copy_inputs = bind_exported_inputs(exported_inputs, copy_bindings, require_all=False)
-            ref_inputs = bind_exported_inputs(exported_inputs, ref_bindings, require_all=False)
-            overlap = sorted(set(copy_inputs) & set(ref_inputs))
-            if overlap:
-                raise ValueError(
-                    "Cannot bind the circuit inputs by copy and by reference:\n- " + "\n- ".join(overlap)
-                )
-            bind_exported_inputs(exported_inputs, {**copy_bindings, **ref_bindings})
-            not_references = [
-                name for name, value in ref_inputs.items() if not is_qua_reference(value)
-            ]
-            if not_references:
-                raise ValueError(
-                    "table_by_ref values must be QUA variables, arrays or array cells:\n- "
-                    + "\n- ".join(not_references)
-                )
-            inputs = copy_inputs or None
-            inputs_by_ref = ref_inputs or None
+            inputs, inputs_by_ref = bind_circuit_inputs(exported_inputs, copy_bindings, ref_bindings)
+            inputs, inputs_by_ref = inputs or None, inputs_by_ref or None
         result = self.compiler.compile(
             open_qasm_code,
             compilation_name=f"{qc.name}_qua",

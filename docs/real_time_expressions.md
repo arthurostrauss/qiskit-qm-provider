@@ -265,7 +265,7 @@ Compared with the batch-of-circuits approach, the program is compiled **once**, 
 
 - **Stock Qiskit:** none of the APIs on this page exist. `ParameterTable.from_qiskit` falls back to unrolled scalar fields for `ParameterVector`s, and circuits without arrays or `expr.Range` compile exactly as before.
 - **QPY:** circuits that use `expr.Range`, arrays or `Var` loop counters need QPY version 18. They cannot be loaded by upstream Qiskit.
-- **Array input cost:** `param_table` bindings are copied into a new QUA array at each `quantum_circuit_to_qua` call site, so inside a shot loop that costs about `MAX_OPS` QUA assignments per shot and holds the array twice on the FPGA. Pass the declared array through `table_by_ref` to alias it instead. Keep `MAX_OPS` no larger than you need.
+- **Array input cost:** `param_table` bindings are copied into a new QUA array at each `quantum_circuit_to_qua` call site, so inside a shot loop that costs about `MAX_OPS` QUA assignments per shot and holds the array twice on the FPGA. Pass the declared array through `table_by_ref` to alias it instead; Sampler and Estimator programs already do, unless the circuit stores into one of its inputs. Keep `MAX_OPS` no larger than you need.
 - **Limits:** arrays are 1-D only, with no nesting and no slices. The element types are `Bool`, `Uint`, `Float` and `Duration`.
 
 ## Related

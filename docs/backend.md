@@ -103,7 +103,7 @@ Unlike typical Qiskit backends, parameters need not be bound at compile time. Us
 
 Table fields keep the Qiskit names. The OpenQASM 3 exporter may rename an input (gates and variables share one namespace, so a `ParameterVector` called `x` exported as an array next to the `x` gate becomes `x_0`; a name that is not an identifier, such as `theta.1`, is escaped). `quantum_circuit_to_qua` matches inputs by Qiskit object, so a renamed input still binds to its field. It raises `ValueError`, naming each input, when one has no binding or a binding of the wrong shape (scalar vs. array, array length): qm-qasm itself would broadcast a scalar into an array input without complaint, and fails on a missing input with an opaque `Qua1GenerationPass failed`.
 
-`param_table` copies each binding into a new QUA variable. Pass declared tables or standalone `Parameter` objects in `table_by_ref` to alias those variables instead: the circuit uses them directly, and an assignment in the OpenQASM program updates the caller's variable. Each circuit input must come from one argument or the other; the same exported input in both raises `ValueError`.
+`param_table` copies each binding into a new QUA variable. Pass declared tables or standalone `Parameter` objects in `table_by_ref` to alias those variables instead: the circuit uses them directly, and an assignment in the OpenQASM program updates the caller's variable. Tables passed by reference must already be declared, and each aliased variable must have the input's dtype (`fixed` for a float parameter): qm-qasm cannot alias an `int` variable as a `float[64]` input. Each circuit input must come from one argument or the other; the same exported input in both raises `ValueError`.
 
 ```python
 with program() as prog:
@@ -118,7 +118,7 @@ The backend option `export_vector_as_array` (default `True`) exports each `Param
 
 ### The OpenQASM 3 exporter is internal
 
-`quantum_circuit_to_qua` always exports through `backend.qasm3_exporter`, which is configured for this backend (its basis gates, OpenQASM `const` declarations enabled, and the `export_vector_as_array` option). qm-qasm expects that output: circuits laid out on physical qubits and expressed in the backend's native operations. Exporting with your own `Exporter` (or other options) and feeding the result to qm-qasm yourself is possible, but it is not a supported path: nothing checks that its operations, qubits or input declarations match what the compiler and your tables expect.
+`quantum_circuit_to_qua` always exports through `backend.qasm3_exporter`, which is configured for this backend (its basis gates, angles written in terms of the OpenQASM constants `pi`, `euler` and `tau`, and the `export_vector_as_array` option). qm-qasm expects that output: circuits laid out on physical qubits and expressed in the backend's native operations. Exporting with your own `Exporter` (or other options) and feeding the result to qm-qasm yourself is possible, but it is not a supported path: nothing checks that its operations, qubits or input declarations match what the compiler and your tables expect.
 
 ## Utilities
 
@@ -128,7 +128,12 @@ Seeds standard gate macros on a QuAM machine. **Flux-tunable transmon defaults**
 
 ### `get_qua_script` / `dump_qua_script`
 
-Debug helpers to inspect generated QUA from compilation results.
+Debug helpers that compile a circuit on its own and print (or write) the QUA script that would run, to inspect its pulse sequence. They compile outside any QUA program, so no `ParameterTable` or `Parameter` can be declared: pass a dict of plain Python values in `param_table`, and every input you leave out starts from a typed zero (`0.0`, `0` or `False`, or a list of them for an array input). A parameterized circuit therefore needs no bindings at all. Passing a table raises `TypeError`; to compile with real streamed parameters, call `quantum_circuit_to_qua` inside `with program():`.
+
+```python
+print(get_qua_script(backend, tqc))                          # every input starts at zero
+print(get_qua_script(backend, tqc, param_table={"theta": 0.25}))
+```
 
 ### [`assign_struct_with_table`](apidocs/stubs/qiskit_qm_provider.utils.quarc.struct_assign.assign_struct_with_table.rst)
 

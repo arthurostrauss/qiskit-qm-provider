@@ -231,11 +231,6 @@ def test_e2e_fork_partial_vector_with_qua2d_row(compile_circuit):
 
 @vector_arrays_only
 def test_e2e_fork_real_compiler(compile_circuit):
-    from packaging.version import Version
-    from importlib.metadata import version
-
-    if Version(version("qm-qasm")) < Version("1.10"):
-        pytest.skip("array inputs need qm-qasm >= 1.10")
     qc, _ = _partial_vector_circuit()
     table = ParameterTable.from_qiskit(qc)
     with qua.program():
@@ -277,6 +272,7 @@ def test_table_by_ref_aliases_inputs(compile_circuit):
     table = ParameterTable.from_qiskit(qc)
     compiler = _RecordingCompiler()
     with qua.program():
+        table.declare()
         compile_circuit(qc, None, compiler, table_by_ref=table)
         call = compiler.calls[0]
         assert call.inputs is None
@@ -287,9 +283,10 @@ def test_table_by_ref_aliases_inputs(compile_circuit):
 def test_split_param_table_and_table_by_ref(compile_circuit):
     qc = _two_angle_circuit()
     copied = Parameter("theta", 0.0)
-    aliased = Parameter("phi", 0.0)
+    aliased = Parameter("phi", 0.0, qua_type="fixed")  # 0.0 alone infers int
     compiler = _RecordingCompiler()
     with qua.program():
+        aliased.declare()
         compile_circuit(qc, copied, compiler, table_by_ref=aliased)
         call = compiler.calls[0]
         assert call.inputs["theta"] is copied.var
@@ -306,6 +303,108 @@ def test_overlap_of_copy_and_by_ref_raises_before_compile(compile_circuit):
         with pytest.raises(ValueError, match="by copy and by reference"):
             compile_circuit(qc, table, compiler, table_by_ref=table)
     assert compiler.calls == []
+
+
+def test_overlap_reported_before_copy_shape(compile_circuit):
+    """A wrong-shaped copy of an input also bound by reference reports the overlap, not the shape."""
+    qc = _two_angle_circuit()
+    table = ParameterTable.from_qiskit(qc)
+    compiler = _RecordingCompiler()
+    with qua.program():
+        table.declare()
+        with pytest.raises(ValueError, match="by copy and by reference") as info:
+            compile_circuit(qc, {"theta": [0.1, 0.2]}, compiler, table_by_ref=table)
+    assert "is bound to" not in str(info.value)
+    assert compiler.calls == []
+
+
+def test_table_by_ref_shape_error_names_argument(compile_circuit):
+    qc = _two_angle_circuit()
+    compiler = _RecordingCompiler()
+    with qua.program():
+        theta = Parameter("theta", [0.0, 0.0], qua_type="fixed")
+        theta.declare()
+        with pytest.raises(ValueError, match="is bound to an array of length 2 in table_by_ref"):
+            compile_circuit(qc, Parameter("phi", 0.0), compiler, table_by_ref=theta)
+    assert compiler.calls == []
+
+
+def test_table_by_ref_dtype_mismatch_raises_before_compile(compile_circuit):
+    """qm-qasm cannot alias an int variable as a float input (opaque Qua1GenerationPass failure)."""
+    qc = _two_angle_circuit()
+    compiler = _RecordingCompiler()
+    with qua.program():
+        theta = Parameter("theta", 0)
+        theta.declare()
+        with pytest.raises(ValueError, match="QUA int variable; aliasing needs a fixed variable"):
+            compile_circuit(qc, Parameter("phi", 0.0), compiler, table_by_ref=theta)
+    assert compiler.calls == []
+
+
+def test_table_by_ref_requires_declared_tables(compile_circuit):
+    qc = _two_angle_circuit()
+    compiler = _RecordingCompiler()
+    with qua.program():
+        with pytest.raises(ValueError, match="declare 'theta' before compiling"):
+            compile_circuit(qc, Parameter("phi", 0.0), compiler, table_by_ref=Parameter("theta", 0.5))
+    assert compiler.calls == []
+
+
+def test_table_by_ref_rejects_dict(compile_circuit):
+    qc = _two_angle_circuit()
+    with qua.program():
+        with pytest.raises(TypeError, match="table_by_ref accepts"):
+            compile_circuit(qc, None, _RecordingCompiler(), table_by_ref={"theta": 0.1})
+
+
+def test_circuit_writes_inputs():
+    plain = QuantumCircuit(1)
+    a = plain.add_input("a", types.Bool())
+    assert not qiskit_classical.circuit_writes_inputs(plain)
+    nested = QuantumCircuit(1, 1)
+    b = nested.add_input("b", types.Bool())
+    with nested.if_test(expr.lift(True)):
+        nested.store(b, False)
+    assert qiskit_classical.circuit_writes_inputs(nested)
+    local = QuantumCircuit(1)
+    local.add_input("c", types.Bool())
+    tmp = local.add_var("tmp", False)
+    local.store(tmp, True)
+    assert not qiskit_classical.circuit_writes_inputs(local)
+
+
+class _KwargsBackend:
+    def __init__(self):
+        self.calls = []
+
+    def quantum_circuit_to_qua(self, qc, param_table=None, **kwargs):
+        self.calls.append({"param_table": param_table, **kwargs})
+        return SimpleNamespace(outputs=SimpleNamespace(parameters=[]))
+
+
+def test_primitive_shot_loop_aliases_tables():
+    from qiskit_qm_provider.job.qua_programs import _process_circuit
+
+    qc = _two_angle_circuit()
+    table = ParameterTable.from_qiskit(qc)
+    backend = _KwargsBackend()
+    with qua.program():
+        table.declare()
+        _process_circuit(qc, backend, 10, table)
+    assert backend.calls == [{"param_table": None, "table_by_ref": table}]
+
+
+def test_primitive_shot_loop_copies_when_circuit_writes_an_input():
+    from qiskit_qm_provider.job.qua_programs import _process_circuit
+
+    qc = QuantumCircuit(1)
+    a = qc.add_input("a", types.Bool())
+    qc.store(a, False)
+    backend = _KwargsBackend()
+    table = object()
+    with qua.program():
+        _process_circuit(qc, backend, 10, table)
+    assert backend.calls == [{"param_table": table}]
 
 
 def test_missing_binding_still_raises(compile_circuit):
