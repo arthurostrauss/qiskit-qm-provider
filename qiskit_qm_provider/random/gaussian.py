@@ -107,6 +107,13 @@ def box_muller_pair(
         std: Per-dimension standard deviations, same length as ``mean``.
         tables: Lookup tables; defaults to ``BoxMullerTables.get()`` (512 entries).
 
+    Note:
+        Fixed-point arithmetic wraps around on overflow, as on the controller, and
+        :class:`~qiskit_qm_provider.fixed_point.FixedPointOverflowWarning` is emitted when that
+        happens. The replay stays exact, but the samples are rarely meaningful: keep
+        ``std * r_max < 8`` and ``|mean| + std * r_max < 8`` (``r_max`` is about 3.54
+        for 512 table entries).
+
     Returns:
         Tuple ``(z1, z2)`` of per-dimension samples as :class:`~qiskit_qm_provider.FixedPoint`.
 

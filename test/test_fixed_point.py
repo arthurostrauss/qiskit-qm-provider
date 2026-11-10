@@ -1,7 +1,9 @@
 """Tests for FixedPoint arithmetic."""
 
+import warnings
+
 import pytest
-from qiskit_qm_provider.fixed_point import FixedPoint
+from qiskit_qm_provider.fixed_point import FixedPoint, FixedPointApproximationWarning, FixedPointOverflowWarning
 
 
 class TestFixedPointInit:
@@ -29,13 +31,60 @@ class TestFixedPointInit:
         fp = FixedPoint(-0.25)
         assert abs(fp.to_float() - (-0.25)) < 1e-7
 
-    def test_saturation_max(self):
-        fp = FixedPoint(100.0, fractional_bits=28, bit_width=32)
-        assert fp.value == fp.max_value
+    def test_out_of_range_constant_wraps_and_warns(self):
+        with pytest.warns(FixedPointOverflowWarning):
+            assert FixedPoint(9.0).to_float() == -7.0
+        with pytest.warns(FixedPointOverflowWarning):
+            assert FixedPoint(-9.0).to_float() == 7.0
 
-    def test_saturation_min(self):
-        fp = FixedPoint(-100.0, fractional_bits=28, bit_width=32)
-        assert fp.value == fp.min_value
+    def test_range_edges_do_not_warn(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FixedPointOverflowWarning)
+            assert FixedPoint(-8.0).value == -(1 << 31)
+            assert FixedPoint.from_int((1 << 31) - 1).value == (1 << 31) - 1
+
+
+class TestFixedPointOverflow:
+    """Wrap-around semantics, checked against QUA fixed arithmetic on hardware (IQCC 'arbel')."""
+
+    @pytest.mark.parametrize(
+        "op, x, y, expected",
+        [
+            ("add", 7.0, 3.0, -6.0),
+            ("add", -7.0, -3.0, 6.0),
+            ("sub", 7.0, -3.0, -6.0),
+            ("mul", 3.0, 3.0, -7.0),
+            ("mul", -3.0, 3.0, 7.0),
+        ],
+    )
+    def test_hardware_overflow_cases_wrap_and_warn(self, op, x, y, expected):
+        fx, fy = FixedPoint(x), FixedPoint(y)
+        with pytest.warns(FixedPointOverflowWarning, match="wraps around"):
+            result = {"add": fx + fy, "sub": fx - fy, "mul": fx * fy}[op]
+        assert result.to_float() == expected
+
+    @pytest.mark.parametrize("op, x, y, expected", [("add", 3.0, 2.0, 5.0), ("mul", 2.0, 3.0, 6.0)])
+    def test_in_range_does_not_warn(self, op, x, y, expected):
+        fx, fy = FixedPoint(x), FixedPoint(y)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FixedPointOverflowWarning)
+            result = fx + fy if op == "add" else fx * fy
+        assert result.to_float() == expected
+
+    def test_shift_left_wraps(self):
+        with pytest.warns(FixedPointOverflowWarning):
+            assert (FixedPoint(5.0) << 1).to_float() == -6.0
+
+    def test_warning_can_be_escalated(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FixedPointOverflowWarning)
+            with pytest.raises(FixedPointOverflowWarning):
+                FixedPoint(7.0) + FixedPoint(3.0)
+
+    def test_warning_points_at_caller(self):
+        with pytest.warns(FixedPointOverflowWarning) as record:
+            FixedPoint(7.0) + FixedPoint(3.0)
+        assert record[0].filename == __file__
 
 
 class TestFixedPointArithmetic:
@@ -182,3 +231,11 @@ class TestFixedPointConversions:
         fp = FixedPoint(0.5)
         r = repr(fp)
         assert "0.5" in r
+
+
+class TestFixedPointDivisionWarning:
+    def test_division_warns_it_is_approximate_on_hardware(self):
+        with pytest.warns(FixedPointApproximationWarning, match="approximate on the controller") as record:
+            result = FixedPoint(1.0) / FixedPoint(4.0)
+        assert result.to_float() == 0.25
+        assert record[0].filename == __file__

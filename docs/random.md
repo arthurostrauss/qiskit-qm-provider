@@ -142,6 +142,16 @@ Floats are quantized with `FixedPoint(...)`, which rounds to the nearest 4.28 va
 exactly as QUA's `declare(fixed, value=...)` does. Pass `FixedPoint` values directly if
 you already hold the controller's exact fixed values.
 
+**Keep the arithmetic inside the 4.28 range `[-8, 8)`.** QUA `fixed` arithmetic wraps
+around on overflow instead of saturating (checked on "arbel": `7 + 3` gives `-6`,
+`3 * 3` gives `-7`), and `FixedPoint` reproduces that wrap, so the replay stays exact
+even then. It also emits a `FixedPointOverflowWarning`, because a wrapped Gaussian
+sample is almost never what you want. Overflow is avoided when
+`std * r_max < 8` and `|mean| + std * r_max < 8`, where `r_max` is the largest table
+radius (about 3.54 for the default 512 entries). Escalate the warning with
+`warnings.simplefilter("error", FixedPointOverflowWarning)` (imported from
+`qiskit_qm_provider.fixed_point`) if you prefer a hard failure.
+
 Each pair costs a single uniform draw per dimension, so it has limited resolution: the
 top 9 bits of the draw select one of 512 radii, and the next 9 bits one of 512 angles.
 
@@ -163,8 +173,11 @@ The update rule runs in the controller's firmware; the QUA client only emits an 
 the algorithm. The constants and formulas above were checked bit for bit against the
 IQCC "arbel" machine (September 2026): `rand_int`, `rand_fixed` and the Box-Muller
 pairs all match. That check also showed that QUA rounds to nearest when declaring
-`fixed` values, and that fixed-point multiplication floors, which is what
-`FixedPoint` implements.
+`fixed` values, that fixed-point multiplication floors, and that fixed-point addition,
+subtraction, multiplication and shifts wrap around on overflow (November 2026), which
+is what `FixedPoint` implements. The same check showed that fixed-point division on the
+controller is only approximate (relative error up to about 1e-6), so `FixedPoint` division
+is not bit-exact; the Box-Muller sampler does not divide.
 
 The test suite keeps two opt-in hardware checks that stream controller draws and
 compare them with the host. Run them when changing QOP versions:

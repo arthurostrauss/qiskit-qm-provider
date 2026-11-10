@@ -11,11 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`qiskit_qm_provider.random`** — Python counterpart of QUA's `random` library. `Random` mirrors `qm.qua.Random` (`set_seed`, `rand_int`, `rand_fixed`), reproducing the controller's draws on the host when they are made in the same number and order. It adds `rand_int_sequence` / `rand_fixed_sequence`, `skip(n)` jump-ahead, `state` / `draws` inspection, and `declare_qua()` to create a QUA `Random` from the current Python state inside a program. `rand_fixed()` returns a `FixedPoint`.
 - **Box-Muller Gaussian sampling** — a utility that turns uniform `rand_fixed()` draws into samples from a Gaussian distribution: `rand_gauss_box_muller` (QUA macro) and `box_muller_pair` (host replay), sharing lookup values through `BoxMullerTables`.
+- **`FixedPointOverflowWarning`** (in `qiskit_qm_provider.fixed_point`) — emitted by `FixedPoint` whenever an operation or float conversion leaves the representable range.
+- **`FixedPointApproximationWarning`** (in `qiskit_qm_provider.fixed_point`) — emitted by `FixedPoint` division, which is only approximate on the controller.
 - **`FixedPoint.__float__`** — `float(x)` now delegates to `to_float()`.
 - **Docs** — new "Random numbers" guide and API page; the classical-effect instructions design note gains a section on the host mirror as an entry point for Qiskit integration.
 
 ### Changed
 
+- **`FixedPoint` overflow wraps around instead of saturating**, matching QUA's `fixed` arithmetic (checked on hardware: `7 + 3 = -6`, `3 * 3 = -7` in 4.28). A `FixedPointOverflowWarning` is emitted whenever it happens (including for out-of-range float constants). Host replays of controller computations, e.g. `box_muller_pair`, are now bit-exact on overflow too; previously the host clamped to the range limits while the controller wrapped. Checked bit for bit on hardware for `+`, `-`, `*`, `<<` and `>>`; division on the controller is only approximate (relative error up to about 1e-6), so `FixedPoint` division is not bit-exact, and `&`/`|` were not compared.
 - **`FixedPoint(value)` rounds to nearest** instead of truncating toward zero, matching QUA's `declare(fixed, value=...)` (checked on hardware). Results of `FixedPoint` arithmetic are unchanged; only float-to-fixed conversion can move by one LSB (2⁻²⁸). Host code that replicates controller computations from float inputs previously disagreed with the controller by one LSB on some values.
 
 ## [0.4.1] - 2026-11-03

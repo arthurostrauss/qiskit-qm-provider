@@ -324,3 +324,18 @@ def test_iqcc_hardware_matches_python(tmp_path):
 
     machine = IQCCProvider().get_machine(os.environ["QM_RANDOM_IQCC_BACKEND"], quam_state_folder_path=str(tmp_path))
     _run_and_compare(machine)
+
+
+def test_box_muller_pair_wraps_and_warns_on_overflow():
+    """A mean near 8 overflows the 4.28 range: the replay wraps (as QUA does) and warns."""
+    import warnings
+
+    from qiskit_qm_provider.fixed_point import FixedPointOverflowWarning
+    from qiskit_qm_provider.random import Random, box_muller_pair
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FixedPointOverflowWarning)
+        box_muller_pair(Random(1), [0.0], [1.0])  # in range: no warning
+    with pytest.warns(FixedPointOverflowWarning):
+        z1, z2 = box_muller_pair(Random(1), [7.9], [2.0])
+    assert all(-8.0 <= float(z) < 8.0 for z in (*z1, *z2))
