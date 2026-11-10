@@ -13,4 +13,5 @@ Qiskit QM Provider API Reference
    qm_parameter_table
    qm_job
    qm_pulse
+   qm_random
    qm_utils

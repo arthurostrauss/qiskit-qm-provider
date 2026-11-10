@@ -14,6 +14,8 @@ installation
 workflows
 providers
 backend
+classical_effect_instructions
+random
 measurement_outputs
 primitives
 parameter_table
@@ -100,6 +102,8 @@ Use the sidebar to browse guides, then dive into the [API Reference](apidocs/qm.
 - **[Workflows](workflows.md)** — routing guide for the five main paths through the toolbox.
 - **[Providers](providers.md)** — obtain a backend for local QOP, QM SaaS, or IQCC.
 - **[Backend & Utilities](backend.md)** — [`QMBackend`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst), embedding, utilities, custom gates.
+- **[Random draws in circuits](classical_effect_instructions.md)** — future design note: controller-side random draws in Qiskit circuits via reserved random-token inputs.
+- **[Random numbers](random.md)** — [`qiskit_qm_provider.random.Random`](apidocs/stubs/qiskit_qm_provider.random.Random.rst), a host-side mirror of QUA's `Random`, and a matching Box-Muller Gaussian sampler.
 - **[Measurement outputs](measurement_outputs.md)** — [`QuaCircuitCompilation`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation.rst), [`MeasurementOutcomeTable`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.MeasurementOutcomeTable.rst), [`MeasurementRegisterField`](apidocs/stubs/qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField.rst).
 - **[Primitives](primitives.md)** — [`QMSamplerV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerV2.rst) and [`QMEstimatorV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMEstimatorV2.rst).
 - **[Parameter Table](parameter_table.md)** — [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) and real-time data flow.
