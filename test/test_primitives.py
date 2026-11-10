@@ -221,7 +221,7 @@ class TestQMEstimatorV2ValidatePubs:
         with pytest.raises(ValueError):
             estimator.validate_estimator_pubs([pub])
 
-    def test_validate_strips_final_measurements(self, flux_tunable_backend):
+    def test_validate_keeps_final_measurements_and_appends_readout(self, flux_tunable_backend):
         from qiskit.quantum_info import SparsePauliOp
         from qiskit.primitives.containers.estimator_pub import EstimatorPub
 
@@ -239,8 +239,10 @@ class TestQMEstimatorV2ValidatePubs:
         validated = new_pubs[0].circuit
         __c = next(creg for creg in validated.cregs if creg.name == "__c")
         measure_ops = [inst for inst in validated.data if inst.operation.name == "measure"]
-        assert len(measure_ops) == 1
-        assert all(clbit in __c for clbit in measure_ops[0].clbits)
+        # The user's own measurement is kept; the Pauli readout is appended into __c.
+        assert len(measure_ops) == 2
+        assert measure_ops[0].clbits[0] not in __c
+        assert all(clbit in __c for clbit in measure_ops[-1].clbits)
 
     def test_validate_preserves_mid_circuit_measurements(self, flux_tunable_backend):
         from qiskit.quantum_info import SparsePauliOp
@@ -278,5 +280,5 @@ class TestQMEstimatorV2ValidatePubs:
 
         obs = SparsePauliOp.from_list([("Z" + "I" * (n - 1), 1.0)])
         pub = EstimatorPub.coerce((qc, obs), precision=0.01)
-        with pytest.raises(ValueError, match="register named '__c'"):
+        with pytest.raises(ValueError, match="reserved for the estimator"):
             estimator.validate_estimator_pubs([pub])
