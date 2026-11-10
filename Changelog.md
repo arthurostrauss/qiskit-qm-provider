@@ -87,6 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **IQCC estimator sync hook** — attached whenever a PUB streams inputs, including PUBs that stream observables but have no circuit parameters.
 - **Estimator table names** — tables are named by PUB index, fixing duplicate pool registration when two PUBs share a circuit name.
 - **`QMBackend.qubit_mapping` element names** — the base backend mapped each qubit to its `channels` dict keys (`"xy"`, `"z"`, ...) instead of the channels' QUA element names (`"q0.xy"`, ...), so every `align` qm-qasm emitted targeted non-existent elements. `FluxTunableTransmonBackend` already overrode this correctly.
+
 ## [0.3.5] - 2026-09-23
 
 ### Added

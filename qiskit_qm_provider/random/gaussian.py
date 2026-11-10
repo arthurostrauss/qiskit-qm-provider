@@ -66,10 +66,10 @@ class BoxMullerTables:
             )
         self.n_lookup = n_lookup
         self.u1_shift = STATE_BITS - (n_lookup.bit_length() - 1)
-        self.cos_values = [math.cos(2 * math.pi * k / n_lookup) for k in range(n_lookup)]
-        self.ln_values = [math.sqrt(-2 * math.log((k + 1) / (n_lookup + 1))) for k in range(n_lookup)]
-        self.cos_fixed = [FixedPoint(v) for v in self.cos_values]
-        self.ln_fixed = [FixedPoint(v) for v in self.ln_values]
+        self.cos_values = tuple(math.cos(2 * math.pi * k / n_lookup) for k in range(n_lookup))
+        self.ln_values = tuple(math.sqrt(-2 * math.log((k + 1) / (n_lookup + 1))) for k in range(n_lookup))
+        self.cos_fixed = tuple(FixedPoint(v) for v in self.cos_values)
+        self.ln_fixed = tuple(FixedPoint(v) for v in self.ln_values)
 
     @classmethod
     @functools.cache
@@ -86,7 +86,7 @@ class BoxMullerTables:
         """
         from qm.qua import declare, fixed
 
-        return declare(fixed, value=self.cos_values), declare(fixed, value=self.ln_values)
+        return declare(fixed, value=list(self.cos_values)), declare(fixed, value=list(self.ln_values))
 
 
 def box_muller_pair(
