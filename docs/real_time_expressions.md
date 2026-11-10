@@ -44,7 +44,7 @@ assert hasattr(types, "Array") and hasattr(expr, "Range"), "full_real_time_expr 
 ```
 
 ```{note}
-Circuits are lowered to QUA through OpenQASM 3 and **qm-qasm**. Array-typed `input` declarations need a qm-qasm build with input-array support (qm-qasm 1.8.0 or later).
+Circuits are lowered to QUA through OpenQASM 3 and **qm-qasm**. Array-typed `input` declarations need a qm-qasm build with input-array support (qm-qasm 1.10 or later).
 ```
 
 ## Dynamic loop ranges with `expr.Range`
@@ -265,7 +265,7 @@ Compared with the batch-of-circuits approach, the program is compiled **once**, 
 
 - **Stock Qiskit:** none of the APIs on this page exist. `ParameterTable.from_qiskit` falls back to unrolled scalar fields for `ParameterVector`s, and circuits without arrays or `expr.Range` compile exactly as before.
 - **QPY:** circuits that use `expr.Range`, arrays or `Var` loop counters need QPY version 18. They cannot be loaded by upstream Qiskit.
-- **Array input cost:** qm-qasm currently binds each `input` array by declaring its own QUA array and copying the streamed values element by element. The copy runs at the start of **every** `quantum_circuit_to_qua` call site, so inside a shot loop it costs about `MAX_OPS` QUA assignments per shot, and the array is held twice on the FPGA. Keep `MAX_OPS` no larger than you need.
+- **Array input cost:** `param_table` bindings are copied into a new QUA array at each `quantum_circuit_to_qua` call site, so inside a shot loop that costs about `MAX_OPS` QUA assignments per shot and holds the array twice on the FPGA. Pass the declared array through `table_by_ref` to alias it instead; Sampler and Estimator programs already do, unless the circuit stores into one of its inputs. Keep `MAX_OPS` no larger than you need.
 - **Limits:** arrays are 1-D only, with no nesting and no slices. The element types are `Bool`, `Uint`, `Float` and `Duration`.
 
 ## Related

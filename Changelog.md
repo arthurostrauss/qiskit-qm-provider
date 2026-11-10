@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`QMBackend.quantum_circuit_to_qua(..., table_by_ref=...)`** — `param_table` still copies each binding into a new QUA variable. `table_by_ref` passes declared `Parameter` / `ParameterTable` variables through qm-qasm `inputs_by_ref` so the circuit uses them directly. Tables passed by reference must be declared and match each input's dtype; the same exported input in both arguments raises `ValueError`. Sampler and Estimator programs alias their per-PUB tables this way (unless the circuit stores into one of its inputs), so they no longer copy every input on every shot.
+
+### Changed
+
+- **`get_qua_script` / `dump_qua_script` need no bindings.** They compile outside any QUA program, where tables cannot be declared (passing one always failed inside `declare()`). Circuit inputs now start from typed zeros unless `param_table` gives a plain Python value, and a table raises a clear `TypeError`.
+- **Require `qm-qasm>=1.10`.** The backend OpenQASM 3 exporter sets `disable_constants=False`, so named constants such as `pi` are exported instead of being inlined as floats.
+- **Require `qm-qua>=1.5.0`.** Circuit-input array lengths are read from ``QuaArrayVariable.creation_length`` instead of the private ``_size`` attribute.
+
 ## [0.4.1] - 2026-11-03
 
 ### Added

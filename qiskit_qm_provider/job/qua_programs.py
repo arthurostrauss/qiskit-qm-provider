@@ -26,6 +26,7 @@ from qiskit import QuantumCircuit
 from qm import Program
 from qm.qua import *
 from ..parameter_table import ParameterTable
+from ..parameter_table.qiskit_classical import circuit_writes_inputs
 from typing import Dict, List, Optional
 
 from .primitive_plan import EstimatorPlan, SamplerPlan
@@ -40,9 +41,14 @@ def _process_circuit(
     **kwargs,
 ):
     shot_var = declare(int)
+    # The tables are declared (and loaded) outside the shot loop, so alias them instead of
+    # copying every input on every shot -- unless the circuit writes an input, which by
+    # reference would leak into the next shot.
+    by_ref = param_table is not None and not circuit_writes_inputs(qc)
+    tables = {"table_by_ref": param_table} if by_ref else {"param_table": param_table}
 
     with for_(shot_var, 0, shot_var < num_shots, shot_var + 1):
-        comp = backend.quantum_circuit_to_qua(qc, param_table)
+        comp = backend.quantum_circuit_to_qua(qc, **tables)
         outputs = comp.outputs
         # Save each register / loose bit to its compiler-owned stream.
         for field in outputs.parameters:
