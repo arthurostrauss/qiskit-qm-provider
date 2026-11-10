@@ -33,7 +33,7 @@ def _exporter_for(pulse_name: str):
     return QMOpenQASM3Exporter(
         includes=(),
         basis_gates=[conditional_play_operation_name(pulse_name)],
-        disable_constants=True,
+        disable_constants=False,
     )
 
 
