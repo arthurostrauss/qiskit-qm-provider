@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-10
+
 ### Added
 
 - **`QMBackend.quantum_circuit_to_qua(..., table_by_ref=...)`** — `param_table` still copies each binding into a new QUA variable. `table_by_ref` passes declared `Parameter` / `ParameterTable` variables through qm-qasm `inputs_by_ref` so the circuit uses them directly. Tables passed by reference must be declared and match each input's dtype; the same exported input in both arguments raises `ValueError`. Sampler and Estimator programs alias their per-PUB tables this way (unless the circuit stores into one of its inputs), so they no longer copy every input on every shot.
-- **`qiskit_qm_provider.random`** — Python counterpart of QUA's `random` library. `Random` mirrors `qm.qua.Random` (`set_seed`, `rand_int`, `rand_fixed`), reproducing the controller's draws on the host when they are made in the same number and order. It adds `rand_int_sequence` / `rand_fixed_sequence`, `skip(n)` jump-ahead, `state` / `draws` inspection, and `declare_qua()` to create a QUA `Random` from the current Python state inside a program. `rand_fixed()` returns a `FixedPoint`.
+- **`qiskit_qm_provider.random`** — Python counterpart of QUA's `random` library. `Random` mirrors `qm.qua.Random` (`set_seed`, `rand_int`, `rand_fixed`), reproducing the controller's draws on the host when they are made in the same number and order. It adds `rand_int_sequence` / `rand_fixed_sequence`, `skip(n)` jump-ahead, `copy()`, `state` / `draws` inspection, and `declare_qua()` to create a QUA `Random` from the current Python state inside a program. `rand_fixed()` returns a `FixedPoint`.
 - **Box-Muller Gaussian sampling** — a utility that turns uniform `rand_fixed()` draws into samples from a Gaussian distribution: `rand_gauss_box_muller` (QUA macro) and `box_muller_pair` (host replay), sharing lookup values through `BoxMullerTables`.
 - **`FixedPointOverflowWarning`** (in `qiskit_qm_provider.fixed_point`) — emitted by `FixedPoint` whenever an operation or float conversion leaves the representable range.
 - **`FixedPointApproximationWarning`** (in `qiskit_qm_provider.fixed_point`) — emitted by `FixedPoint` division, which is only approximate on the controller.
