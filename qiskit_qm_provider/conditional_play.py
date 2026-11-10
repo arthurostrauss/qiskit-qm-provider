@@ -12,13 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Provider instruction for a QuAM pulse conditioned by a Qiskit expression.
+"""Provider support for a QuAM pulse conditioned by a Qiskit expression.
 
-``ConditionalPlay`` is an :class:`~qiskit.circuit.Instruction`, not a
-:class:`~qiskit.circuit.Gate`.  Its sole instruction argument is a typed
-Qiskit classical expression, never a numeric Qiskit ``Parameter``.  The
-provider exports it as an implicit OpenQASM ``defcal`` call so the expression
-reaches the registered QUA macro as a Boolean condition.
+The instruction itself (``_ConditionalPlay``) is private. Its
+Boolean condition lives only in ``Instruction.params``, invisible to Qiskit's
+DAG, so a bare instance is vulnerable to being silently reordered relative to
+a later write of the same classical ``Var`` by any
+``circuit_to_dag``/``dag_to_circuit`` round-trip (i.e. by any ``transpile()``
+call). The only sanctioned ways to create one are
+:meth:`QuantumCircuit.conditional_play` (installed on every circuit below) and
+:func:`add_conditional_play`, both of which always wrap it in a ``box`` so its
+condition's ``Var`` becomes a real DAG dependency. The provider exports that
+box as an ordinary OpenQASM 3 ``box`` statement; see
+:meth:`~qiskit_qm_provider.qasm3_exporter._QMOpenQASM3Builder.build_box` for
+where its structural contract -- exactly one ``_ConditionalPlay``
+and nothing else -- is enforced.
 """
 
 from __future__ import annotations
@@ -26,40 +34,66 @@ from __future__ import annotations
 from hashlib import sha256
 import re
 
-from qiskit.circuit import Instruction, QuantumCircuit
+from qiskit.circuit import Instruction, Parameter, QuantumCircuit
 from qiskit.circuit.classical import expr, types
 from qiskit.circuit.exceptions import CircuitError
 
 __all__ = [
-    "ConditionalPlay",
+    "add_conditional_play",
     "conditional_play_operation_name",
 ]
+
+
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+#: Prefix of every conditional-play operation name (see :func:`conditional_play_operation_name`).
+CONDITIONAL_PLAY_PREFIX = "qm_conditional_play_"
 
 
 def conditional_play_operation_name(pulse_name: str) -> str:
     """Return the stable OpenQASM-safe operation name for ``pulse_name``.
 
-    The operation name includes a readable ASCII fragment of the QuAM pulse
-    label for exported-QASM diagnostics.  It also includes a digest of the
-    original UTF-8 label, so distinct labels that sanitize to the same OpenQASM
-    fragment (for example, ``"-y90"`` and ``"_y90"``) remain distinct.  The
-    digest is part of the name's stable compile-time identity; it is never a
-    run-time pulse-selection parameter.
+    A ``pulse_name`` that is already a valid OpenQASM 3 identifier (the common
+    case -- e.g. ``"x180"``, ``"y90"``) is used as-is; no label needs mangling
+    there, so none is. ``-`` is the one other character this domain's pulse
+    names are known to use in practice (the ``"-x90"``/``"-y90"`` negated-pulse
+    convention), so it gets a dedicated, readable substitution (``minus``)
+    chosen specifically so it cannot collide with how ``_`` already passes
+    through unchanged (``"-y90"`` and ``"_y90"`` must stay distinct).
+
+    Anything else -- a character this domain's naming conventions don't
+    anticipate -- falls back to a generic sanitized form plus a digest of the
+    original UTF-8 label, so it stays injective even though the sanitization
+    itself is lossy. The digest is part of the name's stable compile-time
+    identity; it is never a run-time pulse-selection parameter.
     """
     if not isinstance(pulse_name, str) or not pulse_name:
         raise ValueError("pulse_name must be a non-empty string")
-    readable = re.sub(r"[^A-Za-z0-9_]", "_", pulse_name).strip("_")
+
+    if _IDENTIFIER.fullmatch(pulse_name):
+        return f"{CONDITIONAL_PLAY_PREFIX}{pulse_name}"
+
+    minus_substituted = pulse_name.replace("-", "minus_")
+    if _IDENTIFIER.fullmatch(minus_substituted):
+        return f"{CONDITIONAL_PLAY_PREFIX}{minus_substituted}"
+
+    readable = re.sub(r"[^A-Za-z0-9_]", "_", minus_substituted).strip("_")
     if not readable:
         readable = "pulse"
     if readable[0].isdigit():
         readable = f"pulse_{readable}"
     readable = readable[:48].rstrip("_") or "pulse"
     digest = sha256(pulse_name.encode("utf-8")).hexdigest()[:16]
-    return f"qm_conditional_play_{readable}_{digest}"
+    return f"{CONDITIONAL_PLAY_PREFIX}{readable}_{digest}"
 
 
-class ConditionalPlay(Instruction):
+class _ConditionalPlay(Instruction):
     """A one-qubit QuAM pulse play guarded by a Boolean classical expression.
+
+    Private: this class is never exported, so a caller cannot construct one
+    and ``append`` it directly, bypassing the box that keeps its condition
+    ordering-safe (see the module docstring). Use
+    :meth:`QuantumCircuit.conditional_play` or :func:`add_conditional_play`.
 
     Args:
         pulse_name: Compile-time QuAM pulse label.  It is resolved per physical
@@ -90,24 +124,19 @@ class ConditionalPlay(Instruction):
 
     @classmethod
     def target_operation(cls, pulse_name: str) -> Instruction:
-        """Create the parameter-free Target operation for ``pulse_name``.
+        """Create the Target operation for ``pulse_name``.
 
         Target applicability and the QUA macro are independent of the runtime
-        Boolean expression.  The concrete circuit instruction carries that
-        expression in ``params``; this Target exemplar only identifies the
-        per-qubit hardware operation.
+        Boolean expression, so the exemplar's single argument slot holds a free
+        placeholder :class:`~qiskit.circuit.Parameter`. A free parameter in a Target
+        operation accepts any value, which is what lets
+        :class:`~qiskit.transpiler.passes.GatesInBasis` (and
+        :meth:`~qiskit.transpiler.Target.instruction_supported` when given
+        ``parameters``) match a concrete instruction whose slot holds a Boolean
+        :class:`~qiskit.circuit.classical.expr.Expr`. A parameter-free exemplar would
+        fail that arity check for every conditional play.
         """
-        return Instruction(conditional_play_operation_name(pulse_name), 1, 0, [])
-
-    def copy(self, name: str | None = None):
-        """Copy provider metadata that :meth:`Instruction.copy` does not know.
-
-        The base copy machinery can preserve the generic argument list but has
-        no knowledge of the compile-time ``pulse_name`` used to rebuild this
-        provider-specific instruction.  Reconstructing the operation keeps the
-        pulse identity and its typed Boolean argument together.
-        """
-        return type(self)(self.pulse_name, self.condition_expr, label=name if name is not None else self.label)
+        return Instruction(conditional_play_operation_name(pulse_name), 1, 0, [Parameter("condition")])
 
     def inverse(self, annotated: bool = False):
         """Reject inversion instead of applying the base instruction fallback.
@@ -132,30 +161,72 @@ class ConditionalPlay(Instruction):
         """
         raise CircuitError("ConditionalPlay cannot be quantum-controlled")
 
-    def __eq__(self, other):
-        """Include pulse identity in equality beyond the base argument comparison.
 
-        Two operations with the same generated name shape and Boolean argument
-        are interchangeable only when they designate the same QuAM pulse.
-        """
-        return (
-            isinstance(other, ConditionalPlay)
-            and self.pulse_name == other.pulse_name
-            and self.condition_expr == other.condition_expr
-            and self.label == other.label
-        )
+def _box_matches_conditional_play_contract(body: QuantumCircuit) -> bool:
+    """Whether ``body`` is exactly one ``_ConditionalPlay`` and nothing else.
+
+    This is the structural contract every box built by
+    :meth:`QuantumCircuit.conditional_play`/:func:`add_conditional_play`
+    satisfies by construction. It is enforced at OpenQASM 3 export time (see
+    :meth:`~qiskit_qm_provider.qasm3_exporter._QMOpenQASM3Builder.build_box`)
+    against boxes that may have been altered in between -- e.g. by a generic
+    transpiler pass that iterates over ``BoxOp`` nodes without knowing to
+    leave this one's body alone.
+    """
+    return len(body.data) == 1 and isinstance(body.data[0].operation, _ConditionalPlay)
+
+
+def _iter_conditional_plays(circuit: QuantumCircuit, qubit_map: dict | None = None):
+    """Recursively yield every conditional play in ``circuit`` with its physical qargs.
+
+    A conditional play always lives one level inside a ``box`` (see the
+    module docstring), and a caller may itself nest that box inside further
+    control flow (e.g. an ``if_test``). This composes qubit indices through
+    every such level the same way Qiskit composes them when it runs a block
+    natively: a block's own qubits correspond positionally to the qargs of the
+    instruction that owns it.
+    """
+    if qubit_map is None:
+        qubit_map = {qubit: index for index, qubit in enumerate(circuit.qubits)}
+    for instruction in circuit.data:
+        operation = instruction.operation
+        qargs = tuple(qubit_map[qubit] for qubit in instruction.qubits)
+        if isinstance(operation, _ConditionalPlay):
+            yield operation, qargs
+        for block in getattr(operation, "blocks", ()):
+            yield from _iter_conditional_plays(block, dict(zip(block.qubits, qargs)))
 
 
 def _conditional_play(self: QuantumCircuit, pulse_name: str, condition: expr.Expr, qubit, label: str | None = None):
-    """Append :class:`ConditionalPlay` to ``self``.
+    """Append a conditional play to ``self``, wrapped in a ``box``.
 
     This provider convenience method mirrors the additional-gate helpers.  The
     corresponding pulse must be registered on the backend before transpilation.
+
+    See the module docstring for why the ``box`` is there (DAG ordering
+    correctness against ``transpile``) and why it is exported as-is rather
+    than unwrapped.
     """
-    return self.append(ConditionalPlay(pulse_name, condition, label=label), [qubit])
+    with self.box():
+        instruction_set = self.append(_ConditionalPlay(pulse_name, condition, label=label), [qubit])
+    return instruction_set
 
 
 QuantumCircuit.conditional_play = _conditional_play
+
+
+def add_conditional_play(
+    qc: QuantumCircuit, pulse_name: str, condition: expr.Expr, qubit, label: str | None = None
+):
+    """Append a conditional QuAM pulse play to ``qc``, guarded by ``condition``.
+
+    Function-call equivalent of ``qc.conditional_play(...)`` (the method this
+    module installs on every :class:`~qiskit.circuit.QuantumCircuit`, above),
+    for callers who would rather use a standalone function than rely on the
+    monkey-patched method. Both go through the exact same box-wrapped
+    construction -- this just calls the method.
+    """
+    return qc.conditional_play(pulse_name, condition, qubit, label=label)
 
 
 def _conditional_play_macro(qubit, pulse_name: str):
@@ -164,3 +235,41 @@ def _conditional_play_macro(qubit, pulse_name: str):
         qubit.get_pulse(pulse_name).play(condition=condition)
 
     return qua_macro
+
+
+def _raise_for_unregistered_conditional_plays(qc: QuantumCircuit, missing_names: set[str]) -> None:
+    """Raise if ``missing_names`` includes a conditional play that was never registered.
+
+    Private. :func:`~qiskit_qm_provider.utils.circuit.target_support.ensure_native_operations`
+    calls this before the generic missing-operation error so the message names the
+    pulse label and ``register_conditional_play``. A prefixed name that is not a
+    real conditional play is left for that generic error.
+    """
+    if not any(name.startswith(CONDITIONAL_PLAY_PREFIX) for name in missing_names):
+        return
+    # Failure path only: walk the circuit to recover the pulse labels behind the
+    # missing operation names (a name with a digest suffix cannot be inverted).
+    pulse_names = list(
+        dict.fromkeys(operation.pulse_name for operation, _ in _iter_conditional_plays(qc) if operation.name in missing_names)
+    )
+    if not pulse_names:
+        # A prefixed name that is not a conditional play: leave it to the generic error.
+        return
+    raise ValueError(
+        f"ConditionalPlay pulse(s) {', '.join(map(repr, pulse_names))} are not registered. "
+        f"Call backend.register_conditional_play({', '.join(map(repr, pulse_names))}) before compiling."
+    )
+
+
+def _validate_conditional_plays(qc: QuantumCircuit, target) -> None:
+    """Check that every conditional play in ``qc`` is registered in ``target``.
+
+    Private. Registration is a name lookup because
+    :meth:`~qiskit_qm_provider.backend.QMBackend.register_conditional_play` always
+    registers a pulse on every active qubit. Prefer
+    :func:`~qiskit_qm_provider.utils.circuit.target_support.ensure_native_operations`,
+    which calls the same check as the first step of a full Target check.
+    """
+    from .utils.circuit.target_support import missing_operation_names
+
+    _raise_for_unregistered_conditional_plays(qc, missing_operation_names(qc, target))

@@ -16,76 +16,99 @@
 
 from __future__ import annotations
 
-from typing import Callable
+import io
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple
 
-from qiskit.circuit import Bit, Clbit, ClassicalRegister
 from qiskit.circuit.classical import expr, types
 from qiskit.qasm3 import DefcalInstruction, ast
 from qiskit.qasm3.exceptions import QASM3ExporterError
 from qiskit.qasm3.exporter import Exporter, QASM3Builder
 from qiskit.qasm3.printer import BasicPrinter
 
-from .conditional_play import ConditionalPlay
+from .conditional_play import (
+    _box_matches_conditional_play_contract,
+    _ConditionalPlay,
+    _iter_conditional_plays,
+)
 
-ConditionalPlayValidator = Callable[[object, tuple[int, ...]], None]
+
+@dataclass(frozen=True)
+class ExportedInput:
+    """One ``input`` declaration of an exported program, as Qiskit named it.
+
+    Attributes:
+        name: The identifier in the OpenQASM 3 source. Qiskit renames an input whose name
+            collides with another symbol (e.g. a ``ParameterVector`` called ``x`` exported as an
+            array next to the ``x`` gate becomes ``x_0``), so this is the only reliable name.
+        length: The array length for an ``input array[...]``, ``None`` for a scalar input.
+    """
+
+    name: str
+    length: Optional[int] = None
 
 
 class _QMOpenQASM3Builder(QASM3Builder):
-    """Qiskit's builder with typed implicit-defcal arguments for ``ConditionalPlay``."""
+    """Qiskit's builder with typed implicit-defcal arguments for a conditional play, which also
+    records the ``input`` declarations it emits (see :attr:`exported_inputs`)."""
 
-    _conditional_play_validator: ConditionalPlayValidator | None = None
+    exported_inputs: Dict[Any, ExportedInput]
+    """Each declared ``input``, keyed by its Qiskit object: a ``Parameter`` (including a
+    ``ParameterVectorElement`` exported as a scalar), a ``ParameterVector`` exported as one
+    array, or an input ``expr.Var``."""
 
-    def _resolve_expression_resource(self, resource):
-        """Resolve copied circuit resources by their stable Qiskit names.
+    def hoist_classical_io_var_declarations(self):
+        """Hoist the IO declarations, then record the identifier Qiskit gave each input.
 
-        Qiskit's generic transpiler does not know that ``condition_expr`` is
-        provider metadata, so it does not remap its referenced classical
-        resources while copying a circuit.  The current export scope does know
-        the corresponding resources, which lets us recover the standard Qiskit
-        copy/transpile case without adding a provider-specific transpiler pass.
+        Parameters and input variables are all registered by the time this hook returns, and
+        later scopes cannot rename them, so the symbol table holds their final identifiers.
         """
+        super().hoist_classical_io_var_declarations()
+        declared = {
+            declaration.identifier.string: declaration.type
+            for declaration in self._global_io_declarations
+            if declaration.modifier is ast.IOModifier.INPUT
+        }
+        array_type = getattr(ast, "ArrayType", ())  # only on Qiskit with classical arrays
         circuit = self.scope.circuit
-        if isinstance(resource, Bit):
-            if resource in self.scope.bit_map:
-                return resource
-            register = getattr(resource, "_register", None)
-            index = getattr(resource, "_index", None)
-            if register is not None and index is not None:
-                for candidate in circuit.cregs:
-                    if candidate.name == register.name and len(candidate) == len(register):
-                        return candidate[index]
-            if isinstance(resource, Clbit) and index is not None and index < len(circuit.clbits):
-                return circuit.clbits[index]
-            return resource
-        if isinstance(resource, ClassicalRegister):
-            for candidate in circuit.cregs:
-                if candidate is resource or (candidate.name == resource.name and len(candidate) == len(resource)):
-                    return candidate
-        return resource
+        self.exported_inputs = {}
+        for obj in (*circuit.parameters, *circuit.iter_input_vars()):
+            try:
+                identifier = self.symbols.get_variable(obj)
+            except KeyError:
+                continue
+            if identifier.string not in declared:  # e.g. a legacy for-loop Parameter
+                continue
+            if isinstance(identifier, ast.SubscriptedIdentifier):  # element of an exported vector
+                obj = obj.vector
+            type_ = declared[identifier.string]
+            length = type_.dimensions[0] if isinstance(type_, array_type) else None
+            self.exported_inputs[obj] = ExportedInput(identifier.string, length)
 
-    def _lookup_bit(self, bit):
-        """Resolve copied expression bits before the base builder serializes them.
+    def build_box(self, instruction):
+        """Build a ``box``, enforcing the conditional-play box contract.
 
-        This differs from :meth:`QASM3Builder._lookup_bit` only for a bit held
-        inside a ``ConditionalPlay`` expression after a generic Qiskit copy or
-        transpilation.  Such a bit can refer to an equivalent source register
-        rather than the current build scope; the base implementation requires
-        the latter.  All ordinary bit lookups are delegated unchanged.
+        A box built by ``QuantumCircuit.conditional_play``/``add_conditional_play``
+        always holds exactly one ``_ConditionalPlay`` and nothing
+        else (see :mod:`qiskit_qm_provider.conditional_play`). This is the
+        last point in the pipeline that still sees the box before it becomes
+        hardware-bound OpenQASM 3, so it is where that invariant is actually
+        checked, in case a generic transpiler pass altered the box's contents
+        in between without knowing to leave it alone. An ordinary box with no
+        conditional play in it at all is left to the base builder unchanged.
         """
-        return super()._lookup_bit(self._resolve_expression_resource(bit))
-
-    def _lookup_variable_for_expression(self, var):
-        """Resolve copied expression registers before using Qiskit's base lookup.
-
-        This is the register analogue of :meth:`_lookup_bit`.  It changes no
-        naming or expression semantics; it only reconnects provider-held
-        expression resources to the active export scope, then delegates to the
-        standard Qiskit symbol-table lookup.
-        """
-        return super()._lookup_variable_for_expression(self._resolve_expression_resource(var))
+        body = instruction.operation.blocks[0]
+        has_conditional_play = any(isinstance(i.operation, _ConditionalPlay) for i in body.data)
+        if has_conditional_play and not _box_matches_conditional_play_contract(body):
+            raise QASM3ExporterError(
+                "A box containing a ConditionalPlay must contain exactly that one instruction "
+                "and nothing else -- build it via QuantumCircuit.conditional_play or "
+                "add_conditional_play."
+            )
+        return super().build_box(instruction)
 
     def build_defcal_call(self, instruction, defcal):
-        """Serialize ``ConditionalPlay``'s Boolean argument as a typed expression.
+        """Serialize a conditional play's Boolean argument as a typed expression.
 
         The base method is retained for every other implicit defcal.  For this
         instruction alone, the base implementation is unsuitable because it
@@ -97,7 +120,7 @@ class _QMOpenQASM3Builder(QASM3Builder):
         call, with no emitted defcal body.
         """
         operation = instruction.operation
-        if not isinstance(operation, ConditionalPlay):
+        if not isinstance(operation, _ConditionalPlay):
             return super().build_defcal_call(instruction, defcal)
 
         if (
@@ -112,10 +135,6 @@ class _QMOpenQASM3Builder(QASM3Builder):
                 "ConditionalPlay requires an implicit defcal signature of (bool) on one qubit with no return value"
             )
 
-        qargs = tuple(self.scope.circuit.find_bit(qubit).index for qubit in instruction.qubits)
-        if self._conditional_play_validator is not None:
-            self._conditional_play_validator(operation, qargs)
-
         qubits = [self._lookup_bit(qubit) for qubit in instruction.qubits]
         return ast.DefcalCallStatement(
             ident=ast.Identifier(defcal.name),
@@ -126,18 +145,18 @@ class _QMOpenQASM3Builder(QASM3Builder):
 
 
 class QMOpenQASM3Exporter(Exporter):
-    """Qiskit exporter extended with provider implicit defcals."""
+    """Qiskit exporter extended with provider implicit defcals.
 
-    def __init__(self, *args, conditional_play_validator: ConditionalPlayValidator | None = None, **kwargs):
-        """Add optional backend preflight validation to Qiskit's exporter setup.
-
-        The base exporter accepts a static ``implicit_defcals`` mapping but has
-        no provider validation hook.  This override stores a narrow callback;
-        all normal exporter options and semantics remain owned by the base
-        class.
-        """
-        super().__init__(*args, **kwargs)
-        self._conditional_play_validator = conditional_play_validator
+    Prefer :attr:`QMBackend.qasm3_exporter` over constructing this directly, and
+    prefer :meth:`QMBackend.quantum_circuit_to_qua` over calling ``.dumps()`` on
+    either. This class has no ``Target`` of its own and validates nothing against
+    one: it will export a ``ConditionalPlay`` that was never registered via
+    :meth:`QMBackend.register_conditional_play`, or one placed on a qubit with no
+    registered mapping, exactly as readily as a valid one. That validation is
+    :meth:`QMBackend.quantum_circuit_to_qua`'s job; a caller who uses this exporter
+    directly and skips it is responsible for the OpenQASM 3 it produces failing to
+    lower to QUA later.
+    """
 
     def dump(self, circuit, stream):
         """Export with implicit defcals for encountered conditional plays.
@@ -150,19 +169,39 @@ class QMOpenQASM3Exporter(Exporter):
         builder's basis-gate list because Qiskit's symbol table treats an
         implicit defcal and a basis gate with the same name as conflicting
         declarations.  Existing user-supplied implicit defcals are preserved.
+
+        ``ConditionalPlay`` is always found inside the ``box`` that
+        :func:`~qiskit_qm_provider.conditional_play._conditional_play` wraps
+        it in (see the module docstring for why); that box is exported as an
+        ordinary OpenQASM 3 ``box`` statement, using Qiskit's own unmodified
+        ``build_box`` (beyond checking the box's structural contract, see
+        ``_QMOpenQASM3Builder.build_box``) -- the QUA compiler's ``visit_Box``
+        already unwraps a box's body transparently, so no compiler-side or
+        exporter-side flattening is needed here. This exporter has no
+        ``Target`` of its own and does not validate that a ``ConditionalPlay``
+        is registered anywhere; that is
+        :meth:`QMBackend.quantum_circuit_to_qua`'s responsibility.
         """
+        self._dump(circuit, stream)
+
+    def export(self, circuit) -> Tuple[str, Dict[Any, ExportedInput]]:
+        """Export ``circuit`` and report its ``input`` declarations.
+
+        Returns:
+            The OpenQASM 3 source and, for each declared input, its Qiskit object mapped to the
+            :class:`ExportedInput` Qiskit emitted for it.
+        """
+        stream = io.StringIO()
+        exported_inputs = self._dump(circuit, stream)
+        return stream.getvalue(), exported_inputs
+
+    def _dump(self, circuit, stream) -> Dict[Any, ExportedInput]:
         implicit_defcals = dict(self.implicit_defcals)
-        pending = [circuit]
-        while pending:
-            current = pending.pop()
-            for instruction in current.data:
-                operation = instruction.operation
-                if isinstance(operation, ConditionalPlay):
-                    implicit_defcals.setdefault(
-                        operation.name,
-                        DefcalInstruction(operation.name, parameters=1, qubits=1, return_type=None),
-                    )
-                pending.extend(getattr(operation, "blocks", ()))
+        for operation, _ in _iter_conditional_plays(circuit):
+            implicit_defcals.setdefault(
+                operation.name,
+                DefcalInstruction(operation.name, parameters=1, qubits=1, return_type=None),
+            )
         basis_gates = [gate for gate in self.basis_gates if gate not in implicit_defcals]
         builder = _QMOpenQASM3Builder(
             circuit,
@@ -174,5 +213,5 @@ class QMOpenQASM3Exporter(Exporter):
             annotation_handlers=self.annotation_handlers,
             implicit_defcals=implicit_defcals,
         )
-        builder._conditional_play_validator = self._conditional_play_validator
         BasicPrinter(stream, indent=self.indent, experimental=self.experimental).visit(builder.build_program())
+        return builder.exported_inputs

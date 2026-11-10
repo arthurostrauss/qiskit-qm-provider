@@ -7,22 +7,37 @@ from qiskit.quantum_info import Pauli, PauliList
 
 from types import SimpleNamespace
 
-from qiskit_qm_provider.backend.backend_utils import (
-    look_for_standard_op,
-    get_extended_gate_name_mapping,
-    has_reset_at_boundary,
+from qiskit.circuit import QuantumRegister
+
+from qiskit_qm_provider.utils.calibrations.identifiers import (
     has_conflicting_calibrations,
     operation_key,
-    validate_circuits,
-    measurement_output_bit_sizes,
-    experiment_result_header,
-    binary,
-    logically_active_qubits,
-    get_non_trivial_observables,
-    assign_struct_with_table,
-    pack_register_to_int,
-    _measurement_var_is_array,
 )
+from qiskit_qm_provider.utils.circuit.physical_layout import ensure_circuit_physical
+from qiskit_qm_provider.utils.circuit.preparation import (
+    has_reset_at_boundary,
+    logically_active_qubits,
+    validate_circuits,
+)
+from qiskit_qm_provider.utils.circuit.target_support import (
+    ensure_native_operations,
+    missing_operation_names,
+)
+from qiskit_qm_provider.utils.formatting.binary import binary
+from qiskit_qm_provider.utils.gates.naming import (
+    get_extended_gate_name_mapping,
+    look_for_standard_op,
+)
+from qiskit_qm_provider.utils.measurement.job_metadata import (
+    experiment_result_header,
+    measurement_output_bit_sizes,
+)
+from qiskit_qm_provider.utils.measurement.packing import (
+    _measurement_var_is_array,
+    pack_register_to_int,
+)
+from qiskit_qm_provider.utils.quarc.struct_assign import assign_struct_with_table
+from qiskit_qm_provider.conditional_play import _validate_conditional_plays
 
 
 class TestLookForStandardOp:
@@ -209,6 +224,56 @@ class TestValidateCircuits:
         qc.measure(1, loose1)
         result = validate_circuits(qc)
         assert len(result) == 1
+
+
+class TestEnsureCircuitPhysical:
+    def test_accepts_an_already_physical_circuit(self):
+        qc = QuantumCircuit(2)
+        qc.ensure_physical(2)
+        ensure_circuit_physical(qc, 2)  # must not raise
+
+    def test_rejects_a_non_physical_circuit_without_mutating_it(self):
+        qc = QuantumCircuit(QuantumRegister(1, "myreg"))
+
+        with pytest.raises(ValueError, match="not expressed in terms of this backend's"):
+            ensure_circuit_physical(qc, 1)
+
+        assert qc.qregs[0].name == "myreg"
+        assert qc.layout is None
+
+    def test_rejects_a_circuit_with_a_mismatched_existing_layout_as_valueerror(self):
+        """A circuit already laid out for a different qubit count makes
+        ``QuantumCircuit.ensure_physical`` raise ``CircuitError`` directly; this must
+        surface as the same documented ``ValueError`` as any other non-physical circuit,
+        not leak Qiskit's internal exception type.
+        """
+        qc = QuantumCircuit(2)
+        qc.ensure_physical(2)
+
+        with pytest.raises(ValueError, match="not expressed in terms of this backend's"):
+            ensure_circuit_physical(qc, 5)
+
+    def test_rejects_a_canonical_width_circuit_without_layout(self):
+        """Having the canonical ``q`` register is not enough: the circuit must
+        have gone through layout, so a hand-built circuit is rejected."""
+        qc = QuantumCircuit(2)
+        assert qc.qregs[0].name == "q"
+
+        with pytest.raises(ValueError, match="not expressed in terms of this backend's"):
+            ensure_circuit_physical(qc, 2)
+
+    def test_accepts_a_circuit_transpiled_against_a_coupling_map(self):
+        from qiskit import transpile
+        from qiskit.transpiler import CouplingMap
+
+        qc = QuantumCircuit(QuantumRegister(2, "virt"))
+        qc.cx(0, 1)
+        transpiled = transpile(
+            qc, coupling_map=CouplingMap.from_line(3), basis_gates=["cx", "rz", "sx", "x"], seed_transpiler=0
+        )
+        ensure_circuit_physical(transpiled, 3)  # must not raise
+        with pytest.raises(ValueError, match="not expressed in terms of this backend's"):
+            ensure_circuit_physical(transpiled, 4)
 
 
 class TestMeasurementOutputBitSizes:
@@ -478,30 +543,6 @@ class TestPackRegisterToInt:
             pack_register_to_int(scalar, 0)
 
 
-class TestGetNonTrivialObservables:
-    def test_single_qubit(self):
-        observables = PauliList([Pauli("IXI")])
-        active_indices = [1]
-        result = get_non_trivial_observables(observables, active_indices)
-        assert len(result) == 1
-        assert result[0] == Pauli("X")
-
-    def test_multi_qubit(self):
-        observables = PauliList([Pauli("XYZ")])
-        active_indices = [0, 1, 2]
-        result = get_non_trivial_observables(observables, active_indices)
-        assert len(result) == 1
-        # The function builds the label by forward-iterating over qubits
-        # extracting from the reversed label, resulting in reversed order
-        assert result[0] == Pauli("ZYX")
-
-    def test_subset_of_qubits(self):
-        observables = PauliList([Pauli("XIYIZ")])
-        active_indices = [0, 2, 4]
-        result = get_non_trivial_observables(observables, active_indices)
-        assert len(result) == 1
-
-
 class TestOperationKey:
     """``operation_key`` is the value-hashable stand-in used everywhere the
     provider used to key a dict/set with a raw ``qm_qasm.OperationIdentifier``
@@ -588,3 +629,110 @@ class TestHasConflictingCalibrations:
             ),
         ]
         assert has_conflicting_calibrations(circuits) is True
+
+
+def _x_target(qargs, *, with_builtins=True):
+    """A Target shaped like a QM backend's: ``x`` on ``qargs`` plus global control flow
+    and, unless ``with_builtins`` is False, global ``barrier``/``store``."""
+    from qiskit.circuit.library import XGate
+    from qiskit.circuit.controlflow import get_control_flow_name_mapping
+    from qiskit.transpiler import Target
+
+    from qiskit_qm_provider.utils.gates.target_builtins import variadic_builtin_instructions
+
+    target = Target(num_qubits=2)
+    target.add_instruction(XGate(), {qarg: None for qarg in qargs})
+    global_ops = dict(get_control_flow_name_mapping())
+    if with_builtins:
+        global_ops.update(variadic_builtin_instructions)
+    for name, op in global_ops.items():
+        target.add_instruction(op, name=name)
+    return target
+
+
+class TestMissingOperationNames:
+    def test_counts_operations_nested_in_control_flow(self):
+        from qiskit.circuit.classical import expr
+
+        qc = QuantumCircuit(2, 1)
+        qc.x(0)
+        qc.barrier()
+        with qc.if_test(expr.lift(qc.clbits[0])):
+            with qc.box():
+                qc.h(1)
+        qc.conditional_play("y90", expr.lift(True), 0)
+
+        assert missing_operation_names(qc, _x_target([(0,), (1,)])) == {"h", "qm_conditional_play_y90"}
+
+    def test_barrier_and_store_count_only_when_the_target_lacks_them(self):
+        """barrier/store are not special-cased: a QM Target defines them, a bare one doesn't."""
+        qc = QuantumCircuit(2)
+        flag = qc.add_var("flag", False)
+        qc.x(0)
+        qc.barrier()
+        qc.store(flag, True)
+
+        assert missing_operation_names(qc, _x_target([(0,), (1,)])) == set()
+        assert missing_operation_names(qc, _x_target([(0,), (1,)], with_builtins=False)) == {"barrier", "store"}
+
+    def test_is_empty_when_every_name_is_defined_even_on_wrong_qubits(self):
+        qc = QuantumCircuit(2)
+        qc.x(1)
+        assert missing_operation_names(qc, _x_target([(0,)])) == set()
+
+
+class TestEnsureNativeOperations:
+    def test_unregistered_conditional_plays_are_listed_by_pulse(self):
+        from qiskit.circuit.classical import expr
+
+        qc = QuantumCircuit(2)
+        qc.h(0)
+        qc.conditional_play("-y90", expr.lift(True), 0)
+        qc.conditional_play("y90", expr.lift(True), 1)
+        qc.conditional_play("-y90", expr.lift(False), 1)
+        qc.ensure_physical(2)
+
+        message = r"pulse\(s\) '-y90', 'y90' are not registered.*register_conditional_play\('-y90', 'y90'\)"
+        with pytest.raises(ValueError, match=message):
+            _validate_conditional_plays(qc, _x_target([(0,), (1,)]))
+        with pytest.raises(ValueError, match=message):
+            ensure_native_operations(qc, _x_target([(0,), (1,)]))
+
+    def test_prefixed_name_that_is_not_a_conditional_play_gets_the_generic_error(self):
+        from qiskit.circuit import Instruction
+
+        qc = QuantumCircuit(2)
+        qc.append(Instruction("qm_conditional_play_x180", 1, 0, []), [0])
+        qc.ensure_physical(2)
+
+        with pytest.raises(ValueError, match=r"\['qm_conditional_play_x180'\] that the given Target does not define"):
+            ensure_native_operations(qc, _x_target([(0,), (1,)]))
+
+    def test_missing_names_are_listed(self):
+        qc = QuantumCircuit(2)
+        qc.h(0)
+        qc.sdg(1)
+        qc.ensure_physical(2)
+
+        with pytest.raises(ValueError, match=r"\['h', 'sdg'\] that the given Target does not define"):
+            ensure_native_operations(qc, _x_target([(0,), (1,)]))
+
+    def test_qubit_mismatch_is_named_by_the_walk(self):
+        from qiskit.circuit.classical import expr
+
+        qc = QuantumCircuit(2, 1)
+        qc.x(0)
+        with qc.if_test(expr.lift(qc.clbits[0])):
+            qc.x(1)
+        qc.ensure_physical(2)
+
+        with pytest.raises(ValueError, match=r"'x' on qubit\(s\) \(1,\)"):
+            ensure_native_operations(qc, _x_target([(0,)]))
+
+    def test_supported_circuit_passes(self):
+        qc = QuantumCircuit(2)
+        qc.x(0)
+        qc.barrier()
+        qc.x(1)
+        qc.ensure_physical(2)
+        ensure_native_operations(qc, _x_target([(0,), (1,)]))

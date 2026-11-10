@@ -33,7 +33,8 @@ from dataclasses import dataclass
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from ..job.qm_sampler_job import QMSamplerJob, IQCCSamplerJob
 
-from ..backend.backend_utils import validate_circuits, require_classified_meas_level
+from ..utils.circuit.preparation import validate_circuits
+from ..utils.measurement.classified import require_classified_meas_level
 from ..parameter_table import InputType
 from ..backend.qm_backend import QMBackend
 from qiskit.result.models import MeasLevel, MeasReturnType
@@ -68,8 +69,11 @@ class QMSamplerOptions:
     Default: None."""
 
     run_options: dict[str, Any] | None = None
-    """A dictionary of options to pass to the backend's ``run()`` method.
-    Default: None (no option passed to backend's ``run`` method)
+    """Per-job overrides of backend run options (``shots``, ``max_circuits``,
+    ``timeout``, ``simulate``, …). Merged over :attr:`QMBackend.options` when
+    :meth:`~.QMSamplerV2.run` is called; they do not mutate the backend.
+    ``max_circuits`` here is the QUA program chunk size for that job.
+    Default: None (use the backend defaults).
     """
     meas_level: Literal["classified", "kerneled", "avg_kerneled"] = "classified"
     """Measurement level. Only ``"classified"`` (0/1 counts) is supported end-to-end
@@ -139,6 +143,7 @@ class QMSamplerV2(BaseSamplerV2):
             raise NotImplementedError(
                 "OPNIC input_type is not yet supported for IQCC cloud jobs; use INPUT_STREAM or IO1/IO2."
             )
+        # Copy backend defaults, then let this sampler's run_options win for the job.
         backend_options = deepcopy(self.backend.options.__dict__)
 
         backend_options["meas_level"] = meas_level_dict[self._options.meas_level]
@@ -159,7 +164,7 @@ class QMSamplerV2(BaseSamplerV2):
 
     def _validate_pubs(self, pubs: list[SamplerPub]):
         for i, pub in enumerate(pubs):
-            from ..backend.backend_utils import measurement_output_bit_sizes
+            from ..utils.measurement.job_metadata import measurement_output_bit_sizes
 
             if not measurement_output_bit_sizes(pub.circuit):
                 warnings.warn(

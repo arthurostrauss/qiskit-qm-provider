@@ -2,7 +2,7 @@
 
 from qiskit.circuit import ClassicalRegister, Clbit, QuantumCircuit
 
-from qiskit_qm_provider.backend.backend_utils import measurement_output_bit_sizes
+from qiskit_qm_provider.utils.measurement.job_metadata import measurement_output_bit_sizes
 
 
 class TestQMJobLooseBitStreamKeys:

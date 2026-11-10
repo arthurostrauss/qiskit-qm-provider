@@ -19,6 +19,7 @@ random
 measurement_outputs
 primitives
 parameter_table
+real_time_expressions
 jobs
 error_correction
 changelog
@@ -53,7 +54,7 @@ pip install qiskit-qm-provider
 [quam-builder](https://github.com/qua-platform/quam-builder) is required for the built-in `FluxTunableTransmonBackend` and related QuAM components. It is not published on PyPI and must be installed from source:
 
 ```bash
-pip install git+https://github.com/qua-platform/quam-builder.git@v0.4.0
+pip install git+https://github.com/qua-platform/quam-builder.git@v0.6.0
 ```
 
 For IQCC cloud access and QM SaaS simulation:
@@ -69,7 +70,7 @@ Advanced real-time parameter workflows can be accelerated through Quantum Machin
 
 ## Using Qiskit Experiments with this provider
 
-Many users want to combine [Qiskit Experiments](https://quantum.cloud.ibm.com/docs/en/guides/qiskit-experiments) with this provider (especially via [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst)). Two caveats are worth reading **before** you start:
+Many users want to combine [Qiskit Experiments](https://quantum.cloud.ibm.com/docs/en/guides/qiskit-experiments) with this provider (especially via [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst)). Three caveats are worth reading **before** you start:
 
 ### 1. Match the tool to the execution model
 
@@ -87,6 +88,12 @@ Experiments that need raw **I & Q**, kerneled shots, or other non-discriminated 
 
 *(Note: `meas_level` options may appear in the API, but non-classified paths are not production-ready.)*
 
+### 3. Transpile on the QM backend (layout metadata)
+
+[`QMSamplerV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerV2.rst) and [`QMBackend.run`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) compile circuits through OpenQASM 3 lowering that expects **canonical physical form**: full backend width, a single `q` register, native operations, and a `TranspileLayout` on the circuit. Some Qiskit Experiments (notably randomized benchmarking) use a **custom** “transpile” that only composes gates onto `physical_qubits` without attaching layout metadata — that is fine on IBM Runtime but fails here with *“Circuit is not expressed in terms of this backend's N physical qubits”*.
+
+**Recommendation:** before `experiment.run(...)`, call `experiment.set_transpile_options(optimization_level=0)` so the experiment uses full `transpile(..., backend=...)` with `initial_layout` taken from `physical_qubits` (you cannot set `initial_layout` yourself in Experiments). Pass the **same QM backend** at construction or in `run(backend=...)` / `run(sampler=QMSamplerV2(backend=...))`. See [Workflows — transpile options for Experiments](workflows.md#transpile-options-for-qiskit-experiments-on-qm).
+
 ## Where to go next
 
 Use the sidebar to browse guides, then dive into the [API Reference](apidocs/qm.rst) for signatures:
@@ -100,6 +107,7 @@ Use the sidebar to browse guides, then dive into the [API Reference](apidocs/qm.
 - **[Measurement outputs](measurement_outputs.md)** — [`QuaCircuitCompilation`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation.rst), [`MeasurementOutcomeTable`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.MeasurementOutcomeTable.rst), [`MeasurementRegisterField`](apidocs/stubs/qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField.rst).
 - **[Primitives](primitives.md)** — [`QMSamplerV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMSamplerV2.rst) and [`QMEstimatorV2`](apidocs/stubs/qiskit_qm_provider.primitives.QMEstimatorV2.rst).
 - **[Parameter Table](parameter_table.md)** — [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) and real-time data flow.
+- **[Real-Time Classical Expressions](real_time_expressions.md)** — dynamic `expr.Range` loops and `types.Array` inputs from the `full_real_time_expr` Qiskit branch, with a two-qubit RB example.
 - **[Jobs](jobs.md)** — job handles, `program`, `qm_job`, IQCC `run_data`, and printing QUA with `generate_qua_script`.
 - **[Error-Correction Workflow](error_correction.md)** — hybrid EC pattern with [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst).
 - **[API Reference](apidocs/qm.rst)** — autodoc pages for all public classes and functions.

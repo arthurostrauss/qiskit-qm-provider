@@ -4,7 +4,7 @@ from qiskit.circuit import ClassicalRegister, QuantumCircuit
 from qiskit.result import Result
 from qiskit.result.models import ExperimentResult, ExperimentResultData, MeasLevel
 
-from qiskit_qm_provider.backend.backend_utils import experiment_result_header
+from qiskit_qm_provider.utils.measurement.job_metadata import experiment_result_header
 
 
 def _result_for_circuit(qc: QuantumCircuit, counts: dict[str, int]) -> Result:

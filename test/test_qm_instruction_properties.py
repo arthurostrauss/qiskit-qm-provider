@@ -1,10 +1,13 @@
 """Tests for QMInstructionProperties."""
 
-import pytest
+import inspect
 from copy import deepcopy
 from unittest.mock import MagicMock
 
-from qiskit.transpiler import InstructionProperties
+import pytest
+from qiskit.circuit.library import XGate
+from qiskit.transpiler import InstructionProperties, Target
+
 from qiskit_qm_provider.backend.qm_instruction_properties import (
     QMInstructionProperties,
 )
@@ -34,6 +37,7 @@ class TestQMInstructionPropertiesInit:
         prop = QMInstructionProperties(qua_pulse_macro=mock_macro)
         assert prop.duration == 100e-9
         assert abs(prop.error - 0.01) < 1e-10
+        assert prop.fidelity_dict is None
 
     def test_with_quam_macro_pulse_duration_inference(self):
         mock_pulse = MagicMock()
@@ -132,11 +136,12 @@ class TestQMInstructionPropertiesSerialisation:
         prop = QMInstructionProperties(duration=1e-6, error=0.01, qua_pulse_macro=macro)
         state = prop.__getstate__()
         assert isinstance(state, tuple)
-        assert len(state) == 2
+        assert len(state) == 3
 
         new_prop = QMInstructionProperties.__new__(QMInstructionProperties)
         new_prop.__setstate__(state)
         assert new_prop._qua_pulse_macro is macro
+        assert new_prop._explicit_fidelity_dict is None
 
     def test_deepcopy_preserves_macro_ref(self):
         macro = MagicMock()
@@ -157,3 +162,190 @@ class TestQMInstructionPropertiesSerialisation:
         copy1 = deepcopy(prop, memo)
         copy2 = deepcopy(prop, memo)
         assert copy1 is copy2
+
+
+def _target_prints_extra_properties() -> bool:
+    source = inspect.getsource(Target.__str__)
+    return "Extra properties" in source and "properties" in source
+
+
+class TestFidelityDict:
+    def test_mapping_fidelity_does_not_set_error(self):
+        mock_macro = MagicMock()
+        mock_macro.duration = 100e-9
+        mock_macro.fidelity = {"rb": 0.99, "xeb": 0.95}
+        prop = QMInstructionProperties(qua_pulse_macro=mock_macro)
+        assert prop.error is None
+        assert prop.fidelity_dict == {"rb": 0.99, "xeb": 0.95}
+
+    def test_quam_dict_fidelity(self):
+        from quam.core.quam_classes import QuamDict
+
+        mock_macro = MagicMock()
+        mock_macro.duration = None
+        mock_macro.fidelity = QuamDict({"rb": 0.98})
+        prop = QMInstructionProperties(qua_pulse_macro=mock_macro)
+        assert prop.error is None
+        assert prop.fidelity_dict == {"rb": 0.98}
+
+    def test_explicit_fidelity_dict_without_macro(self):
+        prop = QMInstructionProperties(fidelity_dict={"rb": 0.9})
+        assert prop.fidelity_dict == {"rb": 0.9}
+        assert prop.error is None
+
+    def test_macro_mapping_wins_over_explicit(self):
+        mock_macro = MagicMock()
+        mock_macro.duration = None
+        mock_macro.fidelity = {"rb": 0.99}
+        prop = QMInstructionProperties(
+            qua_pulse_macro=mock_macro,
+            fidelity_dict={"xeb": 0.5},
+        )
+        assert prop.fidelity_dict == {"rb": 0.99}
+
+    def test_explicit_used_when_macro_fidelity_is_scalar(self):
+        mock_macro = MagicMock()
+        mock_macro.duration = None
+        mock_macro.fidelity = 0.99
+        prop = QMInstructionProperties(
+            qua_pulse_macro=mock_macro,
+            fidelity_dict={"rb": 0.9},
+        )
+        assert abs(prop.error - 0.01) < 1e-10
+        assert prop.fidelity_dict == {"rb": 0.9}
+
+    def test_live_mapping_update_is_visible(self):
+        mock_macro = MagicMock()
+        mock_macro.duration = None
+        mock_macro.fidelity = {"rb": 0.9}
+        prop = QMInstructionProperties(qua_pulse_macro=mock_macro)
+        mock_macro.fidelity = {"rb": 0.95, "xeb": 0.91}
+        assert prop.fidelity_dict == {"rb": 0.95, "xeb": 0.91}
+
+    def test_int_scalar_fidelity_infers_error(self):
+        mock_macro = MagicMock()
+        mock_macro.duration = None
+        mock_macro.fidelity = 1
+        prop = QMInstructionProperties(qua_pulse_macro=mock_macro)
+        assert prop.error == 0.0
+        assert prop.fidelity_dict is None
+
+    def test_getstate_preserves_explicit_fidelity_dict(self):
+        prop = QMInstructionProperties(duration=1e-6, fidelity_dict={"rb": 0.9})
+        state = prop.__getstate__()
+        new_prop = QMInstructionProperties.__new__(QMInstructionProperties)
+        new_prop.__setstate__(state)
+        assert new_prop.fidelity_dict == {"rb": 0.9}
+
+    def test_setstate_accepts_legacy_two_tuple(self):
+        macro = MagicMock()
+        macro.duration = None
+        macro.fidelity = None
+        prop = QMInstructionProperties(duration=1e-6, error=0.01, qua_pulse_macro=macro)
+        base, stored_macro, _ = prop.__getstate__()
+        new_prop = QMInstructionProperties.__new__(QMInstructionProperties)
+        new_prop.__setstate__((base, stored_macro))
+        assert new_prop._qua_pulse_macro is macro
+        assert new_prop._explicit_fidelity_dict is None
+
+
+class TestPropertiesDisplay:
+    def test_quam_macro_repr_in_properties(self):
+        from quam.core.macro import QuamMacro
+
+        mock_macro = MagicMock(spec=QuamMacro)
+        mock_macro.apply = MagicMock()
+        mock_macro.duration = None
+        mock_macro.fidelity = None
+        prop = QMInstructionProperties(qua_pulse_macro=mock_macro)
+        extra = prop.properties
+        assert extra is not None
+        assert "quam_macro" in extra
+        assert "qua_pulse_macro" not in extra
+        assert extra["quam_macro"] == repr(mock_macro)
+
+    def test_callable_qualname_not_function_repr(self):
+        def my_qua_macro(theta):
+            return None
+
+        prop = QMInstructionProperties(qua_pulse_macro=my_qua_macro)
+        extra = prop.properties
+        assert extra is not None
+        displayed = extra["qua_pulse_macro"]
+        assert displayed.endswith("my_qua_macro")
+        assert "<function" not in displayed
+        assert "0x" not in displayed
+
+    def test_empty_fidelity_dict_omitted_from_properties(self):
+        mock_macro = MagicMock()
+        mock_macro.duration = None
+        mock_macro.fidelity = {}
+        prop = QMInstructionProperties(qua_pulse_macro=mock_macro)
+        assert prop.fidelity_dict == {}
+        extra = prop.properties
+        if extra is not None:
+            assert "fidelity_dict" not in extra
+            assert "rb" not in extra
+
+    def test_nonempty_fidelity_dict_unrolled_in_properties(self):
+        mock_macro = MagicMock()
+        mock_macro.duration = None
+        mock_macro.fidelity = {"rb": 0.99, "xeb": 0.95}
+        prop = QMInstructionProperties(qua_pulse_macro=mock_macro)
+        extra = prop.properties
+        assert extra["rb"] == 0.99
+        assert extra["xeb"] == 0.95
+        assert "fidelity_dict" not in extra
+
+    def test_reserved_fidelity_key_is_prefixed(self):
+        mock_macro = MagicMock()
+        mock_macro.duration = None
+        mock_macro.fidelity = {"qua_pulse_macro": 0.9}
+        prop = QMInstructionProperties(qua_pulse_macro=mock_macro)
+        extra = prop.properties
+        assert extra["fidelity.qua_pulse_macro"] == 0.9
+        assert extra["qua_pulse_macro"] != 0.9
+
+    def test_empty_properties_is_none(self):
+        prop = QMInstructionProperties()
+        assert prop.properties is None
+
+    @pytest.mark.skipif(
+        not _target_prints_extra_properties(),
+        reason="this Qiskit Target.__str__ does not render Extra properties",
+    )
+    def test_target_str_includes_extra_properties(self):
+        mock_macro = MagicMock()
+        mock_macro.duration = 100e-9
+        mock_macro.fidelity = {"rb": 0.99}
+        prop = QMInstructionProperties(qua_pulse_macro=mock_macro)
+        target = Target()
+        target.add_instruction(XGate(), {(0,): prop})
+        text = str(target)
+        assert "Extra properties" in text
+        assert "rb" in text
+        assert "fidelity_dict" not in text
+
+
+class TestDummyQuamCzFidelityDict:
+    def test_cz_macro_injected_benchmarks(self):
+        pytest.importorskip("quam_builder.builder.superconducting.modify_quam")
+        from quam_builder.architecture.superconducting.qpu import FluxTunableQuam
+
+        from test.dummy_quam import build_dummy_quam_for_qubits
+
+        machine = build_dummy_quam_for_qubits(2, FluxTunableQuam)
+        pair = machine.active_qubit_pairs[0]
+        cz = pair.macros["cz"]
+        cz.fidelity["rb"] = 0.99
+        cz.fidelity["xeb"] = 0.95
+        prop = QMInstructionProperties(qua_pulse_macro=cz)
+        assert prop.error is None
+        assert prop.fidelity_dict == {"rb": 0.99, "xeb": 0.95}
+        extra = prop.properties
+        assert extra is not None
+        assert extra["rb"] == 0.99
+        assert extra["xeb"] == 0.95
+        assert "fidelity_dict" not in extra
+        assert "quam_macro" in extra
+        assert extra["quam_macro"].startswith("CZGate(")

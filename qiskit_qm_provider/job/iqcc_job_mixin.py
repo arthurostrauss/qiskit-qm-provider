@@ -169,7 +169,7 @@ class IQCCJobMixin:
         """
         from qiskit.providers import JobStatus as _JobStatus
 
-        if not getattr(self, "_qm_jobs", None):
+        if getattr(self, "_qm_jobs", None) is None:
             raise RuntimeError("IQCC job has not been submitted yet")
         for job in self._qm_jobs:
             run_data = getattr(job, "_run_data", None)
@@ -180,7 +180,7 @@ class IQCCJobMixin:
         return _JobStatus.DONE
 
     def result(self):
-        if not getattr(self, "_qm_jobs", None):
+        if getattr(self, "_qm_jobs", None) is None:
             raise RuntimeError("IQCC job has not been submitted yet")
         self._check_iqcc_cloud_execution()
         return super().result()

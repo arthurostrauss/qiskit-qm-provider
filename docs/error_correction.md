@@ -129,7 +129,7 @@ syndrome_data.stream_back(reset=True)
 | `comp.outputs.get_parameter("c").size` | Number of syndrome bits in register `c` |
 | `comp.outputs.streams["c"]` | Per-field stream for `save(...)` / host `stream_processing()` |
 
-See [Measurement outputs guide](measurement_outputs.md) for the full accessor contract. Legacy [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) returns the same handles via a dict shim (`meas[creg.name]["state_int"]` ≡ `comp.outputs.state_ints[creg.name]`).
+See [Measurement outputs guide](measurement_outputs.md) for the full accessor contract.
 
 This streams the **packed raw syndrome** each round. When the decoder needs **detection events** (bit flips between rounds) instead, see [Detection events — consecutive-round XOR](#detection-events--consecutive-round-xor) below.
 

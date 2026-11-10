@@ -24,7 +24,7 @@ add_basic_macros(backend)
 
 **Important:** these macros (`x`, `sx`, `rz`, `sy`, `sydg`, `measure`, `reset`, `delay`, `id`, `cz`) are **currently tailored to flux-tunable transmon** topology. They assume pulse and macro naming conventions from `FluxTunableQuam` / quam-builder (e.g. `x180`, `x90`, readout pulses, `CZGate` on pairs). They are a **starting point**, not a universal hardware definition. Users on other platforms should override or replace macros on their own `QuamRoot`, and coordinate with the **Quantum Machines team** for appropriate [quam-builder](https://github.com/Quantum-Machines/quam-builder) extensions for their architecture.
 
-The function lives under `qiskit_qm_provider.quam_macros.superconducting` and is also re-exported from the top-level package and `qiskit_qm_provider.backend.backend_utils`. Extra keyword arguments are forwarded to `ResetMacro` via `**reset_macro_kwargs`.
+The function lives under `qiskit_qm_provider.quam_macros.superconducting` and is also re-exported from the top-level package. Importing it from `qiskit_qm_provider.backend.backend_utils` is deprecated. Extra keyword arguments are forwarded to `ResetMacro` via `**reset_macro_kwargs`.
 
 ## [`QMProvider`](apidocs/stubs/qiskit_qm_provider.providers.QMProvider.rst) — local QOP
 
@@ -60,11 +60,21 @@ backend = provider.get_backend(
 
 Credentials can be read from `~/qm_saas_config.json` when omitted.
 
+Communication with the cloud simulator is secured with TLS. This requires `qm-saas>=1.2.0`, which the extra installs. Internally the provider spawns a simulator instance and connects with:
+
+```python
+from qm import QuantumMachinesManager
+
+qmm = QuantumMachinesManager(**provider.instance.qmm_connection_params)
+```
+
+`qmm_connection_params` bundles the host, port, authentication headers and TLS credentials. If you create your own `QuantumMachinesManager` for a SaaS instance, use this form rather than passing `host`, `port` and `connection_headers` separately — connections without TLS credentials are rejected after the October 8th, 2026 server update (QOP 3.8.1).
+
 ## [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst) — IQCC cloud devices
 
 Use [`IQCCProvider`](apidocs/stubs/qiskit_qm_provider.providers.iqcc_cloud_provider.IQCCProvider.rst) for devices at the Israeli Quantum Computing Center. Requires `pip install qiskit-qm-provider[iqcc]`. Always returns [`FluxTunableTransmonBackend`](apidocs/stubs/qiskit_qm_provider.backend.FluxTunableTransmonBackend.rst).
 
-This is a common entry point for **Qiskit Experiments** characterization — see the [Qiskit Experiments caveats on the home page](index.md#using-qiskit-experiments-with-this-provider).
+This is a common entry point for **Qiskit Experiments** characterization — see the [Qiskit Experiments caveats on the home page](index.md#using-qiskit-experiments-with-this-provider) (including [transpile options on QM backends](workflows.md#transpile-options-for-qiskit-experiments-on-qm)).
 
 ```python
 from qiskit_qm_provider import IQCCProvider

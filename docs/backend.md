@@ -46,9 +46,15 @@ Set it at construction time or update it at any point before submitting a job:
 # At construction time:
 backend = FluxTunableTransmonBackend(machine, max_circuits=10)
 
-# Or update after construction — applies to the next backend.run() / sampler.run() call:
+# Or update after construction — default for the next backend.run() / primitive run
+# that does not override max_circuits in run_options:
 backend.set_options(max_circuits=10)
+
+# Per-call override (does not mutate backend.options):
+job = backend.run(circuits, max_circuits=1)
 ```
+
+Primitive `run_options["max_circuits"]` is the same kind of per-job override. Qiskit Experiments still splits its own jobs from `backend.max_circuits`; see [Primitives — large PUB batches](primitives.md#large-pub-batches-and-max_circuits).
 
 **Splitting rules** (in priority order):
 
@@ -87,32 +93,7 @@ with program() as prog:
 
 [`QuaCircuitCompilation`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation.rst) exposes wired handles via [`comp.outputs`](apidocs/stubs/qiskit_qm_provider.backend.qua_circuit_compilation.MeasurementOutcomeTable.rst) ([`MeasurementRegisterField`](apidocs/stubs/qiskit_qm_provider.backend.measurement_field.MeasurementRegisterField.rst) per creg). See the [Measurement outputs guide](measurement_outputs.md) for the accessor contract and locality model.
 
-Legacy shim (dict API):
-
-```python
-from qiskit_qm_provider.backend.backend_utils import get_measurement_outcomes
-
-with program() as prog:
-    comp = backend.quantum_circuit_to_qua(qc, param_table=my_param_table)
-    meas = get_measurement_outcomes(qc, comp)
-    syndrome_int = meas[creg.name]["state_int"]
-```
-
 Call measurement wiring **immediately after** `quantum_circuit_to_qua` in the same QUA program — not as a separate Python post-processing step.
-
-## [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) return dictionary
-
-Returns `dict[key, subdict]` — one entry per classical register in the circuit, plus one entry per loose clbit under its own key `_bit0`, `_bit1`, … (loose bits are independent single bits, never packed into a single register). Every entry is sourced from `comp.outputs`, so `meas[key]["state_int"]` is exactly `comp.outputs.state_ints[key]`.
-
-| Key | Role |
-|-----|------|
-| **`value`** | The QUA variable holding discriminated 0/1 outcomes from the embedded circuit — a bool **array** for a multi-bit register, a bool **scalar** for a loose clbit. Use for bit-level QUA logic. |
-| **`is_array`** | Python `bool`: `True` when `value` is a QUA array, `False` when it is a scalar — pick `value[i]` vs `value` when saving. Mirrors `Parameter.is_array`. |
-| **`length`** | Python `int`, `Parameter` convention: `0` for a scalar output (loose clbit), otherwise the register's bit count. |
-| **`state_int`** | QUA `int` (when `compute_state_int=True`, the default): integer packing of all bits; **LSB = qubit index 0** (Qiskit convention). Lazily declared and cached on the underlying field. Use for compact syndromes or lookup-table indexing. |
-| **`stream`** | QUA stream object for `stream_processing()` — buffer outcomes to the host. |
-
-See [Parameter Table](parameter_table.md) for `stream_back` / `fetch_from_opx` on the Python side.
 
 ## Real-time parameters
 
@@ -120,17 +101,27 @@ Unlike typical Qiskit backends, parameters need not be bound at compile time. Us
 
 **Warning:** QOP rejects non-ASCII parameter names. Use ASCII names (`theta`, `phi`) — not Greek symbols — so OpenQASM 3 and QUA compilation succeed.
 
+Table fields keep the Qiskit names. The OpenQASM 3 exporter may rename an input (gates and variables share one namespace, so a `ParameterVector` called `x` exported as an array next to the `x` gate becomes `x_0`; a name that is not an identifier, such as `theta.1`, is escaped). `quantum_circuit_to_qua` matches inputs by Qiskit object, so a renamed input still binds to its field. It raises `ValueError`, naming each input, when one has no binding or a binding of the wrong shape (scalar vs. array, array length): qm-qasm itself would broadcast a scalar into an array input without complaint, and fails on a missing input with an opaque `Qua1GenerationPass failed`.
+
+### Exporting `ParameterVector`s as arrays
+
+The backend option `export_vector_as_array` (default `True`) exports each `ParameterVector` as one full-length `input array[float[64], N]`. It needs the [`full_real_time_expr` Qiskit branch](real_time_expressions.md) (its `PARAMETER_VECTORS_AS_ARRAYS` exporter feature) and is ignored on stock Qiskit, which exports one scalar input per used element. Turn it off with `backend.set_options(export_vector_as_array=False)`. Tables built by `ParameterTable.from_qiskit` on the branch hold a vector as one array field, which binds either export.
+
+### The OpenQASM 3 exporter is internal
+
+`quantum_circuit_to_qua` always exports through `backend.qasm3_exporter`, which is configured for this backend (its basis gates, constants disabled, and the `export_vector_as_array` option). qm-qasm expects that output: circuits laid out on physical qubits and expressed in the backend's native operations. Exporting with your own `Exporter` (or other options) and feeding the result to qm-qasm yourself is possible, but it is not a supported path: nothing checks that its operations, qubits or input declarations match what the compiler and your tables expect.
+
 ## Utilities
 
 ### [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.quam_macros.superconducting.add_basic_macros.rst)
 
-Seeds standard gate macros on a QuAM machine. **Flux-tunable transmon defaults** tied to `FluxTunableQuam` — see [Providers guide](providers.md#seeding-gate-macros-with-add-basic-macros). Override freely for other platforms. Canonical import: `from qiskit_qm_provider import add_basic_macros` (also re-exported from `backend.backend_utils`).
+Seeds standard gate macros on a QuAM machine. **Flux-tunable transmon defaults** tied to `FluxTunableQuam` — see [Providers guide](providers.md#seeding-gate-macros-with-add-basic-macros). Override freely for other platforms. Canonical import: `from qiskit_qm_provider import add_basic_macros`. Importing it from `qiskit_qm_provider.backend.backend_utils` is deprecated.
 
 ### `get_qua_script` / `dump_qua_script`
 
 Debug helpers to inspect generated QUA from compilation results.
 
-### [`assign_struct_with_table`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.assign_struct_with_table.rst)
+### [`assign_struct_with_table`](apidocs/stubs/qiskit_qm_provider.utils.quarc.struct_assign.assign_struct_with_table.rst)
 
 **QUA macro** for OPNIC struct assignment when a :class:`~.ParameterTable` and a Quarc ``QuaStructHandle`` share the same field layout. Call inside ``with program():`` after:
 
@@ -141,7 +132,7 @@ The macro copies each table parameter's QUA variable into the matching struct fi
 
 ```python
 from qm.qua import program
-from qiskit_qm_provider.backend.backend_utils import assign_struct_with_table
+from qiskit_qm_provider.utils.quarc.struct_assign import assign_struct_with_table
 
 with program() as prog:
     policy_table.declare()
@@ -179,20 +170,32 @@ backend.update_target()  # mandatory — syncs qm_qasm with the Target
 
 Whenever you modify `backend.target`, call `update_target` so both transpilation and `quantum_circuit_to_qua` see the same gate set.
 
+[`QMInstructionProperties`](apidocs/stubs/qiskit_qm_provider.backend.QMInstructionProperties.rst) also exposes extra Target display data:
+
+- ``quam_macro`` / ``qua_pulse_macro`` remain the programmatic accessors. ``print(backend.target)`` (on Qiskit versions that render extra properties) shows a compact ``quam_macro`` repr, or a callable's qualified name rather than ``<function ... at 0x...>``.
+- Two-qubit QuAM macros often store ``fidelity`` as a mapping of benchmark names (not a float). That map is available as ``fidelity_dict``. ``print(backend.target)`` unrolls each benchmark (``rb``, ``xeb``, …) as its own extra property. It is **not** converted into a scalar ``error``: the Rust ``InstructionProperties`` used by the transpiler still only sees ``duration`` and ``error``.
+
+## Barrier and store
+
+Besides the QUA-backed operations above, every QM backend `Target` defines `barrier` and `store` as global, variable-width operations, just as it defines control flow (`if_else`, `box`, ...). They have no QUA macro of their own and never appear in the qm-qasm operations mapping, because qm-qasm lowers them itself:
+
+- `store` (a real-time classical assignment, `qc.store(var, value)`) becomes a QUA assignment.
+- `barrier` becomes a QUA `align` over every element of the barrier's qubits (as given by `backend.qubit_mapping`), so the operations after it start together. Only the elements mapped to those qubits are aligned: map couplers or other shared elements to the qubits they act on if a barrier should align them too.
+
 ## Conditional pulse plays
 
-`ConditionalPlay` applies one fixed QuAM pulse when a run-time Boolean Qiskit expression is true. It lowers directly to QUA `pulse.play(condition=...)`; it does not introduce a Qiskit `if_test` or an enclosing QUA branch.
+A conditional play applies one fixed QuAM pulse when a run-time Boolean Qiskit expression is true. It lowers directly to QUA `pulse.play(condition=...)`; it does not introduce a Qiskit `if_test` or an enclosing QUA branch. Build one with `QuantumCircuit.conditional_play(...)` (shown below) or the equivalent standalone `add_conditional_play(qc, ...)` function.
 
 The construct has two deliberately separate inputs:
 
 - `pulse_name` is compile-time metadata. It selects the QuAM pulse and must resolve uniquely through `qubit.get_pulse(pulse_name)` on every active physical qubit.
 - `condition` is a run-time `qiskit.circuit.classical.expr.Expr` whose type must be Boolean. It is lowered through Qiskit's typed classical-expression AST, not through a numeric Qiskit `Parameter`.
 
-`ConditionalPlay` is a provider `Instruction`, exported through Qiskit's implicit-`defcal` call path. The emitted OpenQASM operation has a readable, stable internal name such as `qm_conditional_play_x180_<digest>`; the pulse label is never passed as a run-time argument.
+Internally this is a private provider `Instruction`, always wrapped in a `box` by `conditional_play`/`add_conditional_play` (there is no supported way to construct one directly) and exported through Qiskit's implicit-`defcal` call path. The emitted OpenQASM operation name is `qm_conditional_play_x180` when `pulse_name` is already a valid OpenQASM 3 identifier (the common case), or `qm_conditional_play_minus_x90` for the `"-x90"`/`"-y90"` negated-pulse convention. A pulse label using any other character falls back to a sanitized name with a digest suffix. The one known collision is between a `-`-prefixed label and one spelled out with `minus_` (for example `"-y90"` and `"minus_y90"`): both map to `qm_conditional_play_minus_y90`, and `register_conditional_play` warns when the second one replaces the first. The pulse label is never passed as a run-time argument.
 
 ### Registration and compilation
 
-Register a pulse label once before transpiling. Registration resolves the label on all active qubits, installs one per-qubit Target mapping, and synchronizes the qm-qasm operation mapping. There is no need to call `update_target()` again after a successful registration.
+Register a pulse label once before transpiling. Registration resolves the label on all active qubits, installs one per-qubit Target mapping, and synchronizes the qm-qasm operation mapping. There is no need to call `update_target()` again after a successful registration. To register several labels, pass them in one call, e.g. `backend.register_conditional_play("x180", "-y90")`: all of them are resolved before any is installed (a lookup error registers none), and the operation mapping is synchronized once.
 
 ```python
 from qiskit import transpile
@@ -212,10 +215,12 @@ transpiled = transpile(qc, backend, initial_layout=[0])
 comp = backend.quantum_circuit_to_qua(transpiled)
 ```
 
-The corresponding OpenQASM call has the shape:
+The exported OpenQASM wraps the call in its `box` and addresses the physical qubit directly (`creg` is a reserved OpenQASM keyword, so the exporter escapes the register name to `creg_0`):
 
 ```
-qm_conditional_play_x180_<digest>(creg_0[0] == false) qreg_1[0];
+box {
+  qm_conditional_play_x180(creg_0[0] == false) $0;
+}
 ```
 
 qm-qasm receives this as an ordinary provider operation call. Its registered per-qubit macro re-resolves the compile-time pulse and executes `qubit.get_pulse("x180").play(condition=qua_condition)`.
@@ -225,9 +230,9 @@ qm-qasm receives this as an ordinary provider operation call. Its registered per
 - Only Boolean `expr.Expr` conditions are accepted. Use Qiskit's `expr` constructors for comparisons, logical operations, and typed input variables.
 - Run-time selection among pulse names is not supported; register each pulse label separately and choose it while building the circuit.
 - Inversion and quantum controls are deliberately unsupported. The condition is classical and acts at the QUA pulse-play level.
-- Registration propagates QuAM errors when the pulse is missing or ambiguous on any active qubit. Compilation rejects an unregistered pulse or a conditional play placed on a physical qubit that has no registered mapping.
+- Registration propagates QuAM errors when the pulse is missing or ambiguous on any active qubit. `backend.quantum_circuit_to_qua(...)` rejects an unregistered pulse or a conditional play placed on a physical qubit that has no registered mapping, as part of its general check that every operation is native to `backend.target`.
 - QUA conditions the analog pulse only; associated digital markers follow QUA's normal behavior.
-
+- That rejection is `quantum_circuit_to_qua`'s responsibility, not the exporter's: `backend.qasm3_exporter` (or any `QMOpenQASM3Exporter`) has no `Target` of its own and does not check registration at all. Calling `.dumps(qc)` on it directly, instead of going through `quantum_circuit_to_qua`, will happily export a `ConditionalPlay` that was never registered -- the resulting OpenQASM 3 simply fails to lower to QUA later.
 ## Pulse support (Qiskit 1.x legacy)
 
 ## Pulse support (Qiskit 1.x legacy)

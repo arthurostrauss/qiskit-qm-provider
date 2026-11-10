@@ -20,12 +20,12 @@ Large **lists** passed to `backend.run` are automatically split into several QUA
 
 ### 1.2 QM SaaS simulator with QmSaasProvider
 
-1. `pip install qiskit-qm-provider[qm_saas]`
+1. `pip install qiskit-qm-provider[qm_saas]` (installs `qm-saas>=1.2.0`, required for the TLS-secured cloud connection)
 2. Create [`QmSaasProvider`](apidocs/stubs/qiskit_qm_provider.providers.qm_saas_provider.QmSaasProvider.rst).
 3. Call `get_backend()` and run as usual.
 
 - **Guide:** [Providers — QmSaasProvider](providers.md#qmsaasprovider-cloud-simulation)
-- **Examples:** adapt `examples/sampler_workflow.py`
+- **Examples:** `examples/qm_saas_sampler.py`
 
 ### 1.3 IQCC devices with IQCCProvider
 
@@ -58,7 +58,7 @@ When Pulse is available:
 - Convert **gate pulse schedules** via [`schedule_to_qua_macro`](apidocs/stubs/qiskit_qm_provider.pulse.schedule_to_qua_macro.rst).
 - Seed macros with [`add_basic_macros`](apidocs/stubs/qiskit_qm_provider.quam_macros.superconducting.add_basic_macros.rst) (flux-tunable defaults — see [Providers guide](providers.md#seeding-gate-macros-with-add-basic-macros)).
 
-**Pulse caveat:** supported for **gate schedules only**. Qiskit Pulse **`Measure` / measurement instructions** are **not** supported. Use circuit-level `measure` + [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) and read outcomes from **`comp.outputs`** in hybrid programs (see [Measurement outputs](measurement_outputs.md)). Legacy [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) remains available.
+**Pulse caveat:** supported for **gate schedules only**. Qiskit Pulse **`Measure` / measurement instructions** are **not** supported. Use circuit-level `measure` + [`quantum_circuit_to_qua`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) and read outcomes from **`comp.outputs`** in hybrid programs (see [Measurement outputs](measurement_outputs.md)).
 
 - **Guide:** [Backend — Pulse scope](backend.md#pulse-support-qiskit-1-x-legacy)
 - **Example:** `examples/circuit_calibrations_pulse.py`
@@ -161,8 +161,6 @@ with program() as prog:
 
 See [measurement_outputs.md](measurement_outputs.md) for the full locality model.
 
-Legacy [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) remains available and accepts either `QuaCircuitCompilation` or a raw `CompilationResult`.
-
 Powerful for error correction, closed-loop calibration, and QUARC/OPNIC hybrid loops.
 
 - **Guides:** [Backend](backend.md), [Parameter Table](parameter_table.md)
@@ -170,7 +168,7 @@ Powerful for error correction, closed-loop calibration, and QUARC/OPNIC hybrid l
 
 ## 5. Error-correction workflow (overview)
 
-Repeated cycles: encode → syndrome measure (Qiskit circuit) → stream syndrome → classical decode → push recovery params → apply recovery (Qiskit circuit). [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) and [`get_measurement_outcomes`](apidocs/stubs/qiskit_qm_provider.backend.backend_utils.get_measurement_outcomes.rst) keep the classical-quantum boundary explicit.
+Repeated cycles: encode → syndrome measure (Qiskit circuit) → stream syndrome → classical decode → push recovery params → apply recovery (Qiskit circuit). [`ParameterTable`](apidocs/stubs/qiskit_qm_provider.parameter_table.ParameterTable.rst) and [`comp.outputs`](measurement_outputs.md) keep the classical-quantum boundary explicit.
 
 - **Guide:** [Error-Correction Workflow](error_correction.md)
 
@@ -180,11 +178,64 @@ Repeated cycles: encode → syndrome measure (Qiskit circuit) → stream syndrom
 
 **Batch vs real-time:** Experiments emit large batches of near-identical circuits (AWG-style preloading). QUA prefers one program with real-time loops and streaming. For calibration sweeps, consider [Qualibrate](https://qualibrate-docs.quantum-machines.co/) or [qua-libs](https://github.com/qua-platform/qua-libs). Use this provider to **compose** Qiskit circuits into real-time QUA programs when that is the right model.
 
-When you do run large Experiment batches through `backend.run`, tune [`max_circuits`](apidocs/stubs/qiskit_qm_provider.backend.QMBackend.rst) on the backend so each QUA program stays within compile/size limits while results are still stitched into one Qiskit `Result` — see [Backend — multi-circuit batches](backend.md#multi-circuit-batches-and-max_circuits-backend-run-only).
+When you do run large Experiment batches through `backend.run` or `exp.run(sampler=QMSamplerV2(...))`, there are **two** independent `max_circuits` knobs:
+
+- **Qiskit Experiments** splits the circuit list using `backend.max_circuits` (and optional `exp.set_experiment_options(max_circuits=N)`). It does not read `QMSamplerOptions.run_options`.
+- **This provider** then chunks each `sampler.run()` / `backend.run()` into QUA programs using `run_options["max_circuits"]` if set, otherwise `backend.options.max_circuits`.
+
+Sampler `run_options={"max_circuits": 1}` therefore yields one circuit per QUA program even when Experiments still hands the sampler 30 circuits at a time. Set `backend.set_options(max_circuits=1)` if you also want Experiments to submit one circuit per Python job. See [Primitives — large PUB batches](primitives.md#large-pub-batches-and-max_circuits).
 
 **Counts only:** experiments needing raw I/Q or kerneled data will not work yet. Only classified 0/1 outcomes are supported.
 
 **Positive framing:** the compiler's value is frictionless advanced QUA with Qiskit handling circuit synthesis, visualization, transpilation, and portability — not replacing QUA entirely with Qiskit.
+
+### Transpile options for Qiskit Experiments on QM
+
+When an experiment calls `run(backend=...)` or `run(sampler=QMSamplerV2(backend=...))`, Qiskit Experiments builds circuits, then transpiles them in [`_transpiled_circuits`](https://github.com/Qiskit/qiskit-experiments/blob/main/qiskit_experiments/framework/base_experiment.py) before submission. This provider rejects circuits that look “physically placed” but lack layout provenance (see [`ensure_circuit_physical`](https://github.com/arthurostrauss/qiskit-qm-provider/blob/main/qiskit_qm_provider/utils/circuit/physical_layout.py)).
+
+| Experiment style | Default transpile behavior | On QM backends |
+|------------------|-------------------------|----------------|
+| Most characterization (T1, tomography, …) | Full `transpile(..., backend)` with default `optimization_level=0` | Usually works if `physical_qubits` and `backend` match the machine |
+| Randomized benchmarking (`StandardRB`, `InterleavedRB`, …) | Custom Clifford path: compose onto `physical_qubits`, **no** `TranspileLayout` | **Fails** until you force full transpile (below) |
+
+**What to do:** set transpile options **minimally** — in practice, `optimization_level=0` is enough for RB-family experiments to take the generic transpile path. Do **not** pass `initial_layout` in `set_transpile_options`; Experiments forbid it and instead set `initial_layout=list(physical_qubits)` for you (virtual qubit `i` → backend line `physical_qubits[i]`). Choose `physical_qubits` in the experiment constructor, including qubit **order** for directed two-qubit gates.
+
+```python
+from qiskit import QuantumCircuit
+from qiskit.circuit.library import CXGate
+from qiskit_experiments.library import ProcessTomography
+from qiskit_qm_provider import QMSamplerV2, add_basic_macros
+
+# backend = ...  # QMBackend or IQCC backend from your provider
+add_basic_macros(backend)
+
+# Circuit under test (virtual qubits 0, 1 in the ProcessTomography API)
+qc = QuantumCircuit(2)
+qc.append(CXGate(), [0, 1])
+
+# Map virtual lines onto real hardware (order matters for CX direction)
+physical_qubits = (5, 18)
+
+qpt = ProcessTomography(
+    qc,
+    physical_qubits=physical_qubits,
+    backend=backend,
+)
+
+# Explicit minimal transpile: full backend transpile at optimization level 0.
+# Required for RB / InterleavedRB (their default path skips TranspileLayout).
+# Harmless and recommended for tomography and other experiments too.
+qpt.set_transpile_options(optimization_level=0)
+
+sampler = QMSamplerV2(backend=backend)
+exp_data = qpt.run(sampler=sampler, shots=2000).block_for_results()
+```
+
+For **interleaved randomized benchmarking**, the same `set_transpile_options(optimization_level=0)` applies before `InterleavedRB(...).run(sampler=...)`. Keep the interleaved gate Clifford (as Qiskit Experiments requires) and use the QM backend when constructing the experiment so Clifford synthesis and final transpile target the same `Target`.
+
+**Why optimization level 0:** it runs the preset transpiler enough to attach layout metadata and native gates without aggressive routing that can permute qubits (problematic for RB analysis). Higher levels or extra transpile kwargs are possible but should be chosen deliberately.
+
+**Alternative:** transpile experiment circuits yourself with `transpile(..., backend=backend, initial_layout=list(physical_qubits), optimization_level=0)` and submit via `backend.run` or `QMSamplerV2.run` without the Experiments runner — you then bypass analysis orchestration but keep full control.
 
 ## Related
 

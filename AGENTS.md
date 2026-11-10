@@ -19,7 +19,7 @@ The core entry point is `QMBackend.quantum_circuit_to_qua()` (Qiskit circuit →
   pins `quam>=0.4.2` and `uv.lock` resolves `quam==0.6.0`, so a plain `uv sync` gives a working
   env. Do not lower this bound or "fix" import errors by downgrading `qm-qua`.
 - **`quam-builder` and `pytest` are not in `uv.lock`.** `quam-builder` is not on PyPI and is
-  installed from git at `v0.4.0` (see `README.md` / `docs/installation.md`). `pytest` is a dev
+  installed from git at `v0.6.0` (see `README.md` / `docs/installation.md`). `pytest` is a dev
   tool installed on top of the sync.
 - Installing `quam-builder` upgrades `qualang-tools` to `0.23.0` (it requires `>=0.22.0`); this is
   expected and correct.
@@ -33,11 +33,24 @@ The core entry point is `QMBackend.quantum_circuit_to_qua()` (Qiskit circuit →
   expected failures in this environment; everything else passes.
 - Hardware-backed test fixtures (`quam_machine`, `flux_tunable_backend`, `qm_provider` in
   `test/conftest.py`) require the `QUAM_STATE_PATH` env var to point at a QuAM state directory and
-  are **skipped** when it is unset (~120 tests). You can also build a machine in memory with the
-  quam-builder wirer (see the hello-world pattern below) instead of maintaining a state folder.
+  are **skipped** when it is unset. For hardware-free tests, use
+  `test/dummy_quam.py`: `build_dummy_quam_for_qubits(n, FluxTunableQuam)` returns a complete,
+  config-valid QuAM with `n` qubits (default pulses, a DragCosine gate set aliased to
+  `x180`/`x90`/..., `cz` on neighbouring pairs, placeholder frequencies, and for flux-tunable
+  machines `add_basic_macros(machine, reset_type="thermalize")`);
+  `test/_in_memory_quam.build_backend(n)` wraps it in a `FluxTunableTransmonBackend`. It needs a
+  quam-builder newer than v0.4.0. Keep the reset thermal: quam-builder's default active reset
+  reads the readout pulse's `rus_exit_threshold`, which is None on an uncalibrated machine, so
+  every circuit with a reset (i.e. every validated run/Sampler/Estimator circuit) fails QUA
+  generation with `'None' is not a scalar expression`.
 
 ### How to test / build / run
-- Tests: `.venv/bin/python -m pytest` (expected: ~294 passed, ~123 skipped, 2 quarc failures).
+- Tests: `.venv/bin/python -m pytest`. Expected: only the 2 quarc failures above; everything else
+  passes or is skipped. Skips are the `QUAM_STATE_PATH` fixtures (including the `quam_state`
+  variants of `test/test_barrier_lowering.py`) and, with quam-builder v0.4.0, the whole
+  dummy-QuAM modules (`test_dummy_quam.py`, `test_native_operations.py`, `test_barrier_lowering.py`,
+  `test_reset_compilation.py`).
+  Exact counts change as tests are added, so compare failures, not totals.
 - Docs build (this repo's only "build" step, run with warnings-as-errors in CI):
   `.venv/bin/python -m sphinx -b html -W docs docs/_build/html`.
 - **No linter is configured** in this repo (no ruff/black/flake8/mypy config in `pyproject.toml`).

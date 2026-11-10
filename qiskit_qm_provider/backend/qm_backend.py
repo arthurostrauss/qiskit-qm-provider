@@ -38,6 +38,7 @@ from inspect import Signature, Parameter as sigParam
 from qiskit.circuit import (
     QuantumCircuit,
     Parameter as QiskitParameter,
+    ParameterVector,
     Instruction,
 )
 from qiskit.circuit.controlflow import CONTROL_FLOW_OP_NAMES
@@ -54,16 +55,22 @@ from quam.core import QuamRoot
 
 # Helper modules
 from ..parameter_table import ParameterTable, InputType, Parameter
-from .backend_utils import (
-    validate_machine,
-    look_for_standard_op,
-    get_extended_gate_name_mapping,
+from ..utils.calibrations.identifiers import operation_key
+from ..utils.circuit.physical_layout import ensure_circuit_physical
+from ..utils.circuit.target_support import ensure_native_operations
+from ..utils.gates.naming import get_extended_gate_name_mapping, look_for_standard_op
+from ..utils.gates.target_builtins import (
     control_flow_name_mapping,
     qasm3_keyword_instructions,
-    operation_key,
+    variadic_builtin_instructions,
 )
+from ..utils.quam.validation import validate_machine
 from .qm_instruction_properties import QMInstructionProperties
-from ..conditional_play import ConditionalPlay, _conditional_play_macro, conditional_play_operation_name
+from ..conditional_play import (
+    _ConditionalPlay,
+    _conditional_play_macro,
+    conditional_play_operation_name,
+)
 from ..qasm3_exporter import QMOpenQASM3Exporter
 
 if TYPE_CHECKING:
@@ -72,7 +79,6 @@ if TYPE_CHECKING:
         CloudQuantumMachinesManager,
     )
     from qm_qasm import QubitsMapping, Compiler
-    from quam.utils.qua_types import Scalar
     from qiskit.pulse import Schedule, ScheduleBlock
     from qiskit.pulse.channels import Channel as QiskitChannel
     from ..job.qm_job import QMJob
@@ -178,7 +184,8 @@ class QMBackend(Backend):
         # Calibration mapping: working copy for circuit-specific pulse calibrations
         self._calibration_operation_mapping_QUA = self._operation_mapping_QUA.copy()
         self._qasm3_custom_gates = []
-        self._conditional_play_operations: Dict[str, str] = {}
+        # Operation name -> pulse label, for every pulse registered via register_conditional_play
+        self._conditional_play_pulses: Dict[str, str] = {}
         self._init_macro = init_macro if init_macro is not None else lambda: None
 
     def __deepcopy__(self, memo):
@@ -202,7 +209,13 @@ class QMBackend(Backend):
 
         Defaults: ``shots=1024``, ``compiler_options=None``, ``simulate=None``,
         ``memory=False``, ``skip_reset=False``, ``meas_level=MeasLevel.CLASSIFIED``,
-        ``meas_return=MeasReturnType.AVERAGE``, ``timeout=60``.
+        ``meas_return=MeasReturnType.AVERAGE``, ``timeout=60``, ``max_circuits=30``,
+        ``export_vector_as_array=True``.
+
+        ``export_vector_as_array`` makes :attr:`qasm3_exporter` emit each ``ParameterVector`` as
+        one full-length ``input array[float[64], N]``. It needs the ``full_real_time_expr``
+        Qiskit branch (its ``PARAMETER_VECTORS_AS_ARRAYS`` exporter feature) and is ignored on
+        stock Qiskit, which always exports one scalar input per used element.
         """
         return Options(
             shots=1024,
@@ -214,6 +227,7 @@ class QMBackend(Backend):
             meas_return=MeasReturnType.AVERAGE,
             timeout=60,
             max_circuits=30,
+            export_vector_as_array=True,
         )
 
     @property
@@ -292,16 +306,23 @@ class QMBackend(Backend):
         else:
             raise ValueError("Qubit should be an integer index or a string name")
 
-    def get_qubit_pair(self, qubits: Tuple[int | str | Qubit, int | str | Qubit]) -> QubitPair:
+    def get_qubit_pair(
+        self, qubits: str | Tuple[int | str | Qubit, int | str | Qubit]
+    ) -> QubitPair:
         """Get the QubitPair for two qubit indices or names.
 
         Args:
-            qubits: Pair of qubit indices, names, or :class:`~quam.components.Qubit`
-                objects.
+            qubits: Qubit pair name, or a pair of qubit indices, names, or
+                :class:`~quam.components.Qubit` objects.
 
         Returns:
             The corresponding :class:`~quam.components.QubitPair`.
         """
+        if isinstance(qubits, str):
+            if qubits not in self._qubit_pair_dict:
+                raise ValueError(f"Qubit pair {qubits} not found in the machine's active qubit pairs")
+            return self.get_qubit_pair(self._qubit_pair_dict[qubits])
+
         if isinstance(qubits, tuple) and len(qubits) == 2:
             qubit1, qubit2 = qubits
             if isinstance(qubit1, int):
@@ -330,7 +351,7 @@ class QMBackend(Backend):
             except TypeError:
                 raise ValueError(f"Qubit pair {qubits} not found in the machine's active qubit pairs")
         else:
-            raise ValueError("Qubit pair should be a tuple of two qubits")
+            raise ValueError("Qubit pair should be a qubit pair name or a tuple of two qubits")
 
     @property
     def qubit_mapping(self) -> QubitsMapping:
@@ -338,7 +359,12 @@ class QMBackend(Backend):
         Build the qubit to quantum elements mapping for the backend.
         Should be of the form {qubit_index: (quantum_element1, quantum_element2, ...)}
         """
-        return {i: tuple(channel for channel in qubit.channels) for i, qubit in enumerate(self.machine.active_qubits)}
+        # ``Qubit.channels`` maps attribute names ("xy", "z", ...) to channels; the QUA
+        # element of a channel is its ``name`` (e.g. "q0.xy"), not the dict key.
+        return {
+            i: tuple(channel.name for channel in qubit.channels.values())
+            for i, qubit in enumerate(self.machine.active_qubits)
+        }
 
     @property
     def qubit_index_dict(self):
@@ -406,8 +432,35 @@ class QMBackend(Backend):
 
         Must be a positive integer (>= 1). Defaults to 30.
         Can be updated at any time via ``backend.set_options(max_circuits=N)``.
+        Primitive ``run_options["max_circuits"]`` and ``backend.run(..., max_circuits=N)``
+        override this value for that job only and do not change this property.
         """
         return self.options.max_circuits
+
+    def _add_or_update_target_instruction(
+        self,
+        operation_name: str,
+        target_instruction: Instruction,
+        properties: Dict[Tuple[int, ...], QMInstructionProperties],
+    ) -> None:
+        """Add ``target_instruction`` to ``self.target``, or update it if already present.
+
+        Shared by every backend method that wires a QUA-backed operation onto the
+        Target (:meth:`_populate_target`, :meth:`register_conditional_play`): the
+        add-vs-update decision and the per-qarg existence check are the same
+        regardless of how ``operation_name`` and its properties were discovered.
+
+        Raises:
+            ValueError: if ``operation_name`` is already registered but not for one
+                of ``properties``' qargs.
+        """
+        if self.target.instruction_supported(operation_name):
+            for qargs, prop in properties.items():
+                if not self.target.instruction_supported(operation_name, qargs):
+                    raise ValueError(f"Instruction {operation_name} with qargs {qargs} is not supported by the target")
+                self.target.update_instruction_properties(operation_name, qargs, prop)
+        else:
+            self.target.add_instruction(target_instruction, properties=properties)
 
     def _populate_target(self) -> None:
         """
@@ -500,20 +553,13 @@ class QMBackend(Backend):
 
         # Update Target object incrementally
         for op, properties in operations_dict.items():
-            if self._target.instruction_supported(op):
-                for qargs, prop in properties.items():
-                    # Check if this qargs combination already exists for this instruction
-                    if self._target.instruction_supported(op, qargs):
-                        self._target.update_instruction_properties(op, qargs, prop)
-                    else:
-                        raise ValueError(f"Instruction {op} with qargs {qargs} is not supported by the target")
-            else:
-                # Add new instruction to target
-                self._target.add_instruction(name_to_op_dict[op], properties=properties)
+            self._add_or_update_target_instruction(op, name_to_op_dict[op], properties)
 
-        for flow_op_name, control_flow_op in control_flow_name_mapping.items():
-            if flow_op_name not in self._target.operation_names:
-                self._target.add_instruction(control_flow_op, name=flow_op_name)
+        # Control flow, barrier and store are variable-width, so they are added as global
+        # operations (an instruction class, no per-qubit properties).
+        for global_op_name, global_op_class in {**control_flow_name_mapping, **variadic_builtin_instructions}.items():
+            if global_op_name not in self._target.operation_names:
+                self._target.add_instruction(global_op_class, name=global_op_name)
         self._coupling_map = CouplingMap(coupling_map)
 
     @requires_qiskit_pulse
@@ -744,8 +790,9 @@ class QMBackend(Backend):
 
         # Step 2: Sync operations from Target to _operation_mapping_QUA (overwrites existing entries)
         for op_name, op_properties in self.target.items():
-            # Skip control flow operations (they're handled separately)
-            if op_name in CONTROL_FLOW_OP_NAMES:
+            # Skip control flow, barrier and store: qm-qasm lowers them itself, and it ignores
+            # (and deprecates) a "barrier" entry in the operations database.
+            if op_name in CONTROL_FLOW_OP_NAMES or op_name in variadic_builtin_instructions:
                 continue
 
             for qubits, properties in op_properties.items():
@@ -808,58 +855,74 @@ class QMBackend(Backend):
         # Step 3: Update calibration mapping
         self._calibration_operation_mapping_QUA = self._operation_mapping_QUA.copy()
 
-    def register_conditional_play(self, pulse_name: str) -> None:
-        """Register a direct conditional play for ``pulse_name`` on every active qubit.
+    def register_conditional_play(self, *pulse_names: str) -> None:
+        """Register a direct conditional play for each of ``pulse_names`` on every active qubit.
 
-        The pulse is resolved using :meth:`quam.components.Qubit.get_pulse`,
+        Each pulse is resolved using :meth:`quam.components.Qubit.get_pulse`,
         which intentionally propagates QuAM's missing-pulse and ambiguity errors.
         The generated QUA macro receives one Boolean argument and forwards it to
         :meth:`quam.components.pulses.Pulse.play` as ``condition``.
 
         Call this before transpiling a circuit that uses
-        :meth:`qiskit.circuit.QuantumCircuit.conditional_play`.
+        :meth:`qiskit.circuit.QuantumCircuit.conditional_play`. Registering several
+        pulses in one call resolves and validates all of them before touching the
+        Target, so a QuAM lookup error, or a pulse whose operation already exists in the
+        Target without one of the active qubits, registers none of them. The qm-qasm
+        operation mapping is then synchronized once. Calling this again for an
+        already-registered pulse is safe and just refreshes its Target properties.
+
+        Args:
+            *pulse_names: QuAM pulse labels to register, e.g. ``"x180"``, ``"-y90"``.
+
+        Raises:
+            ValueError: if no pulse name is given, or QuAM cannot resolve a pulse
+                uniquely on every active qubit.
         """
-        operation_name = conditional_play_operation_name(pulse_name)
-        registered_pulse = self._conditional_play_operations.get(operation_name)
-        if self.target.instruction_supported(operation_name) and registered_pulse != pulse_name:
-            raise ValueError(
-                f"Cannot register conditional play for pulse {pulse_name!r}: "
-                f"the generated Target operation name {operation_name!r} is already in use."
+        if not pulse_names:
+            raise ValueError("register_conditional_play needs at least one pulse name")
+
+        resolved = {}
+        for pulse_name in dict.fromkeys(pulse_names):
+            operation_name = conditional_play_operation_name(pulse_name)
+            properties = {}
+            for index in range(self.num_qubits):
+                qubit = self.get_qubit(index)
+                # Resolving every pulse before touching the Target means a QuAM lookup
+                # error (missing/ambiguous pulse) leaves backend state unchanged.
+                pulse = qubit.get_pulse(pulse_name)
+                properties[(index,)] = QMInstructionProperties(
+                    duration=pulse.length * 1e-9,
+                    qua_pulse_macro=_conditional_play_macro(qubit, pulse_name),
+                )
+            resolved[pulse_name] = (operation_name, properties)
+
+        # Check every update against the existing Target before mutating anything, so
+        # _add_or_update_target_instruction cannot fail midway and leave the Target ahead
+        # of the qm-qasm operation mapping.
+        for operation_name, properties in resolved.values():
+            if self.target.instruction_supported(operation_name):
+                for qargs in properties:
+                    if not self.target.instruction_supported(operation_name, qargs):
+                        raise ValueError(
+                            f"Instruction {operation_name} with qargs {qargs} is not supported by the target"
+                        )
+
+        for pulse_name, (operation_name, properties) in resolved.items():
+            # Every pulse has resolved, so this replacement is certain to happen.
+            previous_pulse = self._conditional_play_pulses.get(operation_name)
+            if previous_pulse is not None and previous_pulse != pulse_name:
+                warnings.warn(
+                    f"Conditional play for pulse {pulse_name!r} uses the same operation name "
+                    f"{operation_name!r} as the previously registered pulse {previous_pulse!r}; "
+                    f"it replaces that registration, so circuits using {previous_pulse!r} will "
+                    f"now play {pulse_name!r}.",
+                    stacklevel=2,
+                )
+            self._add_or_update_target_instruction(
+                operation_name, _ConditionalPlay.target_operation(pulse_name), properties
             )
-        properties = {}
-
-        # Resolve all pulses before mutating the Target so a QuAM lookup error
-        # leaves backend state unchanged.
-        resolved_pulses = [self.get_qubit(index).get_pulse(pulse_name) for index in range(self.num_qubits)]
-
-        for index, pulse in enumerate(resolved_pulses):
-            qubit = self.get_qubit(index)
-
-            properties[(index,)] = QMInstructionProperties(
-                duration=pulse.length * 1e-9,
-                qua_pulse_macro=_conditional_play_macro(qubit, pulse_name),
-            )
-
-        if self.target.instruction_supported(operation_name):
-            for qargs, property_ in properties.items():
-                self.target.update_instruction_properties(operation_name, qargs, property_)
-        else:
-            self.target.add_instruction(ConditionalPlay.target_operation(pulse_name), properties=properties)
-
-        self._conditional_play_operations[operation_name] = pulse_name
+            self._conditional_play_pulses[operation_name] = pulse_name
         self.update_target()
-
-    def _validate_conditional_play(self, operation: ConditionalPlay, qargs: tuple[int, ...]) -> None:
-        """Check that a ConditionalPlay has a registered, physical Target mapping."""
-        if operation.name not in self._conditional_play_operations:
-            raise ValueError(
-                f"ConditionalPlay for pulse {operation.pulse_name!r} is not registered. "
-                f"Call backend.register_conditional_play({operation.pulse_name!r}) before compiling."
-            )
-        if not self.target.instruction_supported(operation.name, qargs):
-            raise ValueError(
-                f"ConditionalPlay for pulse {operation.pulse_name!r} is not supported on physical qubits {qargs}."
-            )
 
     @requires_qiskit_pulse
     def update_calibrations(self, qc: QuantumCircuit, input_type: Optional[InputType] = None):
@@ -914,7 +977,7 @@ class QMBackend(Backend):
         self,
         qc: QuantumCircuit,
         param_table: Optional[
-            ParameterTable | Sequence[ParameterTable | Parameter] | Dict[str | QiskitParameter | Var, Scalar]
+            ParameterTable | Sequence[ParameterTable | Parameter] | Dict[str | QiskitParameter | ParameterVector | Var, Any]
         ] = None,
     ) -> QuaCircuitCompilation:
         """Convert a :class:`~qiskit.circuit.QuantumCircuit` to a QUA program fragment.
@@ -928,13 +991,31 @@ class QMBackend(Backend):
             param_table: Parameter mapping for real-time QUA variables. Required
                 when the circuit contains symbolic parameters or classical inputs
                 that must be streamed during execution.
+                Dictionary keys are circuit objects or their names: a whole
+                ``ParameterVector`` (or its name) takes a full-length QUA array,
+                which also binds elements exported as scalar inputs; a single
+                element (or ``"name[i]"``) takes a scalar, and only binds an
+                element exported as a scalar input.
 
         Returns:
             :class:`~qiskit_qm_provider.backend.qua_circuit_compilation.QuaCircuitCompilation`
             wrapping the compilation result and
             wired measurement outputs.
+
+        Raises:
+            ValueError: if a circuit input has no binding, or a binding of the
+                wrong shape (scalar vs. array, array length). Inputs are matched
+                by Qiskit object, so an input the exporter renamed (e.g. a
+                vector ``x`` next to the ``x`` gate, exported as ``x_0``) still
+                binds to its table field.
         """
         from .qua_circuit_compilation import QuaCircuitCompilation
+
+        # Reject (never fix up) a qc that is not already laid out on this backend's physical
+        # qubits and expressed in its native operations -- the OpenQASM 3 lowering, including
+        # ConditionalPlay's box, has no Target of its own to check against.
+        ensure_circuit_physical(qc, self.target.num_qubits)
+        ensure_native_operations(qc, self.target)
 
         basis_gates = self.qm_qasm_basis_gates
         # Check if all custom calibrations are in the qasm3 basis gates
@@ -945,19 +1026,19 @@ class QMBackend(Backend):
                         f"Custom calibration {gate_name} not in basis gates {basis_gates}",
                         f"Run update_calibrations() before compiling the circuit",
                     )
-        exporter = QMOpenQASM3Exporter(
-            includes=(),
-            basis_gates=basis_gates,
-            disable_constants=True,
-            conditional_play_validator=self._validate_conditional_play,
+        from ..parameter_table.qiskit_classical import (
+            bind_exported_inputs, qiskit_input_key, validate_classical_types, validate_qiskit_input_names,
+            vector_element_key,
         )
-        open_qasm_code = exporter.dumps(qc)
-        open_qasm_code = "\n".join(
-            line for line in open_qasm_code.splitlines() if not line.strip().startswith(("barrier",))
-        )
-        inputs = None
+        from qiskit.circuit.parametervector import ParameterVectorElement
+
+        validate_classical_types(qc)
+        validate_qiskit_input_names(qc)
+        # Barriers are kept: qm-qasm lowers each one to a QUA ``align`` over the elements
+        # of the barrier's qubits.
+        open_qasm_code, exported_inputs = self.qasm3_exporter.export(qc)
+        bindings = {}
         if param_table is not None:
-            inputs = {}
             if isinstance(param_table, (ParameterTable, Parameter)):
                 param_table = [param_table]
             if isinstance(param_table, Sequence):
@@ -966,14 +1047,26 @@ class QMBackend(Backend):
                         # Unified API: declare() works for both Parameter and ParameterTable.
                         table.declare(pause_program=False)
                     variables = table.variables_dict if isinstance(table, ParameterTable) else {table.name: table.var}
-                    inputs.update(variables)
+                    bindings.update(variables)
             elif isinstance(param_table, Dict):
+                # String keys naming a circuit parameter (``"t[2]"``) or vector (``"t"``) bind like
+                # the corresponding objects.
+                named_inputs = {
+                    p.vector.name: p.vector for p in qc.parameters if isinstance(p, ParameterVectorElement)
+                }
+                named_inputs.update((p.name, p) for p in qc.parameters)
                 for key, value in param_table.items():
-                    if isinstance(key, (QiskitParameter, Var)):
-                        inputs[key.name] = value
+                    if isinstance(key, str):
+                        key = named_inputs.get(key, key)
+                    if isinstance(key, ParameterVectorElement):
+                        bindings[vector_element_key(key)] = value
+                    elif isinstance(key, (ParameterVector, QiskitParameter, Var)):
+                        bindings[qiskit_input_key(key)] = value
                     else:
-                        inputs[key] = value
+                        bindings[key] = value
 
+        # Inputs are matched by Qiskit object: the exporter may have renamed them.
+        inputs = bind_exported_inputs(exported_inputs, bindings) if exported_inputs else None
         result = self.compiler.compile(
             open_qasm_code,
             compilation_name=f"{qc.name}_qua",
@@ -1061,12 +1154,28 @@ class QMBackend(Backend):
 
     @property
     def qasm3_exporter(self) -> QMOpenQASM3Exporter:
+        """Retrieve the OpenQASM 3 exporter for the backend.
+
+        This is the sanctioned way to get a :class:`QMOpenQASM3Exporter` configured
+        for this backend's basis gates -- do not construct one directly. It performs
+        no validation of its own against this backend's ``Target``: calling
+        ``.dumps(qc)`` on the result will happily export a ``ConditionalPlay`` that
+        was never registered (see :meth:`register_conditional_play`), or one placed
+        on a qubit this backend has no mapping for, producing OpenQASM 3 that later
+        fails to lower to QUA. That check is :meth:`quantum_circuit_to_qua`'s
+        responsibility, not this exporter's -- prefer calling that instead of
+        ``.dumps()`` directly unless you have already validated ``qc`` yourself.
         """
-        Retrieve the OpenQASM 3 exporter for the backend
-        """
+        from qiskit.qasm3 import ExperimentalFeatures
+
+        from ..parameter_table.qiskit_classical import VECTOR_ARRAYS_FEATURE
+
+        experimental = ExperimentalFeatures(0)
+        if self.options.export_vector_as_array:
+            experimental |= getattr(ExperimentalFeatures, VECTOR_ARRAYS_FEATURE, ExperimentalFeatures(0))
         return QMOpenQASM3Exporter(
             includes=(),
             basis_gates=self.qm_qasm_basis_gates,
             disable_constants=True,
-            conditional_play_validator=self._validate_conditional_play,
+            experimental=experimental,
         )
