@@ -56,11 +56,11 @@ class FixedPoint:
     :class:`FixedPointOverflowWarning` is emitted. Multiplication and right shifts
     truncate toward negative infinity (arithmetic shift), as the controller does.
 
-    Checked bit for bit on hardware: ``+``, ``-``, ``*``, ``<<`` and ``>>`` (including
-    overflow). **Division is not bit-exact**: the controller computes an approximation
+    Checked bit for bit on hardware: ``+``, ``-``, ``*``, ``<<``, ``>>``, ``&`` and ``|``
+    (including overflow). **Division is not bit-exact**: the controller computes an approximation
     (relative error up to about ``1e-6``, i.e. a few tens of LSB in 4.28), whereas
     :meth:`__truediv__` returns the exact floored quotient, and a quotient that overflows
-    is not reproduced. ``&`` and ``|`` have not been compared with the controller.
+    is not reproduced.
     """
 
     def __init__(self, value, fractional_bits=28, bit_width=32):
@@ -68,9 +68,10 @@ class FixedPoint:
 
         The value is rounded to the nearest representable fixed-point number, as
         QUA does for ``declare(fixed, value=...)`` (verified on hardware). A value
-        outside the representable range wraps around and emits a
-        :class:`FixedPointOverflowWarning` (QUA programs should not declare such
-        constants).
+        outside the representable range ``[-8, 8)`` wraps around and emits a
+        :class:`FixedPointOverflowWarning`. This is what ``assign(x, constant)`` does
+        on the controller; ``declare(fixed, value=constant)`` instead makes the program
+        fail to execute, so such a constant can only be mirrored through ``assign``.
 
         Args:
             value: Initial value (float interpreted in fixed-point units).
